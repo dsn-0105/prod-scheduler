@@ -1,0 +1,3010 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>生产排单与报表系统</title>
+<style>
+:root{
+  --primary:#4f46e5;--primary-light:#eef2ff;--primary-dark:#4338ca;
+  --bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#94a3b8;--border:#e2e8f0;
+  --green:#10b981;--green-bg:#ecfdf5;--red:#ef4444;--red-bg:#fef2f2;
+  --amber:#f59e0b;--amber-bg:#fffbeb;--blue:#3b82f6;--blue-bg:#eff6ff;
+  --teal:#14b8a6;--purple:#8b5cf6;
+  --shadow:0 1px 3px rgba(0,0,0,.08);
+  --r:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+/* layout */
+.app{display:flex;min-height:100vh}
+.sidebar{width:210px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:transform .25s}
+.sidebar-header{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+.sidebar-header .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.nav{flex:1;overflow-y:auto;padding:8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;font-size:13px;color:var(--text);border-left:3px solid transparent;transition:all .15s}
+.nav-item:hover{background:var(--primary-light)}
+.nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
+.nav-item svg{width:18px;height:18px;flex-shrink:0}
+.nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600}
+.main{flex:1;margin-left:210px;min-width:0}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;gap:12px;flex-wrap:wrap}
+.topbar-left{display:flex;align-items:center;gap:10px}
+.topbar h2{font-size:16px;font-weight:700}
+.topbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.content{padding:16px 20px 80px;max-width:1400px}
+/* mobile */
+.mobile-header{display:none;background:var(--card);border-bottom:1px solid var(--border);padding:10px 14px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:60}
+.mobile-header h1{font-size:15px;font-weight:700}
+.hamburger{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+.hamburger svg{width:20px;height:20px}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99}
+.overlay.show{display:block}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%);width:240px}
+  .sidebar.open{transform:translateX(0)}
+  .main{margin-left:0}
+  .mobile-header{display:flex}
+  .content{padding:12px 12px 60px}
+}
+/* components */
+.card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+.card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card-title .desc{font-size:12px;color:var(--muted);font-weight:400}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);font-size:13px;cursor:pointer;color:var(--text);transition:all .15s;min-height:36px;white-space:nowrap}
+.btn:hover{border-color:var(--primary);color:var(--primary)}
+.btn svg{width:15px;height:15px}
+.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn-primary:hover{background:var(--primary-dark);color:#fff}
+.btn-danger{color:var(--red);border-color:var(--red)}
+.btn-danger:hover{background:var(--red);color:#fff}
+.btn-sm{padding:4px 10px;min-height:30px;font-size:12px}
+.btn-ghost{background:transparent;border-color:transparent;color:var(--primary)}
+.btn-ghost:hover{background:var(--primary-light)}
+input,select,textarea{font-family:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);width:100%;outline:none;transition:border .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.1)}
+input[type=checkbox]{width:auto}
+input[type=number]{font-variant-numeric:tabular-nums}
+label{font-size:12px;color:var(--muted);display:block;margin-bottom:3px}
+.form-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.form-row>div{flex:1;min-width:120px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary-light);color:var(--primary);font-weight:600;text-align:left;padding:8px 10px;white-space:nowrap;border-bottom:2px solid var(--border)}
+td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:#f8fafc}
+.op-col{position:sticky;right:0;z-index:5;background:#ffffff;border-left:2px solid #e5e7eb}
+thead .op-col{background:#eef2ff;z-index:6}
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+.table-wrap::-webkit-scrollbar{height:10px}
+.table-wrap::-webkit-scrollbar-thumb{background:#c7cdd8;border-radius:5px;border:2px solid #fff}
+.table-wrap::-webkit-scrollbar-thumb:hover{background:#a8b1c0}
+.table-wrap::-webkit-scrollbar-track{background:transparent}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+.tag-green{background:var(--green-bg);color:var(--green)}
+.tag-red{background:var(--red-bg);color:var(--red)}
+.tag-amber{background:var(--amber-bg);color:var(--amber)}
+.tag-blue{background:var(--blue-bg);color:var(--blue)}
+.tag-gray{background:#f1f5f9;color:var(--muted)}
+/* modal */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center;padding:16px}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border-radius:12px;max-width:560px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--card);z-index:1}
+.modal-head h3{font-size:16px;font-weight:700}
+.modal-body{padding:18px}
+.modal-foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;background:var(--card)}
+.close-x{width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;color:var(--muted)}
+.close-x:hover{background:#f1f5f9}
+/* stat cards */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.stat{background:var(--card);border-radius:var(--r);padding:14px;box-shadow:var(--shadow);border-left:4px solid var(--primary)}
+.stat .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.stat .l{font-size:12px;color:var(--muted);margin-top:2px}
+.stat.green{border-left-color:var(--green)} .stat.red{border-left-color:var(--red)} .stat.amber{border-left-color:var(--amber)} .stat.blue{border-left-color:var(--blue)}
+/* alert */
+.alert{padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px}
+.alert-red{background:var(--red-bg);color:var(--red);border:1px solid #fecaca}
+.alert-amber{background:var(--amber-bg);color:var(--amber);border:1px solid #fde68a}
+.alert-blue{background:var(--blue-bg);color:var(--blue);border:1px solid #bfdbfe}
+.alert svg{width:16px;height:16px;flex-shrink:0;margin-top:1px}
+/* section headers in daily plan */
+.sec-header{font-size:13px;font-weight:700;padding:8px 12px;border-radius:8px;margin:14px 0 6px;display:flex;align-items:center;gap:8px}
+.sec-stockup{background:var(--blue-bg);color:var(--blue)}
+.sec-packaging{background:var(--amber-bg);color:var(--amber)}
+/* field settings */
+.fs-layout{display:flex;gap:0;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.fs-menu{width:200px;border-right:1px solid var(--border);background:#f8fafc;padding:8px}
+.fs-menu-item{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.fs-menu-item:hover{background:var(--primary-light)}
+.fs-menu-item.active{background:var(--primary);color:#fff;font-weight:600}
+.fs-menu-item svg{width:16px;height:16px}
+.fs-body{flex:1;padding:14px}
+.fs-menu-item .dot{width:8px;height:8px;border-radius:50%;background:var(--red);margin-left:auto}
+.fs-menu-item.active .dot{background:#fff}
+@media(max-width:640px){
+  .fs-layout{flex-direction:column}
+  .fs-menu{width:100%;border-right:none;border-bottom:1px solid var(--border);display:flex;overflow-x:auto;padding:8px}
+  .fs-menu-item{white-space:nowrap;margin-bottom:0;margin-right:2px}
+}
+.lock{width:14px;height:14px;display:inline;vertical-align:-2px;color:var(--muted)}
+.fs-auditbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px}
+.fs-audit-actions{display:flex;gap:8px;flex-wrap:wrap}
+.audit-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding:4px 12px;border-radius:20px}
+.audit-badge.audited{background:#dcfce7;color:#15803d;border:1px solid #86efac}
+.audit-badge.draft{background:#fef3c7;color:#b45309;border:1px solid #fcd34d}
+.hide{display:none!important}
+.backup-warn{background:var(--amber-bg);border:1px solid #fde68a;color:var(--amber);padding:8px 14px;border-radius:8px;font-size:12px;margin-bottom:10px}
+.progress-wrap{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden}
+.progress-bar{height:100%;background:var(--primary);border-radius:3px;transition:width .3s}
+.empty{text-align:center;padding:30px;color:var(--muted);font-size:13px}
+.empty svg{width:40px;height:40px;margin-bottom:8px;opacity:.4}
+/* 表格筛选/排序 */
+.th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.th-sort:hover{filter:brightness(.96)}
+.sort-ico{font-size:9px;margin-left:3px;color:#c7d2fe;display:inline-block}
+.sort-ico.on{color:var(--primary)}
+.filt-ico{margin-left:5px;display:inline-flex;vertical-align:-2px;cursor:pointer;opacity:.4;border-radius:4px;padding:1px}
+.filt-ico:hover{opacity:1;background:rgba(79,70,229,.15)}
+.filt-ico.on{opacity:1;color:var(--primary);background:var(--primary-light)}
+/* 列头拖拽调序 + 拖拽调宽 */
+.th-rs{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:2}
+.th-rs::after{content:'';position:absolute;right:3px;top:25%;bottom:25%;width:2px;border-radius:1px;background:transparent}
+.th-sort:hover .th-rs::after,.th-rs:hover::after{background:var(--primary)}
+th.th-sort{position:relative}
+th.th-dragging{opacity:.45}
+th.th-drop-before{box-shadow:inset 3px 0 0 0 var(--primary)}
+th.th-drop-after{box-shadow:inset -3px 0 0 0 var(--primary)}
+body.col-resizing{cursor:col-resize;user-select:none}
+body.col-dragging{cursor:grabbing;user-select:none}
+.filt-pop{position:absolute;z-index:300;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.18);padding:12px;width:230px;font-size:12px}
+.filt-pop .fp-title{font-weight:700;margin-bottom:8px;color:var(--text)}
+.filt-pop select,.filt-pop input{font-size:12px;padding:5px 8px;margin-bottom:8px}
+.filt-pop .fp-opts{max-height:190px;overflow-y:auto;margin-bottom:8px;border:1px solid var(--border);border-radius:6px;padding:4px 6px}
+.filt-pop .fp-opt{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:12px}
+.filt-pop .fp-opt:hover{color:var(--primary)}
+.filt-pop .fp-btns{display:flex;gap:6px;justify-content:flex-end;margin-top:4px}
+.tbl-fbar{display:flex;align-items:center;gap:6px;margin:8px 0;flex-wrap:wrap;font-size:12px}
+.fchip{display:inline-flex;align-items:center;gap:4px;background:var(--primary-light);color:var(--primary);border-radius:12px;padding:3px 10px;font-weight:600}
+.fchip b{cursor:pointer;font-weight:700;margin-left:2px}
+.fchip b:hover{color:var(--red)}
+</style>
+<script src="https://beacon.cdn.qq.com/sdk/4.5.9/beacon_web.min.js"></script>
+<script>
+(function(){
+  try{
+    var beacon=new BeaconAction({
+      appkey:'0WEB06U85YBSLJNL',
+      versionCode:'1.0.0',
+      channelID:'share',
+      delay:1000,
+      sessionDuration:30*60*1000,
+      isOversea:false,
+      needReportRqdEvent:false
+    });
+    beacon.onDirectUserAction('preview_page_view',{
+      'url':location.href,
+      'referrer':document.referrer,
+      'title':document.title,
+      'sandbox_id':'1c4a8d0589d649f2a20bbccaa7249e9c'
+    });
+  }catch(e){}
+})();
+</script></head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;color:var(--primary)"><path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/></svg>生产排单系统</h1>
+      <div class="sub">智能断路器 · 辰微</div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </aside>
+  <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="mobile-header">
+      <div class="hamburger" onclick="toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg></div>
+      <h1 id="mobileTitle">看板</h1>
+      <div style="width:36px"></div>
+    </div>
+    <div class="topbar">
+      <div class="topbar-left"><h2 id="pageTitle">看板</h2></div>
+      <div class="topbar-actions">
+        <button class="btn btn-sm" onclick="resetTableLayout()" title="恢复所有表格的默认列顺序和列宽"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>重置列布局</button>
+        <button class="btn btn-sm" onclick="exportXLSX()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>全量导出</button>
+        <button class="btn btn-sm" onclick="triggerImport()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>全量导入</button>
+        <span style="width:1px;height:20px;background:var(--border);margin:0 4px;display:inline-block"></span>
+        <button class="btn btn-sm" style="background:var(--primary);color:#fff" onclick="backupAll()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M18 9l-6-6-6 6M12 3v12"/></svg>备份</button>
+        <button class="btn btn-sm" onclick="document.getElementById('backupFile').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M6 9l6-6 6 6M12 3v12"/></svg>恢复</button>
+        <button class="btn btn-sm" id="autoBackupBtn" onclick="toggleAutoBackup()" title="数据变更时自动下载 .json 备份文件，链接轮换/换设备后可一键恢复">自动备份：开</button>
+        <span id="autoBackupStatus" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
+        <button class="btn btn-sm btn-danger" onclick="confirmClear()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>清空</button>
+        <input type="file" id="importFile" accept=".xlsx" style="display:none" onchange="importXLSX(event)">
+        <input type="file" id="backupFile" accept=".json" style="display:none" onchange="restoreBackup(event)">
+      </div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+/* ================================================================
+   DB 异步数据层 — 服务器就绪
+   现在：localStorage  |  将来：把 API_BASE 填上服务器地址，
+   DB.get/set 内部换成 fetch 即可，前端其余逻辑无需改动。
+================================================================ */
+const API_BASE=''; // 服务器部署时填: 'http://192.168.x.x:3000/api'
+const KEY='wb_cb_prod_';
+const DB={
+  async get(k,def){
+    if(API_BASE){
+      // const r=await fetch(API_BASE+'/'+k); return await r.json();
+    }
+    try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}
+  },
+  async set(k,v){
+    if(API_BASE){
+      // await fetch(API_BASE+'/'+k,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});
+    }
+    localStorage.setItem(KEY+k,JSON.stringify(v));
+    return v;
+  }
+};
+/* 兼容包装：旧代码 save/load 同步调用 */
+function save(k,v){
+  DB.set(k,v);
+  // 业务数据变更后自动备份（仅在启动完成后，避免启动期误触发下载）
+  if(bootDone && ['products','orders','inventory','dailyPlans','dailyPkgs','deliveries','fields'].indexOf(k)>=0){
+    try{scheduleAutoBackup();}catch(e){}
+  }
+  return v;
+}
+function load(k,def){try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}}
+// 自动备份状态（可携式 .json 文件，用于链接轮换后一键恢复）
+let autoBackupOn=true, bootDone=false, lastAutoBackup=0;
+const AUTO_BACKUP_MIN=15; // 两次自动备份最小间隔(分钟)
+
+/* ================================================================
+   常量
+================================================================ */
+const TYPES=['text','number','date','select','textarea','ref'];
+const PROCESS_STEPS=['assembly','innerPack','testAging','semiInbound'];
+const PROCESS_LABELS={assembly:'装配',innerPack:'内包',testAging:'调试老化',semiInbound:'半成品入库'};
+const PKG_STEPS=['packaging','finishedInbound'];
+const PKG_LABELS={packaging:'包装',finishedInbound:'成品入库'};
+const STOCK_STATUS={normal:{label:'正常',cls:'tag-green'},low:{label:'低于下限',cls:'tag-red'},high:{label:'高于上限',cls:'tag-amber'}};
+const ORDER_STATUS=['待排产','执行中','已完成','已取消'];
+const DELIVERY_FREQ=['每周一次(周一)','每周一次(周五)','每三天一次','每日'];
+const LOCK='<svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+
+/* ================================================================
+   引用字段引擎（字段可引用其它表单的某个字段，录入时自动带出）
+================================================================ */
+const FORM_DATA={
+  product:()=>products,
+  order:()=>orders,
+  inventory:()=>inventory,
+  dailyPlan:()=>dailyPlans,
+  dailyPkg:()=>dailyPkgs,
+  delivery:()=>deliveries
+};
+const REF_FORM_LABELS={product:'产品主数据',order:'订单管理',inventory:'半成品库存',dailyPlan:'日排产-备货',dailyPkg:'日排产-包装',delivery:'交付计划'};
+/* 支持引用字段的表单（其余表单的录入界面为固定结构，暂不在字段设置中开放引用） */
+const REF_ENABLED=['product','order'];
+
+/* 在 refForm 中找到 refMatch 字段值等于 keyVal 的记录，返回 refField 的值 */
+function lookupRef(refForm,refMatch,keyVal,refField){
+  if(!refForm||!refField)return '';
+  const data=(FORM_DATA[refForm]&&FORM_DATA[refForm]())||[];
+  if(keyVal==null||keyVal==='')return '';
+  const rec=data.find(r=>String(r[refMatch]!=null?r[refMatch]:'')===String(keyVal));
+  return rec?rec[refField]:'';
+}
+/* 当前 sec 中，被某个 ref 字段用作关联键(refKey)的字段 key 集合 */
+function refKeysOf(sec){
+  const set=new Set();
+  ((fields[sec]||[]).filter(f=>f.type==='ref')).forEach(f=>{ if(f.refKey)set.add(f.refKey); });
+  return set;
+}
+function fieldLabel(sec,key){
+  const f=(fields[sec]||[]).find(x=>x.key===key);
+  return f?f.label:key;
+}
+function refDesc(f,sec){
+  if(!f.refForm)return '未配置引用';
+  const tf=REF_FORM_LABELS[f.refForm]||f.refForm;
+  const refFieldLabel=fieldLabel(f.refForm,f.refField);
+  const refKeyLabel=fieldLabel(sec,f.refKey);
+  return '引用 '+tf+' · '+refFieldLabel+'（按「'+refKeyLabel+'」匹配）';
+}
+/* 通用控件生成：支持 ref 类型（只读带出）与关联键 onchange 绑定 */
+function genControl(f,prefix,val,sec){
+  const id=prefix+f.key;
+  const isRefKey=(sec&&refKeysOf(sec).has(f.key));
+  const onch=isRefKey?' onchange="refKeyTrigger(this)"':'';
+  if(f.type==='ref'){
+    return '<input type="text" id="'+id+'" class="ref-field" data-key="'+f.key+'" data-ref-form="'+esc(f.refForm||'')+'" data-ref-match="'+esc(f.refMatch||'')+'" data-ref-field="'+esc(f.refField||'')+'" data-ref-key="'+esc(f.refKey||'')+'" value="'+esc(val)+'" readonly style="background:#f6f8fa;color:var(--muted)">';
+  }
+  if(f.type==='select'){
+    return '<select id="'+id+'"'+onch+'>'+(f.options||[]).map(o=>'<option '+(o===val?'selected':'')+'>'+esc(o)+'</option>').join('')+'</select>';
+  }
+  if(f.type==='textarea'){
+    return '<textarea id="'+id+'" rows="2"'+onch+'>'+esc(val)+'</textarea>';
+  }
+  const tp=f.type==='number'?'number':(f.type==='date'?'date':'text');
+  return '<input type="'+tp+'" id="'+id+'" value="'+esc(f.type==='date'?fmtDate(val):val)+'"'+(f.required?' required':'')+onch+'>';
+}
+/* 关联键变化时，带出同容器内所有依赖它的引用字段 */
+function refKeyTrigger(el){
+  const root=el.closest('tr')||el.closest('form')||el.closest('.modal-body')||el.parentElement;
+  const key=el.getAttribute('data-key');
+  if(!root||!key)return;
+  root.querySelectorAll('.ref-field').forEach(rf=>{
+    if(rf.getAttribute('data-ref-key')===key){
+      const refForm=rf.getAttribute('data-ref-form');
+      const refMatch=rf.getAttribute('data-ref-match');
+      const refField=rf.getAttribute('data-ref-field');
+      const kvEl=root.querySelector('[data-key="'+key+'"]');
+      const kv=kvEl?kvEl.value:'';
+      rf.value=lookupRef(refForm,refMatch,kv,refField);
+    }
+  });
+}
+
+/* ================================================================
+   操作日志
+================================================================ */
+function logOp(action,target,detail,field,oldv,newv){
+  var entry={time:new Date().toLocaleString('zh-CN',{hour12:false}),action:action,target:target,detail:detail,
+    field:field||'', oldv:(oldv===undefined?'':oldv), newv:(newv===undefined?'':newv)};
+  logs.unshift(entry);
+  if(logs.length>500)logs=logs.slice(0,500);
+  save('logs',logs);
+}
+/* 字段级日志增强：硬编码表单(库存/排产/交付)的字段名映射 */
+const HARD_FIELDS={
+  inventory:[
+    {key:'date',label:'日期'},{key:'productId',label:'产品编码'},{key:'productName',label:'产品名称'},
+    {key:'opening',label:'期初'},{key:'inbound',label:'入库'},{key:'outbound',label:'出库'},
+    {key:'closing',label:'期末'},{key:'stockMin',label:'库存下限'},{key:'stockMax',label:'库存上限'},{key:'status',label:'状态'}
+  ],
+  dailyPlan:[
+    {key:'date',label:'日期'},{key:'productId',label:'产品编码'},{key:'productName',label:'产品名称'},
+    {key:'assemblyPlan',label:'装配计划'},{key:'assemblyDone',label:'装配实际'},{key:'innerPackPlan',label:'内包装计划'},
+    {key:'innerPackDone',label:'内包装实际'},{key:'testAgingPlan',label:'测试老化计划'},{key:'testAgingDone',label:'测试老化实际'},
+    {key:'semiInbound',label:'半成品入库'},{key:'notes',label:'备注'}
+  ],
+  dailyPkg:[
+    {key:'date',label:'日期'},{key:'productId',label:'产品编码'},{key:'productName',label:'产品名称'},
+    {key:'orderId',label:'关联订单'},{key:'pkgPlan',label:'包装计划'},{key:'pkgDone',label:'包装实际'},
+    {key:'finInbound',label:'成品入库'},{key:'orderTotal',label:'订单总量'},{key:'delivered',label:'已交付'},
+    {key:'undelivered',label:'未交付'},{key:'notes',label:'备注'}
+  ],
+  delivery:[
+    {key:'orderId',label:'订单编号'},{key:'customer',label:'客户'},{key:'productId',label:'产品编码'},
+    {key:'productName',label:'产品名称'},{key:'orderTotal',label:'订单总量'},{key:'delivered',label:'已交付'},
+    {key:'undelivered',label:'未交付'},{key:'freq',label:'交付频率'},{key:'finalDate',label:'最终交付期'},
+    {key:'firstDate',label:'首次交付日'},{key:'batchCount',label:'批次数量'},{key:'perBatch',label:'每批交付'},{key:'notes',label:'备注'}
+  ]
+};
+function fmtLogVal(v){ if(v===undefined||v===null||v==='')return '空'; return String(v); }
+function logFieldEdit(formLabel,fieldLabel,oldv,newv,recLabel){
+  var d='记录「'+(recLabel||'')+'」：'+fmtLogVal(oldv)+' → '+fmtLogVal(newv);
+  logOp('编辑',formLabel,d,fieldLabel,oldv,newv);
+}
+/* 逐字段对比旧/新记录并记录变更 */
+function logFieldDiffs(formLabel,fieldDefs,oldRec,newRec,recLabel){
+  if(!fieldDefs||!fieldDefs.length)return;
+  fieldDefs.forEach(f=>{
+    var k=f.key;
+    var ov=oldRec&&oldRec[k]!=null?oldRec[k]:'';
+    var nv=newRec&&newRec[k]!=null?newRec[k]:'';
+    if(String(ov)!==String(nv)) logFieldEdit(formLabel,f.label,ov,nv,recLabel);
+  });
+}
+/* 订单明细行逐行对比 */
+function logOrderLineDiffs(formLabel,oldItems,newItems,recLabel){
+  var lineDefs=orderLineFields();
+  var n=Math.max(oldItems?oldItems.length:0,newItems?newItems.length:0);
+  for(var i=0;i<n;i++){
+    var oldIt=oldItems&&oldItems[i]?oldItems[i]:null;
+    var newIt=newItems&&newItems[i]?newItems[i]:null;
+    var prefix='第'+(i+1)+'行·';
+    if(!oldIt&&newIt){ logFieldEdit(formLabel,prefix+'明细', '', '(新增明细行)', recLabel); continue; }
+    if(oldIt&&!newIt){ logFieldEdit(formLabel,prefix+'明细', '(删除明细行)', '', recLabel); continue; }
+    lineDefs.forEach(f=>{
+      var k=f.key;
+      var ov=oldIt[k]!=null?oldIt[k]:'';
+      var nv=newIt[k]!=null?newIt[k]:'';
+      if(String(ov)!==String(nv)) logFieldEdit(formLabel,prefix+f.label,ov,nv,recLabel);
+    });
+  }
+}
+
+/* ================================================================
+   字段定义（可用户自定义）
+================================================================ */
+const defaultFields={
+  product:[
+    {key:'id',label:'产品编码',type:'text',required:true,locked:true},
+    {key:'name',label:'产品名称',type:'text',required:true,locked:true},
+    {key:'spec',label:'规格',type:'text',required:false,locked:true},
+    {key:'model',label:'型号',type:'text',required:false,locked:false},
+    {key:'unit',label:'单位',type:'text',required:false,locked:false},
+    {key:'dailyCapUnpkg',label:'日产能(未包)',type:'number',required:false,locked:true},
+    {key:'dailyCapPkg',label:'日产能(包装)',type:'number',required:false,locked:true},
+    {key:'status',label:'状态',type:'select',required:false,locked:false,options:['启用','停用']}
+  ],
+  order:[
+    {key:'id',label:'订单编号',type:'text',required:true,locked:true,level:'head'},
+    {key:'customer',label:'客户名称',type:'text',required:true,locked:true,level:'head'},
+    {key:'productId',label:'产品编码',type:'text',required:true,locked:true,level:'line'},
+    {key:'productName',label:'产品名称',type:'text',required:true,locked:true,level:'line'},
+    {key:'orderQty',label:'订单数量',type:'number',required:true,locked:true,level:'line'},
+    {key:'deliveredQty',label:'已交付数量',type:'number',required:true,locked:true,level:'line'},
+    {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
+    {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
+    {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
+    {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
+  ],
+  inventory:[
+    {key:'date',label:'日期',type:'date',required:true,locked:true},
+    {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
+    {key:'productName',label:'产品名称',type:'text',required:true,locked:true},
+    {key:'opening',label:'期初库存',type:'number',required:true,locked:true},
+    {key:'inbound',label:'入库(装配产出)',type:'number',required:false,locked:false},
+    {key:'outbound',label:'出库(包装消耗)',type:'number',required:false,locked:false},
+    {key:'closing',label:'期末库存',type:'number',required:true,locked:true},
+    {key:'stockMin',label:'库存下限',type:'number',required:true,locked:true},
+    {key:'stockMax',label:'库存上限',type:'number',required:true,locked:true},
+    {key:'status',label:'库存状态',type:'text',required:false,locked:true}
+  ],
+  dailyPlan:[
+    {key:'date',label:'日期',type:'date',required:true,locked:true},
+    {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
+    {key:'productName',label:'产品名称',type:'text',required:true,locked:true},
+    {key:'assemblyPlan',label:'装配计划',type:'number',required:false,locked:false},
+    {key:'assemblyDone',label:'装配完成',type:'number',required:false,locked:false},
+    {key:'innerPackPlan',label:'内包计划',type:'number',required:false,locked:false},
+    {key:'innerPackDone',label:'内包完成',type:'number',required:false,locked:false},
+    {key:'testAgingPlan',label:'调试老化计划',type:'number',required:false,locked:false},
+    {key:'testAgingDone',label:'调试老化完成',type:'number',required:false,locked:false},
+    {key:'semiInbound',label:'半成品入库',type:'number',required:false,locked:false},
+    {key:'notes',label:'备注',type:'text',required:false,locked:false}
+  ],
+  dailyPkg:[
+    {key:'date',label:'日期',type:'date',required:true,locked:true},
+    {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
+    {key:'productName',label:'产品名称',type:'text',required:true,locked:true},
+    {key:'orderId',label:'关联订单',type:'text',required:true,locked:true},
+    {key:'pkgPlan',label:'包装计划',type:'number',required:false,locked:false},
+    {key:'pkgDone',label:'包装完成',type:'number',required:false,locked:false},
+    {key:'finInbound',label:'成品入库',type:'number',required:false,locked:false},
+    {key:'orderTotal',label:'订单总量',type:'number',required:false,locked:false},
+    {key:'delivered',label:'已交付',type:'number',required:false,locked:false},
+    {key:'undelivered',label:'未交付',type:'number',required:false,locked:false},
+    {key:'notes',label:'备注',type:'text',required:false,locked:false}
+  ],
+  delivery:[
+    {key:'orderId',label:'订单编号',type:'text',required:true,locked:true},
+    {key:'customer',label:'客户名称',type:'text',required:true,locked:true},
+    {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
+    {key:'productName',label:'产品名称',type:'text',required:true,locked:true},
+    {key:'orderTotal',label:'订单总量',type:'number',required:true,locked:true},
+    {key:'delivered',label:'已交付',type:'number',required:true,locked:true},
+    {key:'undelivered',label:'未交付',type:'number',required:true,locked:true},
+    {key:'freq',label:'交付频率',type:'select',required:true,locked:false,options:DELIVERY_FREQ},
+    {key:'finalDate',label:'最终交付期',type:'date',required:true,locked:true},
+    {key:'firstDate',label:'首次交付日',type:'date',required:true,locked:false},
+    {key:'batchCount',label:'交付批次',type:'number',required:false,locked:false},
+    {key:'perBatch',label:'每批交付量',type:'text',required:false,locked:false},
+    {key:'notes',label:'备注',type:'text',required:false,locked:false}
+  ]
+};
+
+const FORM_META={
+  product:{title:'产品主数据',sub:'产品基础信息 · 日产能 · 库存上下限',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
+  order:{title:'订单管理',sub:'框架订单 · 交付进度 · 状态',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
+  inventory:{title:'半成品库存',sub:'每日出入库 · 库存余额 · 状态',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>'},
+  dailyPlan:{title:'日排产计划',sub:'备货排产(装配→内包→调试老化) + 包装排产(按订单)',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2M8 18h2M14 18h2"/></svg>'},
+  delivery:{title:'交付计划',sub:'分批交付 · 倒排排期 · 实际填报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7M5.5 19a2.5 2.5 0 0 0 5 0"/></svg>'}
+};
+
+/* ================================================================
+   导航
+================================================================ */
+const NAV=[
+  {id:'dashboard',label:'看板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>'},
+  {id:'product',label:'产品主数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
+  {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
+  {id:'inventory',label:'半成品库存',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>'},
+  {id:'dailyPlan',label:'日排产',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
+  {id:'dailyReport',label:'生产日报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>'},
+  {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
+  {id:'fields',label:'字段设置',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>'},
+  {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'}
+];
+
+/* ================================================================
+   状态
+================================================================ */
+let products=[],orders=[],inventory=[],dailyPlans=[],dailyPkgs=[],deliveries=[];
+let logs=[];
+let fields=JSON.parse(JSON.stringify(defaultFields));
+let meta={seq:0};
+let activeTab='dashboard';
+let selectedFieldForm='product';
+/* 字段设置审核状态：audited=已审核(锁定) / draft=草稿(可编辑未生效) */
+let fieldsAudit='audited';
+let fieldsDraft=null;
+let planDate=todayStr();
+let reportDate=todayStr();
+let deliveryOrderId='';
+
+function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmtDate(s){if(!s)return '';if(s instanceof Date)return s.getFullYear()+'-'+String(s.getMonth()+1).padStart(2,'0')+'-'+String(s.getDate()).padStart(2,'0');if(typeof s==='string'&&s.includes('T'))return s.split('T')[0];return s;}
+function num(v){const n=parseFloat(v);return isNaN(n)?0:n;}
+function money(v){return num(v).toLocaleString('zh-CN');}
+
+/* ================================================================
+   Seed 数据
+================================================================ */
+function seed(){
+  products=[
+    {id:'P001',name:'智能框架断路器',spec:'ACB',model:'2000',unit:'台',dailyCapUnpkg:50,dailyCapPkg:30,status:'启用'},
+    {id:'P002',name:'塑壳断路器',spec:'MCCB',model:'400',unit:'台',dailyCapUnpkg:200,dailyCapPkg:150,status:'启用'},
+    {id:'P003',name:'微型断路器',spec:'MCB',model:'1P-63',unit:'只',dailyCapUnpkg:500,dailyCapPkg:400,status:'启用'},
+    {id:'P004',name:'漏电断路器',spec:'RCBO',model:'100',unit:'台',dailyCapUnpkg:300,dailyCapPkg:200,status:'启用'}
+  ];
+  orders=[
+    {id:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderQty:500,deliveredQty:180,startDate:'2026-07-01',deadline:'2026-12-31',status:'执行中',notes:'Q3-Q4框架订单'},
+    {id:'O2026002',customer:'智慧楼宇工程',productId:'P002',productName:'塑壳断路器',orderQty:3000,deliveredQty:900,startDate:'2026-07-15',deadline:'2026-11-30',status:'执行中',notes:'半年框架订单'},
+    {id:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderQty:10000,deliveredQty:2500,startDate:'2026-08-01',deadline:'2026-12-31',status:'执行中',notes:'季度框架订单'}
+  ];
+  const d1='2026-08-13',d2='2026-08-14';
+  inventory=[
+    {date:d1,productId:'P001',productName:'智能框架断路器',opening:280,inbound:50,outbound:30,closing:300,stockMin:100,stockMax:500,status:'正常'},
+    {date:d1,productId:'P002',productName:'塑壳断路器',opening:580,inbound:200,outbound:150,closing:630,stockMin:300,stockMax:1500,status:'正常'},
+    {date:d1,productId:'P003',productName:'微型断路器',opening:750,inbound:500,outbound:400,closing:850,stockMin:800,stockMax:4000,status:'正常'},
+    {date:d1,productId:'P004',productName:'漏电断路器',opening:150,inbound:300,outbound:200,closing:250,stockMin:200,stockMax:1000,status:'正常'},
+    {date:d2,productId:'P001',productName:'智能框架断路器',opening:300,inbound:48,outbound:30,closing:318,stockMin:100,stockMax:500,status:'正常'},
+    {date:d2,productId:'P002',productName:'塑壳断路器',opening:630,inbound:195,outbound:150,closing:675,stockMin:300,stockMax:1500,status:'正常'},
+    {date:d2,productId:'P003',productName:'微型断路器',opening:850,inbound:498,outbound:400,closing:948,stockMin:800,stockMax:4000,status:'正常'},
+    {date:d2,productId:'P004',productName:'漏电断路器',opening:250,inbound:0,outbound:0,closing:250,stockMin:200,stockMax:1000,status:'正常'}
+  ];
+  dailyPlans=[
+    {date:d1,productId:'P001',productName:'智能框架断路器',assemblyPlan:50,assemblyDone:48,innerPackPlan:50,innerPackDone:50,testAgingPlan:50,testAgingDone:46,semiInbound:46,notes:'库存300→正常区间'},
+    {date:d1,productId:'P002',productName:'塑壳断路器',assemblyPlan:200,assemblyDone:195,innerPackPlan:200,innerPackDone:198,testAgingPlan:200,testAgingDone:193,semiInbound:193,notes:'库存630→正常区间'},
+    {date:d1,productId:'P003',productName:'微型断路器',assemblyPlan:500,assemblyDone:498,innerPackPlan:500,innerPackDone:495,testAgingPlan:500,testAgingDone:490,semiInbound:490,notes:'库存850→正常区间'},
+    {date:d1,productId:'P004',productName:'漏电断路器',assemblyPlan:300,assemblyDone:0,innerPackPlan:300,innerPackDone:0,testAgingPlan:300,testAgingDone:0,semiInbound:0,notes:'库存250>下限200,暂缓'},
+    {date:d2,productId:'P001',productName:'智能框架断路器',assemblyPlan:50,assemblyDone:50,innerPackPlan:50,innerPackDone:48,testAgingPlan:50,testAgingDone:46,semiInbound:46,notes:'正常排产'},
+    {date:d2,productId:'P002',productName:'塑壳断路器',assemblyPlan:200,assemblyDone:200,innerPackPlan:200,innerPackDone:195,testAgingPlan:200,testAgingDone:193,semiInbound:193,notes:'正常排产'},
+    {date:d2,productId:'P003',productName:'微型断路器',assemblyPlan:500,assemblyDone:500,innerPackPlan:500,innerPackDone:498,testAgingPlan:500,testAgingDone:490,semiInbound:490,notes:'正常排产'}
+  ];
+  dailyPkgs=[
+    {date:d1,productId:'P001',productName:'智能框架断路器',orderId:'O2026001',pkgPlan:30,pkgDone:30,finInbound:30,orderTotal:500,delivered:180,undelivered:320,notes:'日交付30台'},
+    {date:d1,productId:'P002',productName:'塑壳断路器',orderId:'O2026002',pkgPlan:150,pkgDone:148,finInbound:148,orderTotal:3000,delivered:900,undelivered:2100,notes:'日交付150台'},
+    {date:d1,productId:'P003',productName:'微型断路器',orderId:'O2026003',pkgPlan:400,pkgDone:398,finInbound:398,orderTotal:10000,delivered:2500,undelivered:7500,notes:'日交付400只'},
+    {date:d2,productId:'P001',productName:'智能框架断路器',orderId:'O2026001',pkgPlan:30,pkgDone:30,finInbound:30,orderTotal:500,delivered:180,undelivered:320,notes:'日交付30台'},
+    {date:d2,productId:'P002',productName:'塑壳断路器',orderId:'O2026002',pkgPlan:150,pkgDone:150,finInbound:150,orderTotal:3000,delivered:900,undelivered:2100,notes:'日交付150台'},
+    {date:d2,productId:'P003',productName:'微型断路器',orderId:'O2026003',pkgPlan:400,pkgDone:400,finInbound:400,orderTotal:10000,delivered:2500,undelivered:7500,notes:'日交付400只'}
+  ];
+  deliveries=[
+    {orderId:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderTotal:500,delivered:180,undelivered:320,freq:'每周一次(周一)',finalDate:'2026-12-31',firstDate:'2026-08-17',batchCount:20,perBatch:'16',notes:'剩余320台分20周交付'},
+    {orderId:'O2026002',customer:'智慧楼宇工程',productId:'P002',productName:'塑壳断路器',orderTotal:3000,delivered:900,undelivered:2100,freq:'每三天一次',finalDate:'2026-11-30',firstDate:'2026-08-15',batchCount:36,perBatch:'58(末批70)',notes:'剩余2100台分36批交付'},
+    {orderId:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderTotal:10000,delivered:2500,undelivered:7500,freq:'每三天一次',finalDate:'2026-12-31',firstDate:'2026-08-15',batchCount:47,perBatch:'159(末批162)',notes:'剩余7500只分47批交付'}
+  ];
+  save('products',products);
+  save('orders',orders);
+  save('inventory',inventory);
+  save('dailyPlans',dailyPlans);
+  save('dailyPkgs',dailyPkgs);
+  save('deliveries',deliveries);
+}
+
+/* ================================================================
+   表格筛选/排序引擎（所有表格通用）
+   - 点击列头：排序（升 → 降 → 取消）
+   - 点击列头漏斗：弹出筛选面板
+================================================================ */
+var tblState={};      // tblState[模块]={sort:{key,dir},filters:{key:{mode,val,vals}}}
+var TBL_SCHEMAS={};   // 每个表格的列定义（渲染时注册）
+var TBL_ROWS={};      // 每个表格当前数据（渲染时注册，供筛选面板取唯一值）
+
+function tState(m){if(!tblState[m])tblState[m]={sort:null,filters:{}};return tblState[m];}
+function colVal(col,r){return col.get?col.get(r):(r[col.key]!=null?r[col.key]:'');}
+
+function filterRows(m,rows){
+  const s=tState(m),schema=TBL_SCHEMAS[m]||[];
+  return rows.filter(r=>{
+    for(const key of Object.keys(s.filters)){
+      const f=s.filters[key];if(!f)continue;
+      const hasVals=f.vals&&f.vals.length>0;
+      const hasVal=f.val!==''&&f.val!=null;
+      if(!hasVals&&!hasVal)continue;
+      const col=schema.find(c=>c.key===key);if(!col)continue;
+      const v=colVal(col,r);
+      if(col.type==='number'){
+        const nv=num(v);
+        if(hasVals){if(f.vals.map(x=>num(x)).indexOf(nv)<0)return false;}
+        else{
+          const fv=num(f.val);
+          if(f.mode==='gte'&&!(nv>=fv))return false;
+          if(f.mode==='lte'&&!(nv<=fv))return false;
+          if(f.mode==='eq'&&nv!==fv)return false;
+          if(f.mode==='neq'&&nv===fv)return false;
+        }
+      }else if(col.type==='date'){
+        const dv=fmtDate(v);
+        if(hasVals){if(f.vals.indexOf(dv)<0)return false;}
+        else{
+          if(f.mode==='gte'&&!(dv>=f.val))return false;
+          if(f.mode==='lte'&&!(dv<=f.val))return false;
+          if(f.mode==='eq'&&dv!==f.val)return false;
+          if(f.mode==='neq'&&dv===f.val)return false;
+        }
+      }else{
+        const sv=String(v);
+        if(hasVals){if(f.vals.indexOf(sv)<0)return false;}
+        else{
+          const fv=String(f.val);
+          if(f.mode==='eq'&&sv!==fv)return false;
+          if(f.mode==='neq'&&sv===fv)return false;
+          if((f.mode==='contains'||!f.mode)&&sv.toLowerCase().indexOf(fv.toLowerCase())<0)return false;
+        }
+      }
+    }
+    return true;
+  });
+}
+
+function sortRows(m,rows){
+  const s=tState(m);
+  if(!s.sort)return rows;
+  const col=(TBL_SCHEMAS[m]||[]).find(c=>c.key===s.sort.key);
+  if(!col)return rows;
+  const dir=s.sort.dir;
+  return [...rows].sort((a,b)=>{
+    let va=colVal(col,a),vb=colVal(col,b);
+    if(col.type==='number')return (num(va)-num(vb))*dir;
+    if(col.type==='date'){va=fmtDate(va);vb=fmtDate(vb);return va<vb?-dir:(va>vb?dir:0);}
+    va=String(va);vb=String(vb);
+    return va.localeCompare(vb,'zh-CN')*dir;
+  });
+}
+
+function applyTable(m,rows){return sortRows(m,filterRows(m,rows));}
+
+/* 可点击列头（排序+筛选图标） */
+var FILT_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>';
+function thCol(m,col,style){
+  const s=tState(m);
+  const sorted=s.sort&&s.sort.key===col.key;
+  const dir=sorted?(s.sort.dir===1?'▲':'▼'):'⇅';
+  const f=s.filters[col.key];
+  const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));
+  return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')" title="点击排序，按住左右拖动调整列顺序，右缘拖动调宽">'+esc(col.label)+
+    (col.locked?' '+LOCK:'')+
+    '<span class="sort-ico'+(sorted?' on':'')+'">'+dir+'</span>'+
+    '<span class="filt-ico'+(act?' on':'')+'" onclick="event.stopPropagation();openFilter(this,\''+m+'\',\''+col.key+'\')" title="筛选">'+FILT_SVG+'</span>'+
+    '<span class="th-rs" title="拖动调整列宽"></span></th>';
+}
+
+function toggleSort(m,key){
+  if(Date.now()-(window.__colDragTS||0)<350)return;   // 刚完成拖拽/调宽，忽略误触 click
+  const s=tState(m);
+  if(!s.sort||s.sort.key!==key)s.sort={key:key,dir:1};
+  else if(s.sort.dir===1)s.sort.dir=-1;
+  else s.sort=null;
+  renderContent();
+}
+
+/* 筛选面板 */
+var filtPop=null;
+function closeFiltPop(){if(filtPop){filtPop.remove();filtPop=null;}}
+document.addEventListener('click',function(e){if(filtPop&&!filtPop.contains(e.target))closeFiltPop();});
+
+function openFilter(el,m,key){
+  closeFiltPop();
+  const col=(TBL_SCHEMAS[m]||[]).find(c=>c.key===key);if(!col)return;
+  const rows=TBL_ROWS[m]||[];
+  const s=tState(m);
+  const f=s.filters[key]||{mode:'contains',val:''};
+  let inner='';
+  const uniques=[...new Set(rows.map(r=>{const v=colVal(col,r);return col.type==='date'?fmtDate(v):String(v);}))].filter(v=>v!=='');
+  uniques.sort();
+  const useChecks=col.type!=='number'&&col.type!=='date'&&(col.select||uniques.length<=15);
+  if(useChecks){
+    const sel=f.vals||[];
+    inner+='<div class="fp-opts">'+uniques.map(v=>'<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>').join('')+'</div>'+
+      '<div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="filtCheckAll(this,true)">全选</button><button class="btn btn-sm" onclick="filtCheckAll(this,false)">全不选</button></div>';
+  }else if(col.type==='number'){
+    inner+='<select id="fp_mode">'+[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+      '<input type="number" id="fp_val" value="'+(f.val!=null?f.val:'')+'" placeholder="输入数值">';
+  }else if(col.type==='date'){
+    inner+='<select id="fp_mode">'+[['gte','晚于等于'],['lte','早于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+      '<input type="date" id="fp_val" value="'+(f.val!=null?f.val:'')+'">';
+  }else{
+    inner+='<select id="fp_mode">'+[['contains','包含'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+      '<input type="text" id="fp_val" value="'+esc(f.val||'')+'" placeholder="输入关键字">';
+  }
+  const pop=document.createElement('div');
+  pop.className='filt-pop';
+  pop.innerHTML='<div class="fp-title">筛选：'+esc(col.label)+'</div>'+inner+
+    '<div class="fp-btns"><button class="btn btn-sm" onclick="clearFilt(\''+m+'\',\''+key+'\')">清除</button><button class="btn btn-sm btn-primary" onclick="applyFilt(\''+m+'\',\''+key+'\','+useChecks+')">确定</button></div>';
+  document.body.appendChild(pop);
+  pop.addEventListener('click',e=>e.stopPropagation());
+  const r=el.getBoundingClientRect();
+  let left=r.left;
+  if(left+240>window.innerWidth-8)left=window.innerWidth-248;
+  if(left<8)left=8;
+  pop.style.left=left+'px';
+  pop.style.top=(r.bottom+6+window.scrollY)+'px';
+  filtPop=pop;
+  const inp=pop.querySelector('#fp_val');
+  if(inp)inp.focus();
+}
+
+function filtCheckAll(btn,on){
+  btn.closest('.filt-pop').querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=on);
+}
+function clearFilt(m,key){delete tState(m).filters[key];closeFiltPop();renderContent();}
+function clearAllFilt(m){tState(m).filters={};closeFiltPop();renderContent();}
+function applyFilt(m,key,useChecks){
+  const f={mode:'contains',val:''};
+  if(useChecks){
+    const vals=[];
+    filtPop.querySelectorAll('input[type=checkbox]:checked').forEach(c=>vals.push(c.value));
+    f.vals=vals;f.mode='in';
+  }else{
+    f.mode=document.getElementById('fp_mode').value;
+    f.val=document.getElementById('fp_val').value;
+  }
+  tState(m).filters[key]=f;
+  closeFiltPop();renderContent();
+}
+
+/* 筛选状态条（有筛选时显示在表格上方） */
+function filterBar(m){
+  const s=tState(m);
+  const schema=TBL_SCHEMAS[m]||[];
+  const MODE_NAME={contains:'包含',eq:'=',neq:'≠',gte:'≥',lte:'≤',in:''};
+  const keys=Object.keys(s.filters).filter(k=>{const f=s.filters[k];return f&&(f.vals&&f.vals.length>0||(f.val!==''&&f.val!=null));});
+  if(!keys.length)return '';
+  const chips=keys.map(k=>{
+    const col=schema.find(c=>c.key===k);if(!col)return '';
+    const f=s.filters[k];
+    const txt=(f.vals&&f.vals.length)?col.label+'：'+f.vals.length+'项':col.label+' '+(MODE_NAME[f.mode]||'')+f.val;
+    return '<span class="fchip">'+esc(txt)+' <b onclick="clearFilt(\''+m+'\',\''+k+'\')" title="移除该筛选">×</b></span>';
+  }).join('');
+  return '<div class="tbl-fbar">'+chips+'<button class="btn btn-sm" onclick="clearAllFilt(\''+m+'\')">清除全部</button></div>';
+}
+
+/* 空筛选结果行 */
+function noMatchRow(m,colspan){
+  return '<tr><td colspan="'+colspan+'" style="text-align:center;padding:24px;color:var(--muted)">无匹配数据 <button class="btn btn-sm" style="margin-left:8px" onclick="clearAllFilt(\''+m+'\')">清除筛选</button></td></tr>';
+}
+
+/* ================================================================
+   列布局引擎：表头左右拖拽调序 + 右缘拖拽调宽（每表独立记忆）
+================================================================ */
+var tblLayout={};   // tblLayout[模块]={order:[key...],widths:{key:px}}
+function layoutOf(m){if(!tblLayout[m])tblLayout[m]={order:null,widths:{}};return tblLayout[m];}
+function saveLayout(){DB.set('tblLayout',tblLayout);}
+
+/* 渲染后调用：按已保存的顺序/宽度重排 DOM 中所有带 data-m 的表格 */
+function applyTableLayout(){
+  document.querySelectorAll('#content table').forEach(function(tbl){
+    var thead=tbl.tHead;if(!thead||!thead.rows.length)return;
+    var headCells=[...thead.rows[0].cells];
+    var firstM=null;
+    headCells.forEach(function(th){if(!firstM&&th.getAttribute&&th.getAttribute('data-m'))firstM=th.getAttribute('data-m');});
+    if(!firstM)return;
+    var lo=layoutOf(firstM);
+    /* 需要重排的可拖列槽位（列索引） */
+    var slots=[];
+    headCells.forEach(function(th,i){if(th.getAttribute&&th.getAttribute('data-key'))slots.push(i);});
+    if(slots.length<2)return;
+    var curKeys=slots.map(function(i){return headCells[i].getAttribute('data-key');});
+    /* 目标顺序 = 已存顺序(过滤仍存在的) + 新增列按当前顺序 */
+    var order=(lo.order||[]).filter(function(k){return curKeys.indexOf(k)>=0;});
+    curKeys.forEach(function(k){if(order.indexOf(k)<0)order.push(k);});
+    /* 重排所有行（含表头），只动可拖列槽位，静态列(如"操作")位置不变 */
+    [...tbl.rows].forEach(function(row){
+      if(row.cells.length!==headCells.length)return;
+      var cells=[...row.cells];
+      var keyedCells=slots.map(function(i){return cells[i];});
+      slots.forEach(function(slot,j){
+        var key=order[j];
+        var src=curKeys.indexOf(key);
+        if(row.cells[slot]!==keyedCells[src])row.replaceChild(keyedCells[src],row.cells[slot]);
+      });
+    });
+    /* 应用列宽和表格最小宽度（撑开时出横向滚动条） */
+    headCells.forEach(function(th){
+      var k=th.getAttribute('data-key');
+      if(k&&lo.widths&&lo.widths[k])th.style.width=lo.widths[k]+'px';
+    });
+    if(lo.minW)tbl.style.minWidth=lo.minW+'px';
+  });
+}
+
+/* 统一鼠标交互入口：右缘手柄=调宽，其余=拖拽调序 */
+document.addEventListener('mousedown',function(e){
+  if(e.button!==0)return;
+  var th=e.target.closest?e.target.closest('th.th-sort'):null;
+  if(!th||!th.getAttribute('data-key'))return;
+  if(e.target.classList&&e.target.classList.contains('th-rs')){startColResize(e,th);return;}
+  if(e.target.closest&&e.target.closest('.filt-ico'))return;
+  startColDrag(e,th);
+});
+
+/* ---- 拖拽调序 ---- */
+var colDrag=null;
+function startColDrag(e,th){
+  colDrag={th:th,m:th.getAttribute('data-m'),key:th.getAttribute('data-key'),x:e.clientX,moved:false,targets:[],marker:null};
+  var move=function(ev){
+    if(!colDrag)return;
+    if(!colDrag.moved&&Math.abs(ev.clientX-colDrag.x)<6)return;
+    if(!colDrag.moved){
+      colDrag.moved=true;
+      document.body.classList.add('col-dragging');
+      th.classList.add('th-dragging');
+      colDrag.targets=[...document.querySelectorAll('#content th.th-sort[data-m="'+colDrag.m+'"][data-key]')];
+    }
+    /* 清除旧指示 */
+    colDrag.targets.forEach(function(t){t.classList.remove('th-drop-before','th-drop-after');});
+    var el=document.elementFromPoint(ev.clientX,ev.clientY);
+    var t=el&&el.closest?el.closest('th.th-sort[data-m="'+colDrag.m+'"]'):null;
+    if(t&&t!==th){
+      var r=t.getBoundingClientRect();
+      var before=(ev.clientX-r.left)<r.width/2;
+      t.classList.add(before?'th-drop-before':'th-drop-after');
+      colDrag.marker={key:t.getAttribute('data-key'),before:before};
+    }else colDrag.marker=null;
+  };
+  var up=function(){
+    document.removeEventListener('mousemove',move);
+    document.removeEventListener('mouseup',up);
+    if(colDrag&&colDrag.moved&&colDrag.marker){
+      var mk=colDrag.marker;
+      /* 从当前 DOM 顺序计算新顺序 */
+      var curOrder=[...document.querySelectorAll('#content thead th.th-sort[data-m="'+colDrag.m+'"][data-key]')].map(function(t){return t.getAttribute('data-key');});
+      /* 注意库存表等多表同模块：以第一张表为准 */
+      var idx=curOrder.indexOf(colDrag.key);
+      if(idx>=0)curOrder.splice(idx,1);
+      var ti=curOrder.indexOf(mk.key);
+      if(ti<0)ti=curOrder.length;
+      curOrder.splice(mk.before?ti:ti+1,0,colDrag.key);
+      layoutOf(colDrag.m).order=curOrder;
+      saveLayout();
+      applyTableLayout();
+    }
+    if(colDrag){
+      colDrag.targets.forEach(function(t){t.classList.remove('th-drop-before','th-drop-after');});
+      th.classList.remove('th-dragging');
+    }
+    if(colDrag&&colDrag.moved)window.__colDragTS=Date.now();
+    document.body.classList.remove('col-dragging');
+    colDrag=null;
+  };
+  document.addEventListener('mousemove',move);
+  document.addEventListener('mouseup',up);
+}
+
+/* ---- 拖拽调宽 ---- */
+function startColResize(e,th){
+  e.preventDefault();e.stopPropagation();
+  var m=th.getAttribute('data-m'),key=th.getAttribute('data-key');
+  var tbl=th.closest('table');
+  var startX=e.clientX,startW=th.offsetWidth;
+  var baseW=tbl?tbl.scrollWidth:0;   // 拖动前的表格总宽，用于同步撑开表格
+  document.body.classList.add('col-resizing');
+  var move=function(ev){
+    var w=Math.max(50,startW+ev.clientX-startX);
+    th.style.width=w+'px';
+    /* 表格加宽超出容器 → .table-wrap 出横向滚动条；收窄则同步收回 */
+    if(tbl)tbl.style.minWidth=Math.max(0,baseW+(w-startW))+'px';
+  };
+  var up=function(){
+    document.removeEventListener('mousemove',move);
+    document.removeEventListener('mouseup',up);
+    document.body.classList.remove('col-resizing');
+    window.__colDragTS=Date.now();
+    layoutOf(m).widths[key]=Math.round(th.getBoundingClientRect().width);
+    if(tbl){
+      var mw=tbl.style.minWidth;
+      layoutOf(m).minW=Math.round(parseFloat(mw)||0);
+      if(!layoutOf(m).minW)tbl.style.minWidth='';
+    }
+    saveLayout();
+  };
+  document.addEventListener('mousemove',move);
+  document.addEventListener('mouseup',up);
+}
+
+/* 恢复默认列布局 */
+function resetTableLayout(m){
+  if(!m){tblLayout={};}
+  else delete tblLayout[m];
+  saveLayout();
+  renderContent();
+}
+
+/* 滚轮横向滚动：页面已滚到顶/底时，在表格上滚动滚轮=左右滚动（页面可滚时优先滚页面） */
+document.addEventListener('wheel',function(e){
+  var wrap=e.target.closest?e.target.closest('.table-wrap'):null;
+  if(!wrap||wrap.scrollWidth<=wrap.clientWidth+2)return;   // 没有横向溢出
+  if(e.deltaX)return;                                       // 触控板横向手势，交给浏览器
+  var doc=document.documentElement;
+  var canPageDown=(window.innerHeight+window.scrollY)<doc.scrollHeight-2;
+  var canPageUp=window.scrollY>2;
+  if((e.deltaY>0&&canPageDown)||(e.deltaY<0&&canPageUp))return;  // 页面还能滚，优先垂直滚动
+  wrap.scrollLeft+=e.deltaY;
+  e.preventDefault();
+},{passive:false});
+
+/* ================================================================
+   导航渲染
+================================================================ */
+function renderNav(){
+  const nav=document.getElementById('nav');
+  nav.innerHTML=NAV.map(n=>{
+    let badge='';
+    if(n.id==='dashboard'){
+      const alerts=countAlerts();
+      if(alerts>0)badge='<span class="nav-badge">'+alerts+'</span>';
+    }
+    return '<div class="nav-item'+(activeTab===n.id?' active':'')+'" onclick="switchTab(\''+n.id+'\')">'+n.icon+'<span>'+n.label+'</span>'+badge+'</div>';
+  }).join('');
+}
+
+function switchTab(id){
+  activeTab=id;
+  renderNav();
+  const item=NAV.find(n=>n.id===id);
+  document.getElementById('pageTitle').textContent=item?item.label:'';
+  document.getElementById('mobileTitle').textContent=item?item.label:'';
+  renderContent();
+  if(window.innerWidth<=768)closeSidebar();
+}
+
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('overlay').classList.toggle('show');
+}
+function closeSidebar(){
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('overlay').classList.remove('show');
+}
+
+/* ================================================================
+   内容渲染
+================================================================ */
+function renderContent(){
+  const c=document.getElementById('content');
+  switch(activeTab){
+    case 'dashboard':c.innerHTML=renderDashboard();break;
+    case 'product':c.innerHTML=renderProducts();break;
+    case 'order':c.innerHTML=renderOrders();break;
+    case 'inventory':c.innerHTML=renderInventory();break;
+    case 'dailyPlan':c.innerHTML=renderDailyPlan();break;
+    case 'dailyReport':c.innerHTML=renderDailyReport();break;
+    case 'delivery':c.innerHTML=renderDelivery();break;
+    case 'fields':c.innerHTML=renderFields();break;
+    case 'logs':c.innerHTML=renderLogs();break;
+    default:c.innerHTML='<div class="empty">未知模块</div>';
+  }
+  if(products.length+orders.length+inventory.length>=30){
+    showBackupWarn();
+  }
+  applyTableLayout();
+}
+
+function showBackupWarn(){
+  const c=document.getElementById('content');
+  const w=document.createElement('div');
+  w.className='backup-warn';
+  w.innerHTML='数据已积累 '+((products.length||0)+(orders.length||0)+(inventory.length||0))+' 条，建议导出 Excel 备份。';
+  c.insertBefore(w,c.firstChild);
+}
+
+function renderAll(){
+  renderNav();
+  renderContent();
+}
+
+/* ================================================================
+   看板
+================================================================ */
+function countAlerts(){
+  let n=0;
+  // 库存低于下限
+  const latestInv=getLatestInventory();
+  latestInv.forEach(i=>{if(i.closing<i.stockMin)n++;});
+  // 订单逾期
+  orders.forEach(o=>{if(o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr())n++;});
+  // 交付计划近期
+  deliveries.forEach(d=>{
+    if(d.batches){
+      d.batches.forEach(b=>{
+        if(b.status==='待交付'&&fmtDate(b.date)<=todayStr())n++;
+      });
+    }
+  });
+  return n;
+}
+
+function getLatestInventory(){
+  const byProduct={};
+  inventory.forEach(i=>{
+    if(!byProduct[i.productId]||fmtDate(i.date)>fmtDate(byProduct[i.productId].date)){
+      byProduct[i.productId]=i;
+    }
+  });
+  return Object.values(byProduct);
+}
+
+function renderDashboard(){
+  const latestInv=getLatestInventory();
+  const lowStock=latestInv.filter(i=>i.closing<i.stockMin);
+  const overdueOrders=orders.filter(o=>o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr());
+  const activeOrders=orders.filter(o=>o.status==='执行中');
+  const todayPlan=dailyPlans.filter(p=>p.date===todayStr());
+  const todayPkg=dailyPkgs.filter(p=>p.date===todayStr());
+  const totalOrderQty=activeOrders.reduce((s,o)=>s+orderQtyOf(o),0);
+  const totalDelivered=activeOrders.reduce((s,o)=>s+orderDeliveredOf(o),0);
+  const deliveryRate=totalOrderQty>0?Math.round(totalDelivered/totalOrderQty*100):0;
+
+  let html='<div class="stats">'+
+    statCard(activeOrders.length,'执行中订单','blue')+
+    statCard(money(totalDelivered)+'/'+money(totalOrderQty),'已交付/总量','green')+
+    statCard(deliveryRate+'%','综合交付率','blue')+
+    statCard(lowStock.length,'库存预警','red')+
+    statCard(todayPlan.length,'今日备货排产','')+
+    statCard(todayPkg.length,'今日包装排产','')+
+    '</div>';
+
+  // 今日待处理
+  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--primary)"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>今日待处理</div>';
+
+  if(lowStock.length===0&&overdueOrders.length===0){
+    html+='<div class="alert alert-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>暂无紧急事项，一切正常。</div>';
+  }
+
+  lowStock.forEach(i=>{
+    html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg><div><b>'+esc(i.productName)+'</b>（'+esc(i.productId)+'）期末库存 <b>'+i.closing+'</b> 低于下限 <b>'+i.stockMin+'</b>，需立即备货排产。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'dailyPlan\')">去排产</button></div></div>';
+  });
+
+  overdueOrders.forEach(o=>{
+    html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div>订单 <b>'+esc(o.id)+'</b>（'+esc(o.customer)+'）截止日期 '+fmtDate(o.deadline)+' 已逾期，未交付 '+money(orderQtyOf(o)-orderDeliveredOf(o))+' 台。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'delivery\')">查看交付</button></div></div>';
+  });
+
+  // 近期交付
+  const upcomingDeliveries=[];
+  deliveries.forEach(d=>{
+    if(d.batches){
+      d.batches.forEach(b=>{
+        if(b.status==='待交付'){
+          const days=Math.ceil((new Date(b.date)-new Date(todayStr()))/86400000);
+          if(days>=0&&days<=3)upcomingDeliveries.push({...b,orderId:d.orderId,customer:d.customer,productName:d.productName});
+        }
+      });
+    }
+  });
+  upcomingDeliveries.sort((a,b)=>fmtDate(a.date)-fmtDate(b.date));
+  upcomingDeliveries.slice(0,5).forEach(b=>{
+    html+='<div class="alert alert-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><div>'+fmtDate(b.date)+' 交付 <b>'+esc(b.productName)+'</b> '+b.planQty+' 台给 '+esc(b.customer)+'（订单 '+esc(b.orderId)+'） <button class="btn btn-sm" style="margin-left:8px" onclick="switchTab(\'delivery\')">查看</button></div></div>';
+  });
+
+  html+='</div>';
+
+  // 最新库存快照
+  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>最新半成品库存快照</div>';
+  if(latestInv.length===0){
+    html+='<div class="empty">暂无库存数据</div>';
+  }else{
+    html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>期末库存</th><th>下限</th><th>上限</th><th>状态</th></tr></thead><tbody>';
+    latestInv.forEach(i=>{
+      const st=i.closing<i.stockMin?STOCK_STATUS.low:(i.closing>i.stockMax?STOCK_STATUS.high:STOCK_STATUS.normal);
+      html+='<tr><td>'+esc(i.productId)+'</td><td>'+esc(i.productName)+'</td><td style="font-weight:600">'+i.closing+'</td><td>'+i.stockMin+'</td><td>'+i.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+
+  // 订单交付进度
+  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单交付进度</div>';
+  if(activeOrders.length===0){
+    html+='<div class="empty">暂无执行中订单</div>';
+  }else{
+    html+='<div class="table-wrap"><table><thead><tr><th>订单号</th><th>客户</th><th>产品</th><th>总量</th><th>已交付</th><th>未交付</th><th>进度</th><th>截止</th></tr></thead><tbody>';
+    activeOrders.forEach(o=>{
+      const oq=orderQtyOf(o),dq=orderDeliveredOf(o);
+      const pct=oq>0?Math.round(dq/oq*100):0;
+      html+='<tr><td>'+esc(o.id)+'</td><td>'+esc(o.customer)+'</td><td style="font-size:12px">'+esc(orderProductNames(o))+'</td><td>'+money(oq)+'</td><td>'+money(dq)+'</td><td>'+(oq-dq)+'</td><td style="min-width:100px"><div style="display:flex;align-items:center;gap:6px"><div class="progress-wrap" style="flex:1"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:12px;font-weight:600">'+pct+'%</span></div></td><td>'+fmtDate(o.deadline)+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+
+  return html;
+}
+
+function statCard(v,l,cls){
+  return '<div class="stat '+(cls||'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>';
+}
+
+/* ================================================================
+   产品主数据
+================================================================ */
+function renderProducts(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜在右侧"操作"列进行编辑/删除</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button>'+formIOBtns('product')+'</div>';
+  if(products.length===0){
+    html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg><br>暂无产品数据，点击「新增产品」开始</div>';
+  }else{
+    const cols=fields.product;
+    TBL_SCHEMAS.product=cols.map(f=>({key:f.key,label:f.label,type:f.type==='number'?'number':(f.type==='date'?'date':'text'),select:f.type==='select',locked:f.locked}));
+    TBL_ROWS.product=products;
+    const shown=applyTable('product',products);
+    html+=filterBar('product');
+    html+='<div class="table-wrap"><table><thead><tr>';
+    TBL_SCHEMAS.product.forEach(c=>html+=thCol('product',c));
+    html+='<th class="op-col">操作</th></tr></thead><tbody>';
+    if(shown.length===0){html+=noMatchRow('product',cols.length+1);}
+    shown.forEach((p)=>{
+      const idx=products.indexOf(p);
+      html+='<tr>';
+      cols.forEach(f=>{
+        let val=p[f.key];
+        if(f.key==='status'){
+          const cls=val==='启用'?'tag-green':'tag-gray';
+          html+='<td><span class="tag '+cls+'">'+esc(val)+'</span></td>';
+        }else if(f.type==='number'){
+          html+='<td style="font-variant-numeric:tabular-nums">'+esc(val)+'</td>';
+        }else{
+          html+='<td>'+esc(val)+'</td>';
+        }
+      });
+      html+='<td class="op-col"><button class="btn btn-sm" onclick="productModal('+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delProduct('+idx+')">删除</button></td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+  return html;
+}
+
+function productModal(idx){
+  const p=idx!=null?{...products[idx]}:{status:'启用',unit:'台'};
+  const cols=fields.product;
+  let body='<div class="form-row">';
+  cols.forEach((f,i)=>{
+    if(i>0&&i%2===0)body+='</div><div class="form-row">';
+    const val=p[f.key]!=null?p[f.key]:'';
+    const ctrl=genControl(f,'pf_',val,'product');
+    body+='<div><label>'+esc(f.label)+(f.required?' *':'')+'</label>'+ctrl+'</div>';
+  });
+  body+='</div>';
+  showModal(idx!=null?'编辑产品':'新增产品',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveProduct('+(idx!=null?idx:-1)+')">保存</button>'
+  );
+}
+
+function saveProduct(idx){
+  const cols=fields.product;
+  const p={};
+  cols.forEach(f=>{
+    const el=document.getElementById('pf_'+f.key);
+    p[f.key]=f.type==='number'?num(el.value):el.value;
+  });
+  cols.forEach(f=>{ if(f.type==='ref'){ p[f.key]=lookupRef(f.refForm,f.refMatch,p[f.refKey],f.refField); } });
+  if(!p.id){alert('请填写产品编码');return;}
+  if(!p.name){alert('请填写产品名称');return;}
+  if(idx>=0){
+    const oldP=products[idx];
+    products[idx]=p;
+    logFieldDiffs('产品主数据',fields.product,oldP,p,p.name+'('+p.id+')');
+  }else{
+    if(products.find(x=>x.id===p.id)){alert('产品编码已存在');return;}
+    products.push(p);
+    logOp('新增','产品主数据','新增产品「'+p.name+'」('+p.id+')');
+  }
+  save('products',products);
+  closeModal();
+  renderContent();
+}
+
+function delProduct(idx){
+  if(!confirm('确认删除产品「'+products[idx].name+'」？关联的库存和排产数据不会自动删除。'))return;
+  logOp('删除','产品主数据','删除产品「'+products[idx].name+'」('+products[idx].id+')');
+  products.splice(idx,1);
+  save('products',products);
+  renderContent();
+}
+
+/* ================================================================
+   订单管理
+================================================================ */
+/* ---- 订单多行明细支持 ---- */
+const ORDER_LINE_KEYS=['productId','productName','orderQty','deliveredQty'];  // 明细行级字段（每行一种产品）
+/* 行级字段判定：字段设置中标记 level:'line' 即为表体字段，否则为表头字段 */
+function isLineField(f){return f&&f.level==='line';}
+function orderLineFields(){return (fields.order||[]).filter(isLineField);}
+function orderHeadFields(){return (fields.order||[]).filter(f=>!isLineField(f));}
+/* 兼容旧数据：已保存的字段若没有 level 标记，按默认行级 key 推断 */
+function normalizeFields(){
+  if(fields&&fields.order)fields.order.forEach(f=>{
+    if(!f.level)f.level=ORDER_LINE_KEYS.indexOf(f.key)>=0?'line':'head';
+  });
+}
+/* 产品主数据迁移：规格型号 → 规格 + 型号（字段配置 + 数据） */
+function migrateSpecSplit(){
+  let cfgChanged=false,dataChanged=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!cfg.product)return;
+    const arr=cfg.product;
+    const i=arr.findIndex(f=>f.key==='spec');
+    if(i>=0 && arr[i].label==='规格型号'){
+      arr[i].label='规格';
+      if(!arr.some(f=>f.key==='model')){
+        arr.splice(i+1,0,{key:'model',label:'型号',type:'text',required:false,locked:false});
+      }
+      cfgChanged=true;
+    }
+  });
+  products.forEach(p=>{
+    if(p.model===undefined){ p.model=''; dataChanged=true; }
+  });
+  if(cfgChanged){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+    logOp('字段设置','产品主数据','系统迁移：「规格型号」拆分为「规格」+「型号」');
+  }
+  if(dataChanged){
+    save('products',products);
+    logOp('系统','产品主数据','已补全现有产品的「型号」字段（规格沿用原规格型号值，型号待补充）');
+  }
+}
+/* 产品主数据：移除"库存上下限"4个字段（含已保存配置迁移） */
+const REMOVE_PRODUCT_KEYS=['stockMinUnpkg','stockMaxUnpkg','stockMinFin','stockMaxFin'];
+function migrateRemoveProductFields(){
+  let changed=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.product))return;
+    const before=cfg.product.length;
+    cfg.product=cfg.product.filter(f=>REMOVE_PRODUCT_KEYS.indexOf(f.key)<0);
+    if(cfg.product.length!==before)changed=true;
+  });
+  if(changed){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+    logOp('字段设置','产品主数据','系统迁移：删除「未包库存下限/上限、成品库存下限/上限」共4个字段');
+  }
+}
+const OPTIONAL_PRODUCT_KEYS=['dailyCapUnpkg','dailyCapPkg'];
+function migrateProductFieldsOptional(){
+  let changed=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.product))return;
+    cfg.product.forEach(f=>{
+      if(OPTIONAL_PRODUCT_KEYS.indexOf(f.key)>=0 && f.required){
+        f.required=false; changed=true;
+      }
+    });
+  });
+  if(changed){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+    logOp('字段设置','产品主数据','系统迁移：将「日产能(未包)、日产能(包装)」改为非必填');
+  }
+}
+function orderItems(o){
+  return Array.isArray(o.items)&&o.items.length?o.items:
+    [{productId:o.productId,productName:o.productName,orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
+}
+function orderQtyOf(o){return orderItems(o).reduce((s,i)=>s+num(i.orderQty),0);}
+function orderDeliveredOf(o){return orderItems(o).reduce((s,i)=>s+num(i.deliveredQty),0);}
+function orderProductNames(o){
+  const names=[...new Set(orderItems(o).map(i=>i.productName||i.productId).filter(Boolean))];
+  return names.join('、');
+}
+/* 旧数据迁移：平铺字段 → items[] */
+function migrateOrders(){
+  let changed=false;
+  orders.forEach(o=>{
+    if(!Array.isArray(o.items)||!o.items.length){
+      o.items=[{productId:o.productId||'',productName:o.productName||'',orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
+      changed=true;
+    }
+  });
+  if(changed)save('orders',orders);
+}
+/* 订单×明细行 展开的下拉选项（包装排产/交付计划选单用） */
+function orderItemOptions(selOrderId,selProductId){
+  let out='';
+  orders.forEach(o=>{
+    orderItems(o).forEach((it,i)=>{
+      const sel=(o.id===selOrderId)&&(it.productId===selProductId||(!selProductId&&i===0));
+      out+='<option value="'+esc(o.id)+'" data-customer="'+esc(o.customer)+'" data-product="'+esc(it.productId)+'" data-pname="'+esc(it.productName)+'" data-total="'+num(it.orderQty)+'" data-delivered="'+num(it.deliveredQty)+'" '+(sel?'selected':'')+'>'+esc(o.id)+' - '+esc(o.customer)+' · '+esc(it.productName||it.productId)+'</option>';
+    });
+  });
+  return out;
+}
+
+function renderOrders(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>框架订单管理 <span class="desc">客户框架订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="orderModal()">新增订单</button>'+formIOBtns('order')+'</div>';
+  if(orders.length===0){
+    html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><br>暂无订单数据</div>';
+  }else{
+    TBL_SCHEMAS.order=[
+      {key:'id',label:'订单编号',type:'text'},
+      {key:'customer',label:'客户',type:'text'},
+      {key:'productName',label:'产品明细',type:'text',get:o=>orderProductNames(o)},
+      {key:'_items',label:'明细行数',type:'number',get:o=>orderItems(o).length},
+      {key:'orderQty',label:'订单量',type:'number',get:o=>orderQtyOf(o)},
+      {key:'deliveredQty',label:'已交付',type:'number',get:o=>orderDeliveredOf(o)},
+      {key:'_undel',label:'未交付',type:'number',get:o=>orderQtyOf(o)-orderDeliveredOf(o)},
+      {key:'_pct',label:'进度%',type:'number',get:o=>{const t=orderQtyOf(o);return t>0?Math.round(orderDeliveredOf(o)/t*100):0;}},
+      {key:'deadline',label:'截止日期',type:'date'},
+      {key:'status',label:'状态',type:'text',select:true}
+    ];
+    TBL_ROWS.order=orders;
+    const shown=applyTable('order',orders);
+    html+=filterBar('order');
+    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.order.map(c=>thCol('order',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    if(shown.length===0){html+=noMatchRow('order',11);}
+    shown.forEach((o)=>{
+      const idx=orders.indexOf(o);
+      const oq=orderQtyOf(o),dq=orderDeliveredOf(o);
+      const undel=oq-dq;
+      const pct=oq>0?Math.round(dq/oq*100):0;
+      const today=todayStr();
+      const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
+      const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':'tag-gray';
+      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+
+        '<td style="font-weight:600">'+esc(o.id)+'</td>'+
+        '<td>'+esc(o.customer)+'</td>'+
+        '<td style="font-size:12px;line-height:1.5">'+orderItems(o).map(it=>esc(it.productName||it.productId)+' <span style="color:var(--muted)">×'+num(it.orderQty)+'</span>').join('<br>')+'</td>'+
+        '<td style="text-align:center">'+orderItems(o).length+'</td>'+
+        '<td style="font-variant-numeric:tabular-nums">'+money(oq)+'</td>'+
+        '<td style="font-variant-numeric:tabular-nums">'+money(dq)+'</td>'+
+        '<td style="font-variant-numeric:tabular-nums">'+money(undel)+'</td>'+
+        '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
+        '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+        '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
+        '<td><button class="btn btn-sm" onclick="orderModal('+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delOrder('+idx+')">删除</button></td>'+
+        '</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+  return html;
+}
+
+function orderModal(idx){
+  const src=idx!=null?orders[idx]:null;
+  const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',startDate:todayStr(),items:[]};
+  const headCols=fields.order.filter(f=>!isLineField(f));
+  let body='<div class="form-row">';
+  headCols.forEach((f,i)=>{
+    if(i>0&&i%2===0)body+='</div><div class="form-row">';
+    const val=o[f.key]!=null?o[f.key]:'';
+    const ctrl=genControl(f,'of_',val,'order');
+    body+='<div><label>'+esc(f.label)+(f.required?' *':'')+'</label>'+ctrl+'</div>';
+  });
+  body+='</div>';
+  body+='<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">订单明细</b><span style="font-size:12px;color:var(--muted)">每行一种产品，一单可含多种开关</span><button class="btn btn-sm" style="margin-left:auto" onclick="addOrderItemRow()">+ 添加产品行</button></div>';
+  body+='<div class="table-wrap"><table id="orderItemsTbl"><thead><tr>'+
+    orderLineFields().map(f=>'<th>'+esc(f.label)+(f.required?' *':'')+'</th>').join('')+
+    '<th style="width:56px">操作</th></tr></thead><tbody>';
+  orderItems(o).forEach(it=>body+=orderItemRow(it));
+  body+='</tbody></table></div>';
+  showModal(idx!=null?'编辑订单':'新增订单',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveOrder('+(idx!=null?idx:-1)+')">保存</button>'
+  );
+}
+
+/* 明细行渲染（按字段设置中的行级字段动态生成） */
+function orderLineCols(){return orderLineFields();}
+function orderItemRow(it){
+  let h='<tr>';
+  const refKeys=refKeysOf('order');
+  orderLineCols().forEach(f=>{
+    const v=it[f.key]!=null?it[f.key]:'';
+    if(f.key==='productId'){
+      h+='<td><select class="oi_field" data-key="productId" onchange="orderItemPick(this)'+(refKeys.has('productId')?';refKeyTrigger(this)':'')+'" style="width:100%"><option value="">请选择</option>'+products.map(p=>'<option value="'+esc(p.id)+'" data-name="'+esc(p.name)+'" '+(p.id===v?'selected':'')+'>'+esc(p.id)+' - '+esc(p.name)+'</option>').join('')+'</select></td>';
+    }else if(f.type==='ref'){
+      h+='<td><input type="text" class="oi_field ref-field" data-key="'+f.key+'" data-ref-form="'+esc(f.refForm||'')+'" data-ref-match="'+esc(f.refMatch||'')+'" data-ref-field="'+esc(f.refField||'')+'" data-ref-key="'+esc(f.refKey||'')+'" value="'+esc(v)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>';
+    }else{
+      const tp=f.type==='number'?'number':(f.type==='date'?'date':'text');
+      h+='<td><input type="'+tp+'" class="oi_field" data-key="'+f.key+'" value="'+esc(f.type==='date'?fmtDate(v):v)+'" style="width:100%"></td>';
+    }
+  });
+  h+='<td style="text-align:center"><button class="btn btn-sm btn-danger" onclick="removeOrderItemRow(this)" title="删除此行">✕</button></td></tr>';
+  return h;
+}
+function addOrderItemRow(){
+  const tb=document.querySelector('#orderItemsTbl tbody');
+  if(tb)tb.insertAdjacentHTML('beforeend',orderItemRow({}));
+}
+function removeOrderItemRow(btn){
+  const tb=btn.closest('tbody');
+  btn.closest('tr').remove();
+  if(tb&&!tb.rows.length)addOrderItemRow();
+}
+function orderItemPick(sel){
+  const opt=sel.options[sel.selectedIndex];
+  if(opt&&opt.dataset.name){
+    const nameInp=sel.closest('tr').querySelector('[data-key="productName"]');
+    if(nameInp&&!nameInp.value)nameInp.value=opt.dataset.name;
+  }
+}
+
+function saveOrder(idx){
+  const cols=fields.order;
+  const o={};
+  cols.forEach(f=>{
+    if(isLineField(f))return;
+    const el=document.getElementById('of_'+f.key);
+    o[f.key]=f.type==='number'?num(el.value):el.value;
+  });
+  if(!o.id){alert('请填写订单编号');return;}
+  if(!o.customer){alert('请填写客户名称');return;}
+  const items=[];
+  document.querySelectorAll('#orderItemsTbl tbody tr').forEach(tr=>{
+    const it={};
+    tr.querySelectorAll('.oi_field').forEach(el=>{
+      const f=cols.find(c=>c.key===el.dataset.key);
+      it[el.dataset.key]=(f&&f.type==='number')?num(el.value):(el.value||'');
+    });
+    if(it.productId||num(it.orderQty)>0)items.push(it);
+  });
+  if(items.length===0){alert('请至少填写一行产品明细（选择产品并填写订单数量）');return;}
+  const bad=items.find(it=>!it.productId||num(it.orderQty)<=0);
+  if(bad){alert('存在"未选产品或数量为0"的明细行，请补全或删除该行');return;}
+  // 引用字段重算（基于关联键实时取值，确保存储正确）
+  orderHeadFields().forEach(f=>{ if(f.type==='ref'){ o[f.key]=lookupRef(f.refForm,f.refMatch,o[f.refKey],f.refField); } });
+  orderLineFields().forEach(f=>{ if(f.type==='ref'){ items.forEach(it=>{ it[f.key]=lookupRef(f.refForm,f.refMatch,it[f.refKey],f.refField); }); } });
+  o.items=items;
+  if(idx>=0){
+    const oldO=orders[idx];
+    orders[idx]=o;
+    const rl=o.id+'('+esc(o.customer)+')';
+    logFieldDiffs('订单管理',orderHeadFields(),oldO,o,rl);
+    logOrderLineDiffs('订单管理',oldO.items,o.items,rl);
+  }else{
+    if(orders.find(x=>x.id===o.id)){alert('订单编号已存在');return;}
+    orders.push(o);
+    logOp('新增','订单管理','新增订单「'+o.id+'」('+esc(o.customer)+')，'+items.length+' 行明细');
+  }
+  save('orders',orders);
+  closeModal();
+  renderContent();
+}
+
+function delOrder(idx){
+  if(!confirm('确认删除订单「'+orders[idx].id+'」？'))return;
+  logOp('删除','订单管理','删除订单「'+orders[idx].id+'」('+orders[idx].customer+')');
+  orders.splice(idx,1);
+  save('orders',orders);
+  renderContent();
+}
+
+/* ================================================================
+   半成品库存台账
+================================================================ */
+function renderInventory(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>未包半成品库存台账 <span class="desc">记录每日出入库及库存余额 · 自动判断库存状态</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="inventoryModal()">新增记录</button>'+formIOBtns('inventory')+'</div>';
+
+  // 表格筛选/排序
+  TBL_SCHEMAS.inventory=[
+    {key:'date',label:'日期',type:'date'},
+    {key:'productId',label:'产品编码',type:'text'},
+    {key:'productName',label:'产品名称',type:'text'},
+    {key:'opening',label:'期初库存',type:'number'},
+    {key:'inbound',label:'入库(装配产出)',type:'number'},
+    {key:'outbound',label:'出库(包装消耗)',type:'number'},
+    {key:'closing',label:'期末库存',type:'number'},
+    {key:'stockMin',label:'下限',type:'number'},
+    {key:'stockMax',label:'上限',type:'number'},
+    {key:'status',label:'状态',type:'text',select:true,get:r=>{const c=num(r.closing);return c<num(r.stockMin)?STOCK_STATUS.low.label:(c>num(r.stockMax)?STOCK_STATUS.high.label:STOCK_STATUS.normal.label);}}
+  ];
+  TBL_ROWS.inventory=inventory;
+  const filteredInv=filterRows('inventory',inventory);
+
+  // 按日期分组
+  const dates=[...new Set(filteredInv.map(i=>fmtDate(i.date)))].sort().reverse();
+
+  if(dates.length===0){
+    html+=inventory.length>0?'<div class="empty" style="display:flex;align-items:center;justify-content:center;gap:8px">无匹配数据 <button class="btn btn-sm" onclick="clearAllFilt(\'inventory\')">清除筛选</button></div>':'<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><br>暂无库存数据</div>';
+  }else{
+    html+=filterBar('inventory');
+    dates.forEach(d=>{
+      const rows=sortRows('inventory',filteredInv.filter(i=>fmtDate(i.date)===d));
+      html+='<h3 style="font-size:14px;margin:12px 0 6px;color:var(--text)">'+d+'</h3>';
+      html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.inventory.map(c=>thCol('inventory',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+      rows.forEach((r,idx)=>{
+        const realIdx=inventory.indexOf(r);
+        const st=num(r.closing)<num(r.stockMin)?STOCK_STATUS.low:(num(r.closing)>num(r.stockMax)?STOCK_STATUS.high:STOCK_STATUS.normal);
+        html+='<tr><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td><td style="text-align:right">'+r.opening+'</td><td style="text-align:right;color:var(--green)">+'+r.inbound+'</td><td style="text-align:right;color:var(--red)">-'+r.outbound+'</td><td style="text-align:right;font-weight:600">'+r.closing+'</td><td>'+r.stockMin+'</td><td>'+r.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td><td><button class="btn btn-sm" onclick="inventoryModal('+realIdx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delInventory('+realIdx+')">删除</button></td></tr>';
+      });
+      // 小计
+      const sumIn=rows.reduce((s,r)=>s+num(r.inbound),0);
+      const sumOut=rows.reduce((s,r)=>s+num(r.outbound),0);
+      html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="2">小计</td><td></td><td style="text-align:right">+'+sumIn+'</td><td style="text-align:right">-'+sumOut+'</td><td colspan="4"></td><td></td></tr>';
+      html+='</tbody></table></div>';
+    });
+  }
+  html+='</div>';
+  return html;
+}
+
+function inventoryModal(idx){
+  const r=idx!=null?{...inventory[idx]}:{date:todayStr(),opening:0,inbound:0,outbound:0,closing:0,stockMin:0,stockMax:0};
+  let body='<div class="form-row">'+
+    '<div><label>日期 *</label><input type="date" id="inv_date" value="'+fmtDate(r.date)+'"></div>'+
+    '<div><label>产品编码 *</label><select id="inv_productId" onchange="autoFillInv()"><option value="">请选择</option>'+products.map(p=>'<option value="'+esc(p.id)+'" data-name="'+esc(p.name)+'" '+(p.id===r.productId?'selected':'')+'>'+esc(p.id)+' - '+esc(p.name)+'</option>').join('')+'</select></div>'+
+    '<div><label>产品名称 *</label><input type="text" id="inv_productName" value="'+esc(r.productName)+'"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>期初库存 *</label><input type="number" id="inv_opening" value="'+r.opening+'"></div>'+
+    '<div><label>入库(装配产出)</label><input type="number" id="inv_inbound" value="'+r.inbound+'" onchange="calcClosing()"></div>'+
+    '<div><label>出库(包装消耗)</label><input type="number" id="inv_outbound" value="'+r.outbound+'" onchange="calcClosing()"></div>'+
+    '<div><label>期末库存 *</label><input type="number" id="inv_closing" value="'+r.closing+'"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>库存下限 *</label><input type="number" id="inv_stockMin" value="'+r.stockMin+'"></div>'+
+    '<div><label>库存上限 *</label><input type="number" id="inv_stockMax" value="'+r.stockMax+'"></div>'+
+    '</div>';
+  showModal(idx!=null?'编辑库存记录':'新增库存记录',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveInventory('+(idx!=null?idx:-1)+')">保存</button>'
+  );
+}
+
+function autoFillInv(){
+  const sel=document.getElementById('inv_productId');
+  const opt=sel.options[sel.selectedIndex];
+  if(opt){
+    document.getElementById('inv_productName').value=opt.dataset.name||'';
+  }
+}
+
+function calcClosing(){
+  const o=num(document.getElementById('inv_opening').value);
+  const i=num(document.getElementById('inv_inbound').value);
+  const out=num(document.getElementById('inv_outbound').value);
+  document.getElementById('inv_closing').value=o+i-out;
+}
+
+function saveInventory(idx){
+  const r={
+    date:document.getElementById('inv_date').value,
+    productId:document.getElementById('inv_productId').value,
+    productName:document.getElementById('inv_productName').value,
+    opening:num(document.getElementById('inv_opening').value),
+    inbound:num(document.getElementById('inv_inbound').value),
+    outbound:num(document.getElementById('inv_outbound').value),
+    closing:num(document.getElementById('inv_closing').value),
+    stockMin:num(document.getElementById('inv_stockMin').value),
+    stockMax:num(document.getElementById('inv_stockMax').value),
+    status:''
+  };
+  if(!r.productId){alert('请选择产品');return;}
+  r.status=r.closing<r.stockMin?'低于下限':(r.closing>r.stockMax?'高于上限':'正常');
+  if(idx>=0){const oldR=inventory[idx];inventory[idx]=r;logFieldDiffs('半成品库存',HARD_FIELDS.inventory,oldR,r,r.productName+' '+fmtDate(r.date));}
+  else{inventory.push(r);logOp('新增','半成品库存','新增库存记录「'+r.productName+'」'+fmtDate(r.date));}
+  save('inventory',inventory);
+  closeModal();
+  renderContent();
+}
+
+function delInventory(idx){
+  if(!confirm('确认删除该库存记录？'))return;
+  logOp('删除','半成品库存','删除库存记录「'+inventory[idx].productName+'」'+fmtDate(inventory[idx].date));
+  inventory.splice(idx,1);
+  save('inventory',inventory);
+  renderContent();
+}
+
+/* ================================================================
+   日排产计划
+================================================================ */
+function renderDailyPlan(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>日排产计划 <span class="desc">备货排产(包装前) + 包装排产(按订单)</span></div>';
+
+  // 日期选择
+  html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'+
+    '<label style="margin:0"><input type="date" id="planDate" value="'+planDate+'" onchange="changePlanDate()" style="width:auto"></label>'+
+    '<button class="btn btn-sm" onclick="shiftPlanDate(-1)">前一天</button>'+
+    '<button class="btn btn-sm" onclick="shiftPlanDate(1)">后一天</button>'+
+    '<button class="btn btn-sm" onclick="planDate=todayStr();document.getElementById(\'planDate\').value=todayStr();renderContent()">今天</button>'+
+    '</div>';
+
+  const dayPlans=dailyPlans.filter(p=>fmtDate(p.date)===planDate);
+  const dayPkgs=dailyPkgs.filter(p=>fmtDate(p.date)===planDate);
+
+  // 备货排产
+  html+='<div class="sec-header sec-stockup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M2 20h20M5 20V8l7-5 7 5v12"/></svg>备货排产 — 装配 → 内包 → 调试/老化 → 半成品入库 <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'stockup\')">新增备货排产</button>'+formIOBtns('dailyPlan')+'</div>';
+  if(dayPlans.length===0){
+    html+='<div class="empty" style="padding:16px">当日无备货排产记录</div>';
+  }else{
+    TBL_SCHEMAS.dp_stockup=[
+      {key:'productId',label:'产品编码',type:'text'},
+      {key:'productName',label:'产品名称',type:'text'},
+      {key:'assemblyDone',label:'装配 计划/完成',type:'number'},
+      {key:'innerPackDone',label:'内包 计划/完成',type:'number'},
+      {key:'testAgingDone',label:'调试老化 计划/完成',type:'number'},
+      {key:'semiInbound',label:'半成品入库',type:'number'},
+      {key:'notes',label:'备注',type:'text'}
+    ];
+    TBL_ROWS.dp_stockup=dayPlans;
+    const shownPlans=applyTable('dp_stockup',dayPlans);
+    html+=filterBar('dp_stockup');
+    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.dp_stockup.map(c=>thCol('dp_stockup',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    if(shownPlans.length===0){html+=noMatchRow('dp_stockup',8);}
+    let sumAssembly=0,sumInner=0,sumTest=0,sumSemi=0;
+    shownPlans.forEach((p)=>{
+      const idx=dailyPlans.indexOf(p);
+      html+='<tr><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td>'+
+        '<td style="text-align:center;font-size:12px">'+(p.assemblyPlan||0)+' / <b>'+(p.assemblyDone||0)+'</b></td>'+
+        '<td style="text-align:center;font-size:12px">'+(p.innerPackPlan||0)+' / <b>'+(p.innerPackDone||0)+'</b></td>'+
+        '<td style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
+        '<td style="text-align:center;font-weight:600">'+(p.semiInbound||0)+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td>'+
+        '<td><button class="btn btn-sm" onclick="planModal(\'stockup\','+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delPlan('+idx+')">删除</button></td></tr>';
+      sumAssembly+=num(p.assemblyDone);sumInner+=num(p.innerPackDone);sumTest+=num(p.testAgingDone);sumSemi+=num(p.semiInbound);
+    });
+    html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="2">小计</td><td style="text-align:center">'+sumAssembly+'</td><td style="text-align:center">'+sumInner+'</td><td style="text-align:center">'+sumTest+'</td><td style="text-align:center">'+sumSemi+'</td><td colspan="2"></td></tr>';
+    html+='</tbody></table></div>';
+  }
+
+  // 包装排产
+  html+='<div class="sec-header sec-packaging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>包装排产 — 半成品出库 → 包装 → 成品入库（按订单） <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'packaging\')">新增包装排产</button>'+formIOBtns('dailyPkg')+'</div>';
+  if(dayPkgs.length===0){
+    html+='<div class="empty" style="padding:16px">当日无包装排产记录</div>';
+  }else{
+    TBL_SCHEMAS.dp_pkg=[
+      {key:'productId',label:'产品编码',type:'text'},
+      {key:'productName',label:'产品名称',type:'text'},
+      {key:'orderId',label:'关联订单',type:'text'},
+      {key:'pkgDone',label:'包装 计划/完成',type:'number'},
+      {key:'finInbound',label:'成品入库',type:'number'},
+      {key:'orderTotal',label:'订单总量',type:'number'},
+      {key:'delivered',label:'已交付',type:'number'},
+      {key:'undelivered',label:'未交付',type:'number'},
+      {key:'notes',label:'备注',type:'text'}
+    ];
+    TBL_ROWS.dp_pkg=dayPkgs;
+    const shownPkgs=applyTable('dp_pkg',dayPkgs);
+    html+=filterBar('dp_pkg');
+    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.dp_pkg.map(c=>thCol('dp_pkg',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    if(shownPkgs.length===0){html+=noMatchRow('dp_pkg',10);}
+    let sumPkg=0,sumFin=0;
+    shownPkgs.forEach(p=>{
+      const idx=dailyPkgs.indexOf(p);
+      html+='<tr><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td><td>'+esc(p.orderId)+'</td>'+
+        '<td style="text-align:center;font-size:12px">'+(p.pkgPlan||0)+' / <b>'+(p.pkgDone||0)+'</b></td>'+
+        '<td style="text-align:center;font-weight:600">'+(p.finInbound||0)+'</td>'+
+        '<td style="text-align:right">'+money(p.orderTotal)+'</td>'+
+        '<td style="text-align:right">'+money(p.delivered)+'</td>'+
+        '<td style="text-align:right">'+money(p.undelivered)+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td>'+
+        '<td><button class="btn btn-sm" onclick="planModal(\'packaging\','+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delPkg('+idx+')">删除</button></td></tr>';
+      sumPkg+=num(p.pkgDone);sumFin+=num(p.finInbound);
+    });
+    html+='<tr style="font-weight:600;background:var(--amber-bg)"><td colspan="3">小计</td><td style="text-align:center">'+sumPkg+'</td><td style="text-align:center">'+sumFin+'</td><td colspan="4"></td></tr>';
+    html+='</tbody></table></div>';
+  }
+
+  html+='</div>';
+  return html;
+}
+
+function changePlanDate(){
+  planDate=document.getElementById('planDate').value;
+  renderContent();
+}
+function shiftPlanDate(delta){
+  const d=new Date(planDate);
+  d.setDate(d.getDate()+delta);
+  planDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  renderContent();
+}
+
+function planModal(type,idx){
+  if(type==='stockup'){
+    const p=idx!=null?{...dailyPlans[idx]}:{date:planDate,assemblyPlan:0,assemblyDone:0,innerPackPlan:0,innerPackDone:0,testAgingPlan:0,testAgingDone:0,semiInbound:0};
+    let body='<div class="form-row">'+
+      '<div><label>日期 *</label><input type="date" id="sp_date" value="'+fmtDate(p.date)+'"></div>'+
+      '<div><label>产品 *</label><select id="sp_productId" onchange="autoFillPlan()"><option value="">请选择</option>'+products.map(pr=>'<option value="'+esc(pr.id)+'" data-name="'+esc(pr.name)+'" data-cap="'+pr.dailyCapUnpkg+'" '+(pr.id===p.productId?'selected':'')+'>'+esc(pr.id)+' - '+esc(pr.name)+'</option>').join('')+'</select></div>'+
+      '<div><label>产品名称 *</label><input type="text" id="sp_productName" value="'+esc(p.productName)+'"></div>'+
+      '</div><div class="form-row">'+
+      '<div><label>装配计划</label><input type="number" id="sp_assemblyPlan" value="'+p.assemblyPlan+'"></div>'+
+      '<div><label>装配完成</label><input type="number" id="sp_assemblyDone" value="'+p.assemblyDone+'"></div>'+
+      '<div><label>内包计划</label><input type="number" id="sp_innerPackPlan" value="'+p.innerPackPlan+'"></div>'+
+      '<div><label>内包完成</label><input type="number" id="sp_innerPackDone" value="'+p.innerPackDone+'"></div>'+
+      '</div><div class="form-row">'+
+      '<div><label>调试老化计划</label><input type="number" id="sp_testAgingPlan" value="'+p.testAgingPlan+'"></div>'+
+      '<div><label>调试老化完成</label><input type="number" id="sp_testAgingDone" value="'+p.testAgingDone+'"></div>'+
+      '<div><label>半成品入库</label><input type="number" id="sp_semiInbound" value="'+p.semiInbound+'"></div>'+
+      '<div><label>备注</label><input type="text" id="sp_notes" value="'+esc(p.notes)+'"></div>'+
+      '</div>';
+    showModal(idx!=null?'编辑备货排产':'新增备货排产',body,
+      '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="savePlan('+(idx!=null?idx:-1)+')">保存</button>'
+    );
+  }else{
+    const p=idx!=null?{...dailyPkgs[idx]}:{date:planDate,pkgPlan:0,pkgDone:0,finInbound:0,orderTotal:0,delivered:0,undelivered:0};
+    let body='<div class="form-row">'+
+      '<div><label>日期 *</label><input type="date" id="pk_date" value="'+fmtDate(p.date)+'"></div>'+
+      '<div><label>关联订单 *</label><select id="pk_orderId" onchange="autoFillOrder()"><option value="">请选择</option>'+orderItemOptions(p.orderId,p.productId)+'</select></div>'+
+      '</div><div class="form-row">'+
+      '<div><label>产品编码 *</label><input type="text" id="pk_productId" value="'+esc(p.productId)+'"></div>'+
+      '<div><label>产品名称 *</label><input type="text" id="pk_productName" value="'+esc(p.productName)+'"></div>'+
+      '</div><div class="form-row">'+
+      '<div><label>包装计划</label><input type="number" id="pk_pkgPlan" value="'+p.pkgPlan+'"></div>'+
+      '<div><label>包装完成</label><input type="number" id="pk_pkgDone" value="'+p.pkgDone+'"></div>'+
+      '<div><label>成品入库</label><input type="number" id="pk_finInbound" value="'+p.finInbound+'"></div>'+
+      '</div><div class="form-row">'+
+      '<div><label>订单总量</label><input type="number" id="pk_orderTotal" value="'+p.orderTotal+'"></div>'+
+      '<div><label>已交付</label><input type="number" id="pk_delivered" value="'+p.delivered+'"></div>'+
+      '<div><label>未交付</label><input type="number" id="pk_undelivered" value="'+p.undelivered+'"></div>'+
+      '<div><label>备注</label><input type="text" id="pk_notes" value="'+esc(p.notes)+'"></div>'+
+      '</div>';
+    showModal(idx!=null?'编辑包装排产':'新增包装排产',body,
+      '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="savePkg('+(idx!=null?idx:-1)+')">保存</button>'
+    );
+  }
+}
+
+function autoFillPlan(){
+  const sel=document.getElementById('sp_productId');
+  const opt=sel.options[sel.selectedIndex];
+  if(opt){
+    document.getElementById('sp_productName').value=opt.dataset.name||'';
+    const cap=opt.dataset.cap;
+    if(cap&&!document.getElementById('sp_assemblyPlan').value){
+      document.getElementById('sp_assemblyPlan').value=cap;
+      document.getElementById('sp_innerPackPlan').value=cap;
+      document.getElementById('sp_testAgingPlan').value=cap;
+    }
+  }
+}
+
+function autoFillOrder(){
+  const sel=document.getElementById('pk_orderId');
+  const opt=sel.options[sel.selectedIndex];
+  if(opt){
+    document.getElementById('pk_productId').value=opt.dataset.product||'';
+    document.getElementById('pk_productName').value=opt.dataset.pname||'';
+    document.getElementById('pk_orderTotal').value=opt.dataset.total||'';
+    document.getElementById('pk_delivered').value=opt.dataset.delivered||'';
+    const undel=num(opt.dataset.total)-num(opt.dataset.delivered);
+    document.getElementById('pk_undelivered').value=undel;
+  }
+}
+
+function savePlan(idx){
+  const p={
+    date:document.getElementById('sp_date').value,
+    productId:document.getElementById('sp_productId').value,
+    productName:document.getElementById('sp_productName').value,
+    assemblyPlan:num(document.getElementById('sp_assemblyPlan').value),
+    assemblyDone:num(document.getElementById('sp_assemblyDone').value),
+    innerPackPlan:num(document.getElementById('sp_innerPackPlan').value),
+    innerPackDone:num(document.getElementById('sp_innerPackDone').value),
+    testAgingPlan:num(document.getElementById('sp_testAgingPlan').value),
+    testAgingDone:num(document.getElementById('sp_testAgingDone').value),
+    semiInbound:num(document.getElementById('sp_semiInbound').value),
+    notes:document.getElementById('sp_notes').value
+  };
+  if(!p.productId){alert('请选择产品');return;}
+  if(idx>=0){const oldP=dailyPlans[idx];dailyPlans[idx]=p;logFieldDiffs('备货排产',HARD_FIELDS.dailyPlan,oldP,p,p.productName+' '+fmtDate(p.date));}
+  else{dailyPlans.push(p);logOp('新增','备货排产','新增「'+p.productName+'」'+fmtDate(p.date)+'排产');}
+  save('dailyPlans',dailyPlans);
+  closeModal();
+  renderContent();
+}
+
+function savePkg(idx){
+  const p={
+    date:document.getElementById('pk_date').value,
+    productId:document.getElementById('pk_productId').value,
+    productName:document.getElementById('pk_productName').value,
+    orderId:document.getElementById('pk_orderId').value,
+    pkgPlan:num(document.getElementById('pk_pkgPlan').value),
+    pkgDone:num(document.getElementById('pk_pkgDone').value),
+    finInbound:num(document.getElementById('pk_finInbound').value),
+    orderTotal:num(document.getElementById('pk_orderTotal').value),
+    delivered:num(document.getElementById('pk_delivered').value),
+    undelivered:num(document.getElementById('pk_undelivered').value),
+    notes:document.getElementById('pk_notes').value
+  };
+  if(!p.orderId){alert('请选择关联订单');return;}
+  if(idx>=0){const oldP=dailyPkgs[idx];dailyPkgs[idx]=p;logFieldDiffs('包装排产',HARD_FIELDS.dailyPkg,oldP,p,p.productName+' 订单'+p.orderId);}
+  else{dailyPkgs.push(p);logOp('新增','包装排产','新增「'+p.productName+'」订单'+p.orderId+'包装排产');}
+  save('dailyPkgs',dailyPkgs);
+  closeModal();
+  renderContent();
+}
+
+function delPlan(idx){
+  if(!confirm('确认删除该备货排产记录？'))return;
+  logOp('删除','备货排产','删除「'+dailyPlans[idx].productName+'」'+fmtDate(dailyPlans[idx].date)+'排产');
+  dailyPlans.splice(idx,1);
+  save('dailyPlans',dailyPlans);
+  renderContent();
+}
+function delPkg(idx){
+  if(!confirm('确认删除该包装排产记录？'))return;
+  logOp('删除','包装排产','删除「'+dailyPkgs[idx].productName+'」订单'+dailyPkgs[idx].orderId+'包装排产');
+  dailyPkgs.splice(idx,1);
+  save('dailyPkgs',dailyPkgs);
+  renderContent();
+}
+
+/* ================================================================
+   生产日报
+================================================================ */
+function renderDailyReport(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>生产日报 <span class="desc">按产品统计每日各工序完成数量</span></div>';
+
+  html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'+
+    '<label style="margin:0"><input type="date" id="reportDate" value="'+reportDate+'" onchange="changeReportDate()" style="width:auto"></label>'+
+    '<button class="btn btn-sm" onclick="shiftReportDate(-1)">前一天</button>'+
+    '<button class="btn btn-sm" onclick="shiftReportDate(1)">后一天</button>'+
+    '</div>';
+
+  // 汇总当日备货+包装数据
+  const dayPlans=dailyPlans.filter(p=>fmtDate(p.date)===reportDate);
+  const dayPkgs=dailyPkgs.filter(p=>fmtDate(p.date)===reportDate);
+
+  // 合并产品维度
+  const productMap={};
+  dayPlans.forEach(p=>{
+    if(!productMap[p.productId])productMap[p.productId]={productId:p.productId,productName:p.productName,assemblyDone:0,innerPackDone:0,testAgingDone:0,semiInbound:0,packagingDone:0,finishedInbound:0,orderId:''};
+    productMap[p.productId].assemblyDone+=num(p.assemblyDone);
+    productMap[p.productId].innerPackDone+=num(p.innerPackDone);
+    productMap[p.productId].testAgingDone+=num(p.testAgingDone);
+    productMap[p.productId].semiInbound+=num(p.semiInbound);
+  });
+  dayPkgs.forEach(p=>{
+    if(!productMap[p.productId])productMap[p.productId]={productId:p.productId,productName:p.productName,assemblyDone:0,innerPackDone:0,testAgingDone:0,semiInbound:0,packagingDone:0,finishedInbound:0,orderId:p.orderId};
+    productMap[p.productId].packagingDone+=num(p.pkgDone);
+    productMap[p.productId].finishedInbound+=num(p.finInbound);
+    if(p.orderId)productMap[p.productId].orderId=p.orderId;
+  });
+
+  let rows=Object.values(productMap);
+  if(rows.length===0){
+    html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg><br>当日无生产数据，请先在「日排产」中录入</div>';
+  }else{
+    TBL_SCHEMAS.report=[
+      {key:'productId',label:'产品编码',type:'text'},
+      {key:'productName',label:'产品名称',type:'text'},
+      {key:'assemblyDone',label:'装配完成',type:'number'},
+      {key:'innerPackDone',label:'内包完成',type:'number'},
+      {key:'testAgingDone',label:'调试老化完成',type:'number'},
+      {key:'semiInbound',label:'半成品入库',type:'number'},
+      {key:'packagingDone',label:'包装完成',type:'number'},
+      {key:'finishedInbound',label:'成品入库',type:'number'},
+      {key:'orderId',label:'关联订单',type:'text'}
+    ];
+    TBL_ROWS.report=rows;
+    rows=applyTable('report',rows);
+    html+=filterBar('report');
+    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.report.map(c=>thCol('report',c)).join('')+'</tr></thead><tbody>';
+    if(rows.length===0){html+=noMatchRow('report',9);}
+    let sumA=0,sumI=0,sumT=0,sumS=0,sumP=0,sumF=0;
+    rows.forEach(r=>{
+      html+='<tr><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td>'+
+        '<td style="text-align:right">'+r.assemblyDone+'</td>'+
+        '<td style="text-align:right">'+r.innerPackDone+'</td>'+
+        '<td style="text-align:right">'+r.testAgingDone+'</td>'+
+        '<td style="text-align:right">'+r.semiInbound+'</td>'+
+        '<td style="text-align:right;font-weight:600">'+r.packagingDone+'</td>'+
+        '<td style="text-align:right;font-weight:600">'+r.finishedInbound+'</td>'+
+        '<td>'+esc(r.orderId)+'</td></tr>';
+      sumA+=r.assemblyDone;sumI+=r.innerPackDone;sumT+=r.testAgingDone;sumS+=r.semiInbound;sumP+=r.packagingDone;sumF+=r.finishedInbound;
+    });
+    html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="2">日合计</td><td style="text-align:right">'+sumA+'</td><td style="text-align:right">'+sumI+'</td><td style="text-align:right">'+sumT+'</td><td style="text-align:right">'+sumS+'</td><td style="text-align:right">'+sumP+'</td><td style="text-align:right">'+sumF+'</td><td></td></tr>';
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+
+  // 周合计
+  const weekStart=getWeekStart(reportDate);
+  const weekEnd=getWeekEnd(reportDate);
+  const weekPlans=dailyPlans.filter(p=>{const d=fmtDate(p.date);return d>=weekStart&&d<=weekEnd;});
+  const weekPkgs=dailyPkgs.filter(p=>{const d=fmtDate(p.date);return d>=weekStart&&d<=weekEnd;});
+  const wA=weekPlans.reduce((s,p)=>s+num(p.assemblyDone),0);
+  const wI=weekPlans.reduce((s,p)=>s+num(p.innerPackDone),0);
+  const wT=weekPlans.reduce((s,p)=>s+num(p.testAgingDone),0);
+  const wS=weekPlans.reduce((s,p)=>s+num(p.semiInbound),0);
+  const wP=weekPkgs.reduce((s,p)=>s+num(p.pkgDone),0);
+  const wF=weekPkgs.reduce((s,p)=>s+num(p.finInbound),0);
+  html+='<div class="card"><div class="card-title">本周合计（'+weekStart+' ~ '+weekEnd+'）</div>';
+  html+='<div class="stats">'+
+    statCard(wA,'装配完成','blue')+
+    statCard(wI,'内包完成','blue')+
+    statCard(wT,'调试老化完成','blue')+
+    statCard(wS,'半成品入库','')+
+    statCard(wP,'包装完成','amber')+
+    statCard(wF,'成品入库','amber')+
+    '</div></div>';
+
+  return html;
+}
+
+function getWeekStart(d){
+  const date=new Date(d);
+  const day=date.getDay()||7;
+  date.setDate(date.getDate()-day+1);
+  return date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
+}
+function getWeekEnd(d){
+  const date=new Date(d);
+  const day=date.getDay()||7;
+  date.setDate(date.getDate()-day+7);
+  return date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
+}
+function changeReportDate(){
+  reportDate=document.getElementById('reportDate').value;
+  renderContent();
+}
+function shiftReportDate(delta){
+  const d=new Date(reportDate);
+  d.setDate(d.getDate()+delta);
+  reportDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  renderContent();
+}
+
+/* ================================================================
+   交付计划
+================================================================ */
+function renderDelivery(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">分批交付 · 倒排排期 · 实际交付填报</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button>'+formIOBtns('delivery')+'</div>';
+
+  // 交付计划汇总
+  html+='<h3 style="font-size:14px;margin:6px 0 8px">一、交付计划汇总</h3>';
+  if(deliveries.length===0){
+    html+='<div class="empty">暂无交付计划</div>';
+  }else{
+    TBL_SCHEMAS.delivery=[
+      {key:'orderId',label:'订单编号',type:'text'},
+      {key:'customer',label:'客户',type:'text'},
+      {key:'productName',label:'产品',type:'text'},
+      {key:'orderTotal',label:'订单总量',type:'number'},
+      {key:'delivered',label:'已交付',type:'number'},
+      {key:'undelivered',label:'未交付',type:'number'},
+      {key:'freq',label:'交付频率',type:'text',select:true},
+      {key:'finalDate',label:'最终交付期',type:'date'},
+      {key:'firstDate',label:'首次交付日',type:'date'},
+      {key:'batchCount',label:'批次',type:'number'},
+      {key:'perBatch',label:'每批量',type:'text'}
+    ];
+    TBL_ROWS.delivery=deliveries;
+    const shownDl=applyTable('delivery',deliveries);
+    html+=filterBar('delivery');
+    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    if(shownDl.length===0){html+=noMatchRow('delivery',12);}
+    shownDl.forEach((d)=>{
+      const idx=deliveries.indexOf(d);
+      html+='<tr><td style="font-weight:600">'+esc(d.orderId)+'</td><td>'+esc(d.customer)+'</td><td>'+esc(d.productName)+'</td>'+
+        '<td style="text-align:right">'+money(d.orderTotal)+'</td>'+
+        '<td style="text-align:right">'+money(d.delivered)+'</td>'+
+        '<td style="text-align:right">'+money(d.undelivered)+'</td>'+
+        '<td>'+esc(d.freq)+'</td>'+
+        '<td>'+fmtDate(d.finalDate)+'</td>'+
+        '<td>'+fmtDate(d.firstDate)+'</td>'+
+        '<td style="text-align:center">'+(d.batchCount||'')+'</td>'+
+        '<td style="text-align:center">'+esc(d.perBatch)+'</td>'+
+        '<td><button class="btn btn-sm" onclick="deliveryModal('+idx+')">编辑</button> <button class="btn btn-sm" onclick="genBatches('+idx+')">生成排期</button> <button class="btn btn-sm btn-danger" onclick="delDelivery('+idx+')">删除</button></td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="deliveryModal()">新增交付计划</button>';
+
+  // 交付排期明细
+  html+='<h3 style="font-size:14px;margin:18px 0 8px">二、交付排期明细</h3>';
+  const hasBatches=deliveries.some(d=>d.batches&&d.batches.length>0);
+  if(!hasBatches){
+    html+='<div class="empty">暂无排期明细，点击「生成排期」按交付频率自动倒排</div>';
+  }else{
+    deliveries.forEach(d=>{
+      if(!d.batches||d.batches.length===0)return;
+      html+='<h4 style="font-size:13px;margin:10px 0 4px;color:var(--blue)">'+esc(d.orderId)+' - '+esc(d.customer)+' - '+esc(d.productName)+'</h4>';
+      html+='<div class="table-wrap"><table><thead><tr><th>序号</th><th>计划交付日期</th><th>星期</th><th>计划交付量</th><th>累计计划</th><th>剩余未交付</th><th>实际交付量</th><th>状态</th><th>差异</th></tr></thead><tbody>';
+      d.batches.forEach(b=>{
+        const statusCls=b.status==='已交付'?'tag-green':(b.status==='逾期'?'tag-red':'tag-gray');
+        const diff=b.actualQty!=null&&b.actualQty!==''?num(b.actualQty)-num(b.planQty):'';
+        html+='<tr><td>'+b.seq+'</td><td>'+fmtDate(b.date)+'</td><td>'+esc(b.weekday)+'</td>'+
+          '<td style="text-align:right">'+b.planQty+'</td>'+
+          '<td style="text-align:right">'+b.cumulative+'</td>'+
+          '<td style="text-align:right">'+b.remaining+'</td>'+
+          '<td style="text-align:right">'+(b.actualQty!=null&&b.actualQty!==''?b.actualQty:'<input type="number" style="width:70px;padding:3px 6px" placeholder="填报" onchange="updateActual(\''+d.orderId+'\','+b.seq+',this.value)">')+'</td>'+
+          '<td><span class="tag '+statusCls+'">'+esc(b.status)+'</span></td>'+
+          '<td style="text-align:right">'+(diff!==''?(diff>0?'+':'')+diff:'')+'</td></tr>';
+      });
+      // 小计
+      const sumPlan=d.batches.reduce((s,b)=>s+num(b.planQty),0);
+      html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="3">小计</td><td style="text-align:right">'+sumPlan+'</td><td></td><td></td><td></td><td></td><td></td></tr>';
+      html+='</tbody></table></div>';
+    });
+  }
+
+  html+='</div>';
+  return html;
+}
+
+function deliveryModal(idx){
+  const d=idx!=null?{...deliveries[idx]}:{};
+  let body='<div class="form-row">'+
+    '<div><label>订单编号 *</label><select id="dl_orderId" onchange="autoFillDelivery()"><option value="">请选择</option>'+orderItemOptions(d.orderId,d.productId)+'</select></div>'+
+    '<div><label>客户名称 *</label><input type="text" id="dl_customer" value="'+esc(d.customer)+'"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>产品编码 *</label><input type="text" id="dl_productId" value="'+esc(d.productId)+'"></div>'+
+    '<div><label>产品名称 *</label><input type="text" id="dl_productName" value="'+esc(d.productName)+'"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>订单总量 *</label><input type="number" id="dl_orderTotal" value="'+d.orderTotal+'"></div>'+
+    '<div><label>已交付 *</label><input type="number" id="dl_delivered" value="'+d.delivered+'"></div>'+
+    '<div><label>未交付 *</label><input type="number" id="dl_undelivered" value="'+d.undelivered+'"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>交付频率 *</label><select id="dl_freq">'+DELIVERY_FREQ.map(f=>'<option '+(f===d.freq?'selected':'')+'>'+f+'</option>').join('')+'</select></div>'+
+    '<div><label>最终交付期 *</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
+    '<div><label>首次交付日</label><input type="date" id="dl_firstDate" value="'+fmtDate(d.firstDate)+'"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>交付批次</label><input type="number" id="dl_batchCount" value="'+(d.batchCount||'')+'"></div>'+
+    '<div><label>每批交付量</label><input type="text" id="dl_perBatch" value="'+esc(d.perBatch)+'"></div>'+
+    '<div><label>备注</label><input type="text" id="dl_notes" value="'+esc(d.notes)+'"></div>'+
+    '</div>';
+  showModal(idx!=null?'编辑交付计划':'新增交付计划',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveDelivery('+(idx!=null?idx:-1)+')">保存</button>'
+  );
+}
+
+function autoFillDelivery(){
+  const sel=document.getElementById('dl_orderId');
+  const opt=sel.options[sel.selectedIndex];
+  if(opt){
+    document.getElementById('dl_customer').value=opt.dataset.customer||'';
+    document.getElementById('dl_productId').value=opt.dataset.product||'';
+    document.getElementById('dl_productName').value=opt.dataset.pname||'';
+    document.getElementById('dl_orderTotal').value=opt.dataset.total||'';
+    document.getElementById('dl_delivered').value=opt.dataset.delivered||'';
+    const undel=num(opt.dataset.total)-num(opt.dataset.delivered);
+    document.getElementById('dl_undelivered').value=undel;
+  }
+}
+
+function saveDelivery(idx){
+  const d={
+    orderId:document.getElementById('dl_orderId').value,
+    customer:document.getElementById('dl_customer').value,
+    productId:document.getElementById('dl_productId').value,
+    productName:document.getElementById('dl_productName').value,
+    orderTotal:num(document.getElementById('dl_orderTotal').value),
+    delivered:num(document.getElementById('dl_delivered').value),
+    undelivered:num(document.getElementById('dl_undelivered').value),
+    freq:document.getElementById('dl_freq').value,
+    finalDate:document.getElementById('dl_finalDate').value,
+    firstDate:document.getElementById('dl_firstDate').value,
+    batchCount:num(document.getElementById('dl_batchCount').value),
+    perBatch:document.getElementById('dl_perBatch').value,
+    notes:document.getElementById('dl_notes').value
+  };
+  if(!d.orderId){alert('请选择订单');return;}
+  if(idx>=0){const oldD=deliveries[idx];d.batches=oldD.batches;deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');}
+  else{deliveries.push(d);logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+')');}
+  save('deliveries',deliveries);
+  closeModal();
+  renderContent();
+}
+
+function delDelivery(idx){
+  if(!confirm('确认删除该交付计划？'))return;
+  logOp('删除','交付计划','删除交付计划「'+deliveries[idx].orderId+'」('+deliveries[idx].customer+')');
+  deliveries.splice(idx,1);
+  save('deliveries',deliveries);
+  renderContent();
+}
+
+function genBatches(idx){
+  const d=deliveries[idx];
+  if(!d){return;}
+  if(!d.finalDate||!d.firstDate){alert('请先填写最终交付期和首次交付日');return;}
+  if(d.undelivered<=0){alert('未交付量为0，无需生成排期');return;}
+
+  // 计算间隔天数
+  let interval=7;
+  if(d.freq.includes('三天'))interval=3;
+  else if(d.freq.includes('每日'))interval=1;
+  else if(d.freq.includes('周一'))interval=7;
+  else if(d.freq.includes('周五'))interval=7;
+
+  // 计算批次
+  const batchCount=Math.max(1,Math.ceil(d.undelivered/Math.ceil(d.undelivered/(d.batchCount||Math.ceil(d.undelivered/50)))));
+  const perBatch=Math.floor(d.undelivered/batchCount);
+  const remainder=d.undelivered%batchCount;
+
+  const batches=[];
+  let cumulative=0;
+  let currentDate=new Date(d.firstDate);
+  const finalDate=new Date(d.finalDate);
+  const weekdays=['周日','周一','周二','周三','周四','周五','周六'];
+
+  for(let i=0;i<batchCount;i++){
+    const qty=i===batchCount-1?perBatch+remainder:perBatch;
+    cumulative+=qty;
+    const wd=weekdays[currentDate.getDay()];
+    const dateStr=currentDate.getFullYear()+'-'+String(currentDate.getMonth()+1).padStart(2,'0')+'-'+String(currentDate.getDate()).padStart(2,'0');
+    batches.push({
+      seq:i+1,
+      date:dateStr,
+      weekday:wd,
+      planQty:qty,
+      cumulative:cumulative,
+      remaining:d.undelivered-cumulative,
+      actualQty:'',
+      status:'待交付',
+      diff:'',
+      notes:''
+    });
+    currentDate.setDate(currentDate.getDate()+interval);
+    if(currentDate>finalDate&&i<batchCount-1){
+      // 如果超过最终交付期，缩短间隔
+      currentDate=new Date(d.finalDate);
+      currentDate.setDate(currentDate.getDate()-interval*(batchCount-i-1));
+    }
+  }
+
+  d.batches=batches;
+  d.batchCount=batchCount;
+  d.perBatch=perBatch+(remainder>0?'(末批'+(perBatch+remainder)+')':'');
+  save('deliveries',deliveries);
+  logOp('生成排期','交付计划','订单「'+d.orderId+'」生成'+batchCount+'批交付排期');
+  renderContent();
+}
+
+function updateActual(orderId,seq,val){
+  const d=deliveries.find(x=>x.orderId===orderId);
+  if(!d||!d.batches)return;
+  const b=d.batches.find(x=>x.seq===seq);
+  if(!b)return;
+  b.actualQty=val;
+  b.status=val!==''?'已交付':'待交付';
+  b.diff=val!==''?num(val)-num(b.planQty):'';
+  save('deliveries',deliveries);
+  logOp('填报','交付计划','订单「'+orderId+'」第'+seq+'批实际交付'+val);
+  renderContent();
+}
+
+/* ================================================================
+   操作日志
+================================================================ */
+function renderLogs(){
+  const ACTION_CLS={'新增':'tag-green','编辑':'tag-blue','删除':'tag-red','导入':'tag-amber','导出':'','清空':'tag-red','生成排期':'tag-blue','填报':'tag-blue','字段设置':''};
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>操作日志 <span class="desc">记录关键操作 · 最多保留 500 条</span> <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="clearLogs()">清空日志</button></div>';
+  if(logs.length===0){
+    html+='<div class="empty">暂无操作记录</div>';
+  }else{
+    TBL_SCHEMAS.logs=[
+      {key:'time',label:'时间',type:'text'},
+      {key:'action',label:'操作',type:'text',select:true},
+      {key:'target',label:'表单',type:'text',select:true},
+      {key:'field',label:'字段',type:'text',select:true},
+      {key:'detail',label:'详情(旧→新)',type:'text'}
+    ];
+    TBL_ROWS.logs=logs;
+    const shownLogs=applyTable('logs',logs);
+    html+=filterBar('logs');
+    html+='<div class="table-wrap"><table><thead><tr>'
+      +thCol('logs',TBL_SCHEMAS.logs[0],'min-width:140px')
+      +thCol('logs',TBL_SCHEMAS.logs[1],'width:60px')
+      +thCol('logs',TBL_SCHEMAS.logs[2],'width:120px')
+      +thCol('logs',TBL_SCHEMAS.logs[3],'width:130px')
+      +thCol('logs',TBL_SCHEMAS.logs[4])
+      +'</tr></thead><tbody>';
+    if(shownLogs.length===0){html+=noMatchRow('logs',5);}
+    shownLogs.forEach(l=>{
+      const cls=ACTION_CLS[l.action]||'tag-gray';
+      html+='<tr><td style="font-size:12px;color:var(--muted);white-space:nowrap">'+esc(l.time)+'</td>'
+        +'<td><span class="tag '+cls+'">'+esc(l.action)+'</span></td>'
+        +'<td>'+esc(l.target)+'</td>'
+        +'<td style="font-size:13px;color:var(--primary);font-weight:600">'+(l.field?esc(l.field):'<span style="color:var(--muted);font-weight:400">—</span>')+'</td>'
+        +'<td style="font-size:13px">'+esc(l.detail)+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+  return html;
+}
+
+function clearLogs(){
+  if(!confirm('确认清空所有操作日志？此操作不可恢复。'))return;
+  logs=[];
+  save('logs',logs);
+  logOp('清空','操作日志','清空全部日志');
+  renderContent();
+}
+
+/* ================================================================
+   字段设置
+================================================================ */
+function curFields(){ return (fieldsAudit==='draft'&&fieldsDraft)?fieldsDraft:fields; }
+function saveFieldsEdit(){
+  if(fieldsAudit==='draft'&&fieldsDraft){save('fieldsDraft',fieldsDraft);}
+  else{save('fields',fields);}
+}
+function reverseAudit(){
+  if(fieldsAudit!=='audited')return;
+  if(!confirm('反审核后将解锁字段设置，修改需重新审核才会生效。确定反审核？'))return;
+  fieldsDraft=JSON.parse(JSON.stringify(fields));
+  fieldsAudit='draft';
+  save('fieldsDraft',fieldsDraft);
+  save('fieldsAudit','draft');
+  logOp('字段设置','审核','反审核：进入草稿可编辑状态');
+  renderContent();
+}
+function approveAudit(){
+  if(fieldsAudit!=='draft'||!fieldsDraft){return;}
+  if(!confirm('审核通过后，字段修改将正式生效并锁定，后续修改需再次反审核。确定审核？'))return;
+  fields=JSON.parse(JSON.stringify(fieldsDraft));
+  fieldsAudit='audited';
+  save('fields',fields);
+  save('fieldsAudit','audited');
+  fieldsDraft=null;
+  save('fieldsDraft',null);
+  logOp('字段设置','审核','审核通过：字段修改已正式生效');
+  renderContent();
+}
+function discardAudit(){
+  if(fieldsAudit!=='draft'){return;}
+  if(!confirm('放弃修改将丢弃当前草稿，恢复到已审核状态。确定放弃？'))return;
+  fieldsAudit='audited';
+  fieldsDraft=null;
+  save('fieldsAudit','audited');
+  save('fieldsDraft',null);
+  logOp('字段设置','审核','放弃草稿修改，恢复原配置');
+  renderContent();
+}
+function renderFields(){
+  const formMeta=[
+    {key:'product',label:'产品主数据',sub:'产品基础信息'},
+    {key:'order',label:'订单管理',sub:'框架订单'},
+    {key:'inventory',label:'半成品库存',sub:'库存台账'},
+    {key:'dailyPlan',label:'日排产-备货',sub:'装配→内包→调试'},
+    {key:'dailyPkg',label:'日排产-包装',sub:'包装→成品入库'},
+    {key:'delivery',label:'交付计划',sub:'分批交付排期'}
+  ];
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>字段设置 <span class="desc">新增/改名/改类型/删除 · 系统字段锁保护</span></div>';
+  const ro=fieldsAudit==='audited';
+  const auditBadge=ro
+    ? '<span class="audit-badge audited">● 已审核（锁定）</span>'
+    : '<span class="audit-badge draft">● 未审核（草稿）</span>';
+  const auditBtns=ro
+    ? '<button class="btn btn-sm" style="cursor:pointer" onclick="reverseAudit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M3 7v6h6M21 17v-6h-6"/><path d="M21 7a9 9 0 0 0-15-3M3 17a9 9 0 0 0 15 3"/></svg>反审核</button>'
+    : '<button class="btn btn-sm btn-primary" style="cursor:pointer" onclick="approveAudit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M20 6L9 17l-5-5"/></svg>审核</button> <button class="btn btn-sm btn-danger" style="cursor:pointer" onclick="discardAudit()">放弃修改</button>';
+  html+='<div class="fs-auditbar">'+auditBadge+'<div class="fs-audit-actions">'+auditBtns+'</div></div>';
+  if(!ro){
+    html+='<div class="fs-note" style="font-size:12px;color:#b45309;margin-bottom:10px">⚠ 当前处于草稿状态，修改尚未生效。请核对无误后点击「审核」正式保存；或「放弃修改」恢复原配置。</div>';
+  }
+  html+='<div class="fs-layout">'+
+    '<div class="fs-menu">'+
+      formMeta.map(f=>{
+        const customCount=curFields()[f.key].filter(x=>!x.locked).length;
+        return '<div class="fs-menu-item'+(selectedFieldForm===f.key?' active':'')+'" onclick="selectFieldForm(\''+f.key+'\')">'+
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'+
+          '<span>'+f.label+'</span>'+
+          (customCount>0?'<span class="dot"></span>':'')+
+        '</div>';
+      }).join('')+
+    '</div>'+
+    '<div class="fs-body" id="fs-body"></div>'+
+  '</div></div>';
+  // render body after insertion
+  setTimeout(()=>renderFieldBody(),0);
+  return html;
+}
+
+function selectFieldForm(key){
+  selectedFieldForm=key;
+  renderContent();
+}
+
+function renderFieldBody(){
+  const body=document.getElementById('fs-body');
+  if(!body)return;
+  const sec=selectedFieldForm;
+  const meta=FORM_META[sec];
+  let html='';
+  if(meta){
+    html+='<div style="margin-bottom:10px"><div style="font-weight:700;font-size:14px">'+meta.title+'</div><div style="font-size:12px;color:var(--muted)">'+meta.sub+'</div></div>';
+  }
+  html+='<div class="fs-note" style="font-size:12px;color:var(--muted);margin-bottom:10px">带 '+LOCK+' 的字段为系统关键字段，不可修改、不可删除。</div>';
+  if(sec==='order'){
+    html+=fieldGroupHtml('order','head','表头字段','订单级信息 · 每单一条（订单编号 / 客户 / 日期 / 状态 / 备注等）');
+    html+=fieldGroupHtml('order','line','表体字段','明细行信息 · 每行一种产品（产品 / 数量 / 已交付等）');
+    html+='<div class="fs-note" style="font-size:12px;color:var(--muted);margin-top:8px">说明：表头字段每个订单只填一次；表体字段在「订单明细」中按产品逐行填写，可按需在表体下新增自定义列（如单价、行备注）。</div>';
+  }else{
+    if(REF_ENABLED.indexOf(sec)<0){
+      html+='<div class="fs-note" style="font-size:12px;color:#b45309;margin-bottom:8px">提示：该表单的录入弹窗为固定结构，本页的字段增删改仅影响「导入/导出」的表头列，录入界面暂不受字段设置控制。引用字段请使用「产品主数据」或「订单管理」。</div>';
+    }
+    html+=fieldGroupHtml(sec,null,null,null);
+  }
+  body.innerHTML=html;
+}
+
+/* 字段分组表格（订单分为表头/表体；其余表单单组） */
+function fieldGroupHtml(sec, level, title, note){
+  let html='';
+  if(title){
+    html+='<div style="font-weight:700;font-size:13.5px;margin:16px 0 4px"><span style="background:var(--primary-light);color:var(--primary);padding:3px 10px;border-radius:6px">'+title+'</span></div>';
+    if(note)html+='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+note+'</div>';
+  }
+  const ro=fieldsAudit==='audited';
+  html+='<div class="table-wrap"><table><thead><tr><th style="min-width:130px">字段名称</th><th>类型</th><th style="text-align:center">必填</th><th style="min-width:150px">选项 / 引用设置</th><th>操作</th></tr></thead><tbody>';
+  const typesFor=(REF_ENABLED.indexOf(sec)>=0)?TYPES:TYPES.filter(function(t){return t!=='ref';});
+  curFields()[sec].forEach((f,idx)=>{
+    if(level && f.level!==level)return;
+    const dis=(ro||f.locked)?' disabled':'';
+    const typeCtrl=f.locked?'<span style="color:var(--muted)">'+esc(f.type)+'</span>':'<select'+dis+' onchange="updField(\''+sec+'\','+idx+',\'type\',this.value)">'+typesFor.map(function(t){return '<option '+(t===f.type?'selected':'')+'>'+t+'</option>';}).join('')+'</select>';
+    const reqCtrl=(f.locked||ro)?(f.required?'<span style="color:var(--muted)">必填</span>':'<span style="color:var(--muted)">否</span>'):'<input type="checkbox" '+(f.required?'checked':'')+dis+' onchange="updField(\''+sec+'\','+idx+',\'required\',this.checked)">';
+    let optCtrl='<span style="color:#bbb">—</span>';
+    if(f.type==='select'){
+      optCtrl='<input'+dis+' value="'+esc((f.options||[]).join(','))+'" onchange="updField(\''+sec+'\','+idx+',\'options\',this.value.split(\',\').map(s=>s.trim()).filter(Boolean))" placeholder="逗号分隔" style="font-size:12px">';
+    }else if(f.type==='ref'){
+      optCtrl='<span style="font-size:11px;color:var(--primary)"><span title="'+esc(refDesc(f,sec))+'">'+esc(refDesc(f,sec))+'</span><br><button class="btn-sm"'+dis+' style="cursor:pointer;margin-top:2px" onclick="refConfigModal(\''+sec+'\','+idx+')">配置引用</button></span>';
+    }
+    const labelCell=(f.locked||ro)?(esc(f.label)+' '+LOCK):'<input value="'+esc(f.label)+'"'+dis+' onchange="updField(\''+sec+'\','+idx+',\'label\',this.value)">';
+    const delBtn=(f.locked||ro)?'<button disabled style="min-height:30px;padding:4px 10px;font-size:12px;border-radius:8px;border:1px solid var(--border);background:#f3f4f6;color:#bbb;cursor:not-allowed">删除</button>':'<button class="btn-danger btn-sm" style="cursor:pointer" onclick="delField(\''+sec+'\','+idx+')">删除</button>';
+    html+='<tr><td>'+labelCell+'</td><td>'+typeCtrl+'</td><td style="text-align:center">'+reqCtrl+'</td><td>'+optCtrl+'</td><td>'+delBtn+'</td></tr>';
+  });
+  html+='</tbody></table></div>';
+  html+='<button class="btn btn-ghost btn-sm" '+(ro?'disabled':'')+' style="margin-top:10px;cursor:'+(ro?'not-allowed':'pointer')+'" onclick="addField(\''+sec+'\''+(level?',\''+level+'\'':'')+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新增'+(level?(level==='line'?'表体':'表头'):'')+'字段</button>';
+  return html;
+}
+
+/* 引用字段配置弹窗 */
+function refConfigModal(sec,idx){
+  const f=curFields()[sec][idx];
+  const cur=f.refForm||'product';
+  const tcols=fields[cur]||[];
+  const keyOpts=(curFields()[sec]||[]).map(function(x){return '<option value="'+esc(x.key)+'" '+(x.key===f.refKey?'selected':'')+'>'+esc(x.label)+'</option>';}).join('');
+  const matchOpts=tcols.map(function(x){return '<option value="'+esc(x.key)+'" '+(x.key===f.refMatch?'selected':'')+'>'+esc(x.label)+'</option>';}).join('');
+  const fieldOpts=tcols.map(function(x){return '<option value="'+esc(x.key)+'" '+(x.key===f.refField?'selected':'')+'>'+esc(x.label)+'</option>';}).join('');
+  let body='<div class="form-row">'+
+    '<div><label>引用表单</label><select id="rc_form" onchange="rcReload(\''+sec+'\','+idx+')">'+Object.keys(REF_FORM_LABELS).map(function(k){return '<option value="'+k+'" '+(k===cur?'selected':'')+'>'+REF_FORM_LABELS[k]+'</option>';}).join('')+'</select></div>'+
+    '<div><label>本表关联键（用于匹配）</label><select id="rc_key">'+keyOpts+'</select></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>目标匹配字段</label><select id="rc_match">'+matchOpts+'</select></div>'+
+    '<div><label>引用字段（要带出的值）</label><select id="rc_field">'+fieldOpts+'</select></div>'+
+    '</div>'+
+    '<div class="fs-note" style="font-size:12px;color:var(--muted);margin-top:6px">作用：录入本表单时，当「关联键」的值确定后，系统自动从「引用表单」中找到匹配记录，把「引用字段」的值带出并保存到本条记录（例如订单明细选了产品编码后，自动带出产品的规格、单位或单价）。</div>';
+  showModal('配置引用字段「'+esc(f.label)+'」',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRefConfig(\''+sec+'\','+idx+')">保存</button>'
+  );
+}
+function rcReload(sec,idx){
+  const form=document.getElementById('rc_form').value;
+  const tcols=fields[form]||[];
+  const opts=tcols.map(function(x){return '<option value="'+esc(x.key)+'">'+esc(x.label)+'</option>';}).join('');
+  document.getElementById('rc_match').innerHTML=opts;
+  document.getElementById('rc_field').innerHTML=opts;
+}
+function saveRefConfig(sec,idx){
+  const f=curFields()[sec][idx];
+  f.type='ref';
+  f.refForm=document.getElementById('rc_form').value;
+  f.refKey=document.getElementById('rc_key').value;
+  f.refMatch=document.getElementById('rc_match').value;
+  f.refField=document.getElementById('rc_field').value;
+  saveFieldsEdit();
+  logOp('字段设置',REF_FORM_LABELS[sec]||sec,'配置引用字段「'+f.label+'」→ '+refDesc(f,sec), f.label);
+  closeModal();
+  renderFieldBody();
+}
+
+function addField(sec, level){
+  if(fieldsAudit==='audited')return;
+  curFields()[sec].push({key:'field_'+Date.now(),label:'新字段',type:'text',required:false,locked:false,level:level||'head'});
+  saveFieldsEdit();
+  logOp('字段设置',REF_FORM_LABELS[sec]||sec,'新增'+(level==='line'?'表体':'表头')+'字段「新字段」','新字段');
+  renderFieldBody();
+}
+function updField(sec,idx,key,val){
+  if(fieldsAudit==='audited')return;
+  var oldVal=curFields()[sec][idx][key];
+  curFields()[sec][idx][key]=val;
+  saveFieldsEdit();
+  if(key==='label')logOp('字段设置',REF_FORM_LABELS[sec]||sec,'字段改名「'+oldVal+'」→「'+val+'」', val, oldVal, val);
+  renderFieldBody();
+}
+function delField(sec,idx){
+  if(fieldsAudit==='audited')return;
+  if(!confirm('确认删除字段「'+curFields()[sec][idx].label+'」？已有数据中该字段的值将丢失。'))return;
+  logOp('字段设置',REF_FORM_LABELS[sec]||sec,'删除字段「'+curFields()[sec][idx].label+'」', curFields()[sec][idx].label);
+  curFields()[sec].splice(idx,1);
+  saveFieldsEdit();
+  renderFieldBody();
+}
+
+/* ================================================================
+   Modal
+================================================================ */
+function showModal(title,body,foot){
+  const m=document.getElementById('modal');
+  m.innerHTML='<div class="modal-head"><h3>'+title+'</h3><div class="close-x" onclick="closeModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M18 6L6 18M6 6l12 12"/></svg></div></div><div class="modal-body">'+body+'</div><div class="modal-foot">'+foot+'</div>';
+  document.getElementById('modalBg').classList.add('show');
+}
+function closeModal(){
+  document.getElementById('modalBg').classList.remove('show');
+}
+
+/* ================================================================
+   XLSX 原生读写引擎（零依赖，纯 JS）
+================================================================ */
+var XLSX=(function(){
+  /* --- CRC32 --- */
+  var T=(function(){var t=new Uint32Array(256);for(var i=0;i<256;i++){var c=i;for(var j=0;j<8;j++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[i]=c;}return t;})();
+  function crc32(d){var c=0xFFFFFFFF;for(var i=0;i<d.length;i++)c=T[(c^d[i])&0xFF]^(c>>>8);return(c^0xFFFFFFFF)>>>0;}
+  /* --- 编码工具 --- */
+  function u8(s){return new TextEncoder().encode(s);}
+  function u8s(d){return new TextDecoder().decode(d);}
+  function xe(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function colName(idx){var s='';idx++;while(idx>0){var r=(idx-1)%26;s=String.fromCharCode(65+r)+s;idx=Math.floor((idx-1)/26);}return s;}
+  /* --- ZIP 写入 (STORE, Excel 兼容) --- */
+  function zipWrite(files){
+    var parts=[],cd=[],offset=0;
+    files.forEach(function(f){
+      var nm=u8(f.name),dat=f.data,crc=crc32(dat);
+      var lh=new Uint8Array(30+nm.length),dv=new DataView(lh.buffer);
+      dv.setUint32(0,0x04034b50,true);dv.setUint16(4,20,true);
+      dv.setUint16(8,0,true);dv.setUint32(14,crc,true);
+      dv.setUint32(18,dat.length,true);dv.setUint32(22,dat.length,true);
+      dv.setUint16(26,nm.length,true);lh.set(nm,30);
+      var ch=new Uint8Array(46+nm.length),cv=new DataView(ch.buffer);
+      cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);
+      cv.setUint16(10,0,true);cv.setUint32(16,crc,true);
+      cv.setUint32(20,dat.length,true);cv.setUint32(24,dat.length,true);
+      cv.setUint16(28,nm.length,true);cv.setUint32(42,offset,true);ch.set(nm,46);
+      parts.push(lh,dat);cd.push(ch);offset+=lh.length+dat.length;
+    });
+    var cdLen=cd.reduce(function(s,h){return s+h.length;},0);
+    var eo=new Uint8Array(22),ev=new DataView(eo.buffer);
+    ev.setUint32(0,0x06054b50,true);ev.setUint16(8,files.length,true);
+    ev.setUint16(10,files.length,true);ev.setUint32(12,cdLen,true);ev.setUint32(16,offset,true);
+    var tot=parts.reduce(function(s,p){return s+p.length;},0)+cdLen+22;
+    var out=new Uint8Array(tot),pos=0;
+    parts.forEach(function(p){out.set(p,pos);pos+=p.length;});
+    cd.forEach(function(h){out.set(h,pos);pos+=h.length;});
+    out.set(eo,pos);return out;
+  }
+  /* --- ZIP 读取 (STORE + DEFLATE) --- */
+  async function zipRead(buf){
+    var ab=buf instanceof ArrayBuffer?buf:buf.buffer;
+    var dv=new DataView(ab),eocd=-1;
+    for(var i=dv.byteLength-22;i>=0;i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}}
+    if(eocd<0)throw new Error('无效 ZIP 文件');
+    var cdOff=dv.getUint32(eocd+16,true),n=dv.getUint16(eocd+10,true);
+    var files={},pos=cdOff;
+    for(var i=0;i<n;i++){
+      if(dv.getUint32(pos,true)!==0x02014b50)break;
+      var comp=dv.getUint16(pos+10,true),compSz=dv.getUint32(pos+20,true);
+      var nmLen=dv.getUint16(pos+28,true),exLen=dv.getUint16(pos+30,true),cmLen=dv.getUint16(pos+32,true);
+      var loff=dv.getUint32(pos+42,true);
+      var nm='';for(var j=0;j<nmLen;j++)nm+=String.fromCharCode(dv.getUint8(pos+46+j));
+      var lNm=dv.getUint16(loff+26,true),lEx=dv.getUint16(loff+28,true);
+      var dOff=loff+30+lNm+lEx;
+      var raw=new Uint8Array(ab,dOff,compSz);
+      var data;
+      if(comp===0){data=raw;}
+      else if(comp===8){
+        if(typeof DecompressionStream==='undefined')throw new Error('浏览器不支持 DEFLATE 解压，请使用 Chrome 80+');
+        var ds=new DecompressionStream('deflate-raw');
+        var w=ds.writable.getWriter();w.write(raw);w.close();
+        var r=ds.readable.getReader(),chunks=[],len=0;
+        while(true){var res=await r.read();if(res.done)break;chunks.push(res.value);len+=res.value.length;}
+        data=new Uint8Array(len);var p=0;chunks.forEach(function(c){data.set(c,p);p+=c.length;});
+      }else throw new Error('不支持的压缩方式: '+comp);
+      files[nm]=data;pos+=46+nmLen+exLen+cmLen;
+    }
+    return files;
+  }
+  /* --- 构建 XLSX (多 Sheet) --- */
+  /* 单元格样式：索引0默认，索引1红色字体（用于导入模板必填表头） */
+  var STYLE_XML='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><color theme="1"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFF0000"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  function build(sheets){
+    var ssArr=[],ssMap={};
+    function ss(str){str=String(str==null?'':str);if(Object.prototype.hasOwnProperty.call(ssMap,str))return ssMap[str];var idx=ssArr.length;ssMap[str]=idx;ssArr.push(str);return idx;}
+    var wsXmls=[];
+    sheets.forEach(function(sh){
+      var x='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+      x+='<row r="1">';
+      sh.headers.forEach(function(h,c){
+        var text,red=false;
+        if(h&&typeof h==='object'){text=h.t;red=!!h.red;}else{text=String(h==null?'':h);}
+        x+='<c r="'+colName(c)+'1" t="s"'+(red?' s="1"':'')+'><v>'+ss(text)+'</v></c>';
+      });
+      x+='</row>';
+      sh.rows.forEach(function(row,r){
+        var rn=r+2;x+='<row r="'+rn+'">';
+        row.forEach(function(val,c){
+          var ref=colName(c)+rn;
+          if(typeof val==='number'&&!isNaN(val)){x+='<c r="'+ref+'"><v>'+val+'</v></c>';}
+          else{x+='<c r="'+ref+'" t="s"><v>'+ss(val)+'</v></c>';}
+        });
+        x+='</row>';
+      });
+      x+='</sheetData></worksheet>';wsXmls.push(x);
+    });
+    var files=[];
+    var ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>';
+    sheets.forEach(function(s,i){ct+='<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';});
+    ct+='<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>';
+    ct+='</Types>';files.push({name:'[Content_Types].xml',data:u8(ct)});
+    files.push({name:'_rels/.rels',data:u8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')});
+    var wb='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>';
+    sheets.forEach(function(s,i){wb+='<sheet name="'+xe(s.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>';});
+    wb+='</sheets></workbook>';files.push({name:'xl/workbook.xml',data:u8(wb)});
+    var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
+    sheets.forEach(function(s,i){rels+='<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>';});
+    rels+='<Relationship Id="rId'+(sheets.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>';
+    rels+='<Relationship Id="rId'+(sheets.length+2)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+    files.push({name:'xl/_rels/workbook.xml.rels',data:u8(rels)});
+    var sst='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'+ssArr.length+'" uniqueCount="'+ssArr.length+'">';
+    ssArr.forEach(function(str){sst+='<si><t xml:space="preserve">'+xe(str)+'</t></si>';});
+    sst+='</sst>';files.push({name:'xl/sharedStrings.xml',data:u8(sst)});
+    wsXmls.forEach(function(x,i){files.push({name:'xl/worksheets/sheet'+(i+1)+'.xml',data:u8(x)});});
+    files.push({name:'xl/styles.xml',data:u8(STYLE_XML)});
+    return zipWrite(files);
+  }
+  /* --- 解析 XLSX --- */
+  async function parse(arrayBuffer){
+    var zfiles=await zipRead(arrayBuffer);
+    var strings=[];
+    var ssFile=zfiles['xl/sharedStrings.xml'];
+    if(ssFile){var ssDoc=new DOMParser().parseFromString(u8s(ssFile),'text/xml');var siEls=ssDoc.getElementsByTagName('si');for(var i=0;i<siEls.length;i++){var t=siEls[i].getElementsByTagName('t')[0];strings.push(t?t.textContent:'');}}
+    var wbDoc=new DOMParser().parseFromString(u8s(zfiles['xl/workbook.xml']),'text/xml');
+    var sheetEls=wbDoc.getElementsByTagName('sheet');
+    var relsDoc=new DOMParser().parseFromString(u8s(zfiles['xl/_rels/workbook.xml.rels']),'text/xml');
+    var relEls=relsDoc.getElementsByTagName('Relationship');
+    var result=[];
+    for(var s=0;s<sheetEls.length;s++){
+      var name=sheetEls[s].getAttribute('name');
+      var rid=sheetEls[s].getAttribute('r:id');
+      var target='';for(var j=0;j<relEls.length;j++){if(relEls[j].getAttribute('Id')===rid){target=relEls[j].getAttribute('Target');break;}}
+      var fullPath=target.startsWith('/')?target.slice(1):('xl/'+target);
+      var wsFile=zfiles[fullPath];if(!wsFile)continue;
+      var wsDoc=new DOMParser().parseFromString(u8s(wsFile),'text/xml');
+      var rows=wsDoc.getElementsByTagName('row');
+      var sd={name:name,headers:[],rows:[]};
+      for(var r=0;r<rows.length;r++){
+        var cells=rows[r].getElementsByTagName('c');var rowData=[];
+        for(var c=0;c<cells.length;c++){
+          var cell=cells[c];var t=cell.getAttribute('t');
+          var vEl=cell.getElementsByTagName('v')[0];var isEl=cell.getElementsByTagName('is')[0];
+          var val='';
+          if(t==='s'){val=strings[parseInt(vEl?vEl.textContent:0)]||'';}
+          else if(t==='inlineStr'&&isEl){var tt=isEl.getElementsByTagName('t')[0];val=tt?tt.textContent:'';}
+          else if(t==='str'){val=vEl?vEl.textContent:'';}
+          else if(vEl){var nv=parseFloat(vEl.textContent);val=isNaN(nv)?vEl.textContent:nv;}
+          rowData.push(val);
+        }
+        if(r===0){sd.headers=rowData;}
+        else{if(rowData.some(function(v){return v!==''&&v!=null;}))sd.rows.push(rowData);}
+      }
+      result.push(sd);
+    }
+    return result;
+  }
+  return {build:build,parse:parse};
+})();
+
+/* ================================================================
+   导入导出 (XLSX)
+================================================================ */
+var XLSX_SHEETS=[
+  {sheet:'产品主数据',varName:'products',formKey:'product'},
+  {sheet:'订单管理',varName:'orders',formKey:'order'},
+  {sheet:'半成品库存',varName:'inventory',formKey:'inventory'},
+  {sheet:'备货排产',varName:'dailyPlans',formKey:'dailyPlan'},
+  {sheet:'包装排产',varName:'dailyPkgs',formKey:'dailyPkg'},
+  {sheet:'交付计划',varName:'deliveries',formKey:'delivery'}
+];
+
+/* varName -> 实际变量 的映射（不能用 window[name]，因为数组用 let 声明不挂到 window） */
+function dataByVar(name){
+  switch(name){
+    case 'products':return products;
+    case 'orders':return orders;
+    case 'inventory':return inventory;
+    case 'dailyPlans':return dailyPlans;
+    case 'dailyPkgs':return dailyPkgs;
+    case 'deliveries':return deliveries;
+    case 'logs':return logs;
+  }
+  return [];
+}
+function setDataByVar(name,arr){
+  switch(name){
+    case 'products':products=arr;break;
+    case 'orders':orders=arr;break;
+    case 'inventory':inventory=arr;break;
+    case 'dailyPlans':dailyPlans=arr;break;
+    case 'dailyPkgs':dailyPkgs=arr;break;
+    case 'deliveries':deliveries=arr;break;
+    case 'logs':logs=arr;break;
+  }
+}
+
+/* 订单导出：每行一种产品（表头字段随每行重复） */
+function orderFlatRows(){
+  var rows=[];
+  orders.forEach(function(o){
+    orderItems(o).forEach(function(it){
+      var r={};
+      (fields.order||[]).forEach(function(f){
+        r[f.key]=isLineField(f)?it[f.key]:o[f.key];
+      });
+      rows.push(r);
+    });
+  });
+  return rows;
+}
+/* 订单导入：按订单编号聚合多行 → 一个订单多明细 */
+function groupOrderRows(rows){
+  var map={},list=[];
+  var lineDefs=orderLineFields();   // 表体字段动态构成明细行
+  rows.forEach(function(r){
+    if(!r.id)return;
+    if(!map[r.id]){
+      var o={};                      // 表头字段取自首次出现的行
+      orderHeadFields().forEach(function(f){o[f.key]=r[f.key];});
+      o.items=[];
+      map[r.id]=o;list.push(o);
+    }
+    var it={};
+    lineDefs.forEach(function(f){
+      var v=r[f.key];
+      it[f.key]=f.type==='number'?num(v):(v==null?'':v);
+    });
+    map[r.id].items.push(it);
+  });
+  return list;
+}
+
+function exportXLSX(){
+  var sheets=XLSX_SHEETS.map(function(cfg){
+    var farr=fields[cfg.formKey]||[];
+    var headers=farr.map(function(f){return f.label;});
+    var data=cfg.formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
+    var rows=data.map(function(item){
+      return farr.map(function(f){
+        var val=item[f.key];
+        if(f.type==='date'&&val)return fmtDate(val);
+        if(f.type==='number')return num(val);
+        return val==null?'':val;
+      });
+    });
+    return {name:cfg.sheet,headers:headers,rows:rows};
+  });
+  var bytes=XLSX.build(sheets);
+  var blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;a.download='生产排单系统_全量_'+todayStr()+'.xlsx';a.click();
+  URL.revokeObjectURL(url);
+  logOp('导出','全量数据','全量导出 '+XLSX_SHEETS.length+' 个表单');
+}
+
+/* 单表单导出 */
+function exportForm(formKey){
+  var cfg=XLSX_SHEETS.find(function(c){return c.formKey===formKey;});
+  if(!cfg)return;
+  var farr=fields[cfg.formKey]||[];
+  var headers=farr.map(function(f){return f.label;});
+  var data=formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
+  var rows=data.map(function(item){
+    return farr.map(function(f){
+      var val=item[f.key];
+      if(f.type==='date'&&val)return fmtDate(val);
+      if(f.type==='number')return num(val);
+      return val==null?'':val;
+    });
+  });
+  var bytes=XLSX.build([{name:cfg.sheet,headers:headers,rows:rows}]);
+  var blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;a.download=cfg.sheet+'_'+todayStr()+'.xlsx';a.click();
+  URL.revokeObjectURL(url);
+  logOp('导出',cfg.sheet,'导出 '+data.length+' 条记录');
+}
+
+/* 下载导入模板：表头与导出一致，必填字段标红 */
+function downloadTemplate(formKey){
+  var cfg=XLSX_SHEETS.find(function(c){return c.formKey===formKey;});
+  if(!cfg)return;
+  var farr=fields[cfg.formKey]||[];
+  if(farr.length===0){alert('该表单尚未配置字段，无法生成模板。');return;}
+  var headers=farr.map(function(f){return {t:f.label,red:!!f.required};});
+  var bytes=XLSX.build([{name:cfg.sheet,headers:headers,rows:[]}]);
+  var blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;a.download=cfg.sheet+'_导入模板_'+todayStr()+'.xlsx';a.click();
+  URL.revokeObjectURL(url);
+  logOp('模板',cfg.sheet,'下载「'+cfg.sheet+'」导入模板（必填字段已标红）');
+  var req=farr.filter(function(f){return f.required;}).map(function(f){return '「'+f.label+'」';}).join('、');
+  alert('已下载「'+cfg.sheet+'」导入模板。\n\n• 红色表头为必填字段，导入时不可为空：'+req+'；\n• 请严格按表头列填写，不要改动表头文字；\n• 填写完成后用本表单的「导入」按钮导入即可。');
+}
+
+/* 单表单/全量导入入口 */
+var importFormKey='';
+function triggerImport(formKey){
+  importFormKey=formKey||'';
+  document.getElementById('importFile').click();
+}
+
+function importXLSX(e){
+  var file=e.target.files[0];
+  if(!file){importFormKey='';return;}
+  var reader=new FileReader();
+  reader.onload=async function(){
+    try{
+      var sheets=await XLSX.parse(reader.result);
+      if(importFormKey){
+        /* 单表单导入 */
+        var cfg=XLSX_SHEETS.find(function(c){return c.formKey===importFormKey;});
+        if(!cfg){alert('未找到对应表单配置');importFormKey='';e.target.value='';return;}
+        var sh=sheets[0];
+        if(!sh||!sh.headers.length){alert('未识别到有效数据');importFormKey='';e.target.value='';return;}
+        var farr=fields[cfg.formKey]||[];
+        var labelToKey={};
+        farr.forEach(function(f){labelToKey[f.label]=f.key;});
+        var colKeys=sh.headers.map(function(label){return labelToKey[label]||null;});
+        var newData=sh.rows.map(function(row){
+          var obj={};
+          colKeys.forEach(function(key,c){
+            if(key){
+              var fdef=farr.find(function(f){return f.key===key;});
+              var val=row[c];
+              if(fdef&&fdef.type==='number')val=num(val);
+              obj[key]=val;
+            }
+          });
+          return obj;
+        });
+        if(newData.length===0){alert('未识别到有效数据。请确认表头与导出时一致。');}
+        else{
+          if(cfg.formKey==='order')newData=groupOrderRows(newData);
+          setDataByVar(cfg.varName,newData);
+          save(cfg.varName,newData);
+          logOp('导入',cfg.sheet,'导入 '+newData.length+' 条记录到「'+cfg.sheet+'」');
+          renderAll();
+          alert('导入成功！共导入 '+newData.length+' 条记录到「'+cfg.sheet+'」。');
+        }
+      }else{
+        /* 全量导入 */
+        var imported=0;
+        sheets.forEach(function(sh){
+          var cfg=XLSX_SHEETS.find(function(c){return c.sheet===sh.name;});
+          if(!cfg||!sh.headers.length)return;
+          var farr=fields[cfg.formKey]||[];
+          var labelToKey={};
+          farr.forEach(function(f){labelToKey[f.label]=f.key;});
+          var colKeys=sh.headers.map(function(label){return labelToKey[label]||null;});
+          var newData=sh.rows.map(function(row){
+            var obj={};
+            colKeys.forEach(function(key,c){
+              if(key){
+                var fdef=farr.find(function(f){return f.key===key;});
+                var val=row[c];
+                if(fdef&&fdef.type==='number')val=num(val);
+                obj[key]=val;
+              }
+            });
+            return obj;
+          });
+          if(newData.length>0){
+            if(cfg.formKey==='order')newData=groupOrderRows(newData);
+            setDataByVar(cfg.varName,newData);
+            save(cfg.varName,newData);
+            logOp('导入',cfg.sheet,'全量导入 '+newData.length+' 条记录');
+            imported++;
+          }
+        });
+        if(imported===0){alert('未识别到有效数据。请确认文件包含正确的 Sheet 名称和表头。');}
+        else{renderAll();alert('导入成功！共导入 '+imported+' 个表单的数据。');}
+      }
+    }catch(err){alert('导入失败：'+err.message+'\n\n请确认文件为 .xlsx 格式。');}
+    importFormKey='';
+    e.target.value='';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* 表单级导入导出按钮 */
+function formIOBtns(formKey){
+  return '<button class="btn btn-sm" style="margin-left:6px" onclick="exportForm(\''+formKey+'\')" title="导出此表单数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>导出</button>'+
+    '<button class="btn btn-sm" style="margin-left:4px" onclick="downloadTemplate(\''+formKey+'\')" title="下载导入模板（必填字段标红）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>模板</button>'+
+    '<button class="btn btn-sm" style="margin-left:4px" onclick="triggerImport(\''+formKey+'\')" title="导入此表单数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>导入</button>';
+}
+
+/* ================================================================
+   一键备份 / 恢复
+================================================================ */
+/* ================================================================
+   自动备份（可携式 .json，用于链接轮换/换设备后一键恢复）
+================================================================ */
+function autoBackupNow(force){
+  if(!autoBackupOn && !force)return;
+  var now=Date.now();
+  if(!force && now-lastAutoBackup < AUTO_BACKUP_MIN*60000)return;
+  lastAutoBackup=now;
+  var data={
+    version:2,exportDate:new Date().toISOString(),
+    products:products,orders:orders,inventory:inventory,
+    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,
+    logs:logs,fields:fields,meta:meta
+  };
+  var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download='生产排单系统_自动备份_'+todayStr()+'_'+new Date().toISOString().slice(11,16).replace(':','')+'.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  var t=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  logOp('自动备份','全部数据','自动备份 '+
+    ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+     (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
+  updateAutoBackupStatus(t);
+}
+function scheduleAutoBackup(){ if(autoBackupOn) autoBackupNow(false); }
+function updateAutoBackupStatus(t){
+  var s=document.getElementById('autoBackupStatus');
+  if(s)s.textContent='上次 '+t;
+}
+function toggleAutoBackup(){
+  autoBackupOn=!autoBackupOn;
+  save('autoBackupOn',autoBackupOn);
+  var b=document.getElementById('autoBackupBtn');
+  if(b)b.textContent='自动备份：'+(autoBackupOn?'开':'关');
+  if(autoBackupOn)alert('已开启自动备份：数据变更时会自动下载 .json 备份文件，链接轮换后用顶部「恢复」即可还原。');
+}
+// 离开/隐藏页面时尽力再备份一次（部分浏览器会拦截下载，故以变更时备份为主）
+document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='hidden'&&bootDone) autoBackupNow(true); });
+window.addEventListener('beforeunload',function(){ if(bootDone) autoBackupNow(true); });
+
+function backupAll(){
+  var data={
+    version:2,
+    exportDate:new Date().toISOString(),
+    products:products,
+    orders:orders,
+    inventory:inventory,
+    dailyPlans:dailyPlans,
+    dailyPkgs:dailyPkgs,
+    deliveries:deliveries,
+    logs:logs,
+    fields:fields,
+    meta:meta
+  };
+  var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download='生产排单系统_备份_'+todayStr()+'.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  logOp('备份','全部数据','一键备份 '+
+    ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+     (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
+}
+
+function restoreBackup(e){
+  var file=e.target.files[0];
+  if(!file)return;
+  if(!confirm('恢复将覆盖当前所有数据，且不可撤销。确定继续？')){e.target.value='';return;}
+  var reader=new FileReader();
+  reader.onload=function(){
+    try{
+      var data=JSON.parse(reader.result);
+      if(!data||typeof data!=='object')throw new Error('文件格式不正确');
+      if(data.products)products=data.products;
+      if(data.orders)orders=data.orders;
+      if(data.inventory)inventory=data.inventory;
+      if(data.dailyPlans)dailyPlans=data.dailyPlans;
+      if(data.dailyPkgs)dailyPkgs=data.dailyPkgs;
+      if(data.deliveries)deliveries=data.deliveries;
+      if(data.logs)logs=data.logs;
+      if(data.fields)fields=data.fields;
+      if(data.meta)meta=data.meta;
+      // 恢复后重置审核状态：草稿作废，字段直接进入已审核
+      fieldsAudit='audited';fieldsDraft=null;
+      save('fieldsAudit','audited');save('fieldsDraft',null);
+      normalizeFields();   // 兼容旧版字段：补齐 level 标记
+      migrateOrders();   // 兼容旧版平铺订单备份
+      save('products',products);save('orders',orders);save('inventory',inventory);
+      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
+      save('logs',logs);save('fields',fields);save('meta',meta);
+      renderAll();
+      logOp('恢复','全部数据','从备份文件恢复 '+
+        ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
+      alert('恢复成功！共恢复 ' +
+        ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)) + ' 条记录。');
+    }catch(err){
+      alert('恢复失败：'+err.message+'\n\n请确认文件为系统导出的 .json 备份文件。');
+    }
+    e.target.value='';
+  };
+  reader.readAsText(file);
+}
+
+function confirmClear(){
+  if(!confirm('确认清空所有数据？此操作不可恢复，建议先导出备份！'))return;
+  if(!confirm('再次确认：所有产品、订单、库存、排产、交付数据将被删除！'))return;
+  products=[];orders=[];inventory=[];dailyPlans=[];dailyPkgs=[];deliveries=[];
+  save('products',products);save('orders',orders);save('inventory',inventory);
+  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
+  logOp('清空','全部数据','清空所有业务数据');
+  renderAll();
+}
+
+/* ================================================================
+   初始化
+================================================================ */
+async function bootstrap(){
+  products=await DB.get('products',[]);
+  orders=await DB.get('orders',[]);
+  inventory=await DB.get('inventory',[]);
+  dailyPlans=await DB.get('dailyPlans',[]);
+  dailyPkgs=await DB.get('dailyPkgs',[]);
+  deliveries=await DB.get('deliveries',[]);
+  logs=await DB.get('logs',[]);
+  fields=await DB.get('fields',JSON.parse(JSON.stringify(defaultFields)));
+  fieldsAudit=await DB.get('fieldsAudit','audited');
+  fieldsDraft=await DB.get('fieldsDraft',null);
+  meta=await DB.get('meta',{seq:0});
+  tblLayout=await DB.get('tblLayout',{})||{};
+  autoBackupOn=await DB.get('autoBackupOn',true);
+
+  // 兼容旧字段：为订单字段补齐 level 标记（表头/表体）
+  normalizeFields();
+  // 产品主数据：规格型号 → 规格 + 型号（字段配置 + 数据迁移）
+  migrateSpecSplit();
+  // 产品主数据：删除"库存上下限"4个字段（配置迁移）
+  migrateRemoveProductFields();
+  // 产品主数据：日产能2字段改为非必填（配置迁移）
+  migrateProductFieldsOptional();
+
+  // 仅当"从未成功保存过任何数据"的纯净环境才灌入示例；一旦有过数据(meta.seeded)绝不重置，避免覆盖
+  if(!meta.seeded && products.length===0&&orders.length===0&&inventory.length===0&&dailyPlans.length===0&&dailyPkgs.length===0&&deliveries.length===0){
+    seed();
+    meta.seeded=true; save('meta',meta);
+  }
+
+  // 旧版平铺订单数据 → 多行明细结构
+  migrateOrders();
+
+  bootDone=true;
+  var ab=document.getElementById('autoBackupBtn');
+  if(ab)ab.textContent='自动备份：'+(autoBackupOn?'开':'关');
+  renderAll();
+}
+
+bootstrap();
+</script>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-18.3</div>
+</body>
+</html>
