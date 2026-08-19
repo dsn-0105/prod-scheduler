@@ -1366,11 +1366,20 @@ function renderOrders(){
       {key:'notes',label:'商品行备注',type:'text',get:r=>r.item.notes||r.order.notes||''}
     ];
     TBL_ROWS.order=rows;
-    const shown=applyTable('order',rows);
+    let shown=applyTable('order',rows);
+    /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
+       仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
+    const HEAD_COLS=5;
+    const sortKey=tState('order').sort?tState('order').sort.key:null;
+    const lineKeys=TBL_SCHEMAS.order.slice(HEAD_COLS).map(c=>c.key);
+    const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
+    if(shouldMerge)shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
+    const groupMap=new Map();
+    shown.forEach((r,i)=>{if(!groupMap.has(r.order.id))groupMap.set(r.order.id,{start:i,count:0});groupMap.get(r.order.id).count++;});
     html+=filterBar('order');
     html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.order.map(c=>thCol('order',c)).join('')+'<th>操作</th></tr></thead><tbody>';
     if(shown.length===0){html+=noMatchRow('order',TBL_SCHEMAS.order.length+1);}
-    shown.forEach((r)=>{
+    shown.forEach((r,i)=>{
       const o=r.order, it=r.item, oi=r.orderIdx;
       const oq=num(it.orderQty), dq=num(it.deliveredQty);
       const undel=oq-dq;
@@ -1378,12 +1387,19 @@ function renderOrders(){
       const today=todayStr();
       const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
       const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':'tag-gray';
-      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+
-        '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
-        '<td>'+fmtDate(o.startDate)+'</td>'+
-        '<td style="font-weight:600">'+esc(o.id)+'</td>'+
-        '<td>'+esc(o.customer)+'</td>'+
-        '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
+      const grp=groupMap.get(r.order.id);
+      const isFirst=grp.start===i;
+      const rs=grp.count;
+      let headCells='';
+      if(isFirst){
+        headCells=
+          '<td rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+          '<td rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
+          '<td rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
+          '<td rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
+          '<td rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+      }
+      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+headCells+
         '<td>'+esc(it.productId)+'</td>'+
         '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
         '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -1394,7 +1410,7 @@ function renderOrders(){
         '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
         '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
         '<td>'+esc(it.notes||o.notes||'')+'</td>'+
-        '<td><button class="btn btn-sm" onclick="orderModal('+oi+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delOrder('+oi+')">删除</button></td>'+
+        (isFirst?'<td rowspan="'+rs+'"><button class="btn btn-sm" onclick="orderModal('+oi+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delOrder('+oi+')">删除</button></td>':'')+
         '</tr>';
     });
     html+='</tbody></table></div>';
