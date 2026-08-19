@@ -219,7 +219,7 @@ body.col-dragging{cursor:grabbing;user-select:none}
         <span style="width:1px;height:20px;background:var(--border);margin:0 4px;display:inline-block"></span>
         <button class="btn btn-sm" style="background:var(--primary);color:#fff" onclick="backupAll()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M18 9l-6-6-6 6M12 3v12"/></svg>备份</button>
         <button class="btn btn-sm" onclick="document.getElementById('backupFile').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M6 9l6-6 6 6M12 3v12"/></svg>恢复</button>
-        <button class="btn btn-sm" id="autoBackupBtn" onclick="toggleAutoBackup()" title="数据变更时自动下载 .json 备份文件，链接轮换/换设备后可一键恢复">自动备份：开</button>
+        <button class="btn btn-sm" id="autoBackupBtn" onclick="toggleAutoBackup()" title="数据变更时自动下载 .json 备份文件，链接轮换/换设备后可一键恢复">自动备份：关</button>
         <span id="autoBackupStatus" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
         <button class="btn btn-sm btn-danger" onclick="confirmClear()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>清空</button>
         <input type="file" id="importFile" accept=".xlsx" style="display:none" onchange="importXLSX(event)">
@@ -269,7 +269,7 @@ function save(k,v){
 }
 function load(k,def){try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}}
 // 自动备份状态（可携式 .json 文件，用于链接轮换后一键恢复）
-let autoBackupOn=true, bootDone=false, lastAutoBackup=0;
+let autoBackupOn=false, bootDone=false, lastAutoBackup=0;
 const AUTO_BACKUP_MIN=15; // 两次自动备份最小间隔(分钟)
 
 /* ================================================================
@@ -2845,7 +2845,7 @@ function formIOBtns(formKey){
    自动备份（可携式 .json，用于链接轮换/换设备后一键恢复）
 ================================================================ */
 function autoBackupNow(force){
-  if(!autoBackupOn && !force)return;
+  if(!autoBackupOn)return;
   var now=Date.now();
   if(!force && now-lastAutoBackup < AUTO_BACKUP_MIN*60000)return;
   lastAutoBackup=now;
@@ -2977,7 +2977,7 @@ async function bootstrap(){
   fieldsDraft=await DB.get('fieldsDraft',null);
   meta=await DB.get('meta',{seq:0});
   tblLayout=await DB.get('tblLayout',{})||{};
-  autoBackupOn=await DB.get('autoBackupOn',true);
+  autoBackupOn=false;
 
   // 兼容旧字段：为订单字段补齐 level 标记（表头/表体）
   normalizeFields();
