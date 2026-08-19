@@ -1345,43 +1345,56 @@ function renderOrders(){
   if(orders.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><br>暂无订单数据</div>';
   }else{
+    const prodMap={};products.forEach(p=>prodMap[p.id]=p);
+    const rows=[];
+    orders.forEach((o,oi)=>{orderItems(o).forEach(it=>rows.push({order:o,item:it,orderIdx:oi}));});
     TBL_SCHEMAS.order=[
-      {key:'id',label:'订单编号',type:'text'},
-      {key:'customer',label:'客户',type:'text'},
-      {key:'productName',label:'产品明细',type:'text',get:o=>orderProductNames(o)},
-      {key:'_items',label:'明细行数',type:'number',get:o=>orderItems(o).length},
-      {key:'orderQty',label:'订单量',type:'number',get:o=>orderQtyOf(o)},
-      {key:'deliveredQty',label:'已交付',type:'number',get:o=>orderDeliveredOf(o)},
-      {key:'_undel',label:'未交付',type:'number',get:o=>orderQtyOf(o)-orderDeliveredOf(o)},
-      {key:'_pct',label:'进度%',type:'number',get:o=>{const t=orderQtyOf(o);return t>0?Math.round(orderDeliveredOf(o)/t*100):0;}},
-      {key:'deadline',label:'截止日期',type:'date'},
-      {key:'status',label:'状态',type:'text',select:true}
+      {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
+      {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
+      {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
+      {key:'customer',label:'客户',type:'text',get:r=>r.order.customer},
+      {key:'status',label:'审核状态',type:'text',select:true,get:r=>r.order.status},
+      {key:'productId',label:'商品编码',type:'text',get:r=>r.item.productId},
+      {key:'productName',label:'商品名称',type:'text',get:r=>r.item.productName||(r.item.productId&&prodMap[r.item.productId]?prodMap[r.item.productId].name:'')},
+      {key:'model',label:'型号',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.model:'';}},
+      {key:'spec',label:'规格',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.spec:'';}},
+      {key:'unit',label:'单位',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.unit:'';}},
+      {key:'orderQty',label:'数量',type:'number',get:r=>r.item.orderQty},
+      {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
+      {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
+      {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
+      {key:'notes',label:'商品行备注',type:'text',get:r=>r.item.notes||r.order.notes||''}
     ];
-    TBL_ROWS.order=orders;
-    const shown=applyTable('order',orders);
+    TBL_ROWS.order=rows;
+    const shown=applyTable('order',rows);
     html+=filterBar('order');
     html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.order.map(c=>thCol('order',c)).join('')+'<th>操作</th></tr></thead><tbody>';
-    if(shown.length===0){html+=noMatchRow('order',11);}
-    shown.forEach((o)=>{
-      const idx=orders.indexOf(o);
-      const oq=orderQtyOf(o),dq=orderDeliveredOf(o);
+    if(shown.length===0){html+=noMatchRow('order',TBL_SCHEMAS.order.length+1);}
+    shown.forEach((r)=>{
+      const o=r.order, it=r.item, oi=r.orderIdx;
+      const oq=num(it.orderQty), dq=num(it.deliveredQty);
       const undel=oq-dq;
       const pct=oq>0?Math.round(dq/oq*100):0;
       const today=todayStr();
       const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
       const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':'tag-gray';
       html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+
+        '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+        '<td>'+fmtDate(o.startDate)+'</td>'+
         '<td style="font-weight:600">'+esc(o.id)+'</td>'+
         '<td>'+esc(o.customer)+'</td>'+
-        '<td style="font-size:12px;line-height:1.5">'+orderItems(o).map(it=>esc(it.productName||it.productId)+' <span style="color:var(--muted)">×'+num(it.orderQty)+'</span>').join('<br>')+'</td>'+
-        '<td style="text-align:center">'+orderItems(o).length+'</td>'+
-        '<td style="font-variant-numeric:tabular-nums">'+money(oq)+'</td>'+
-        '<td style="font-variant-numeric:tabular-nums">'+money(dq)+'</td>'+
-        '<td style="font-variant-numeric:tabular-nums">'+money(undel)+'</td>'+
-        '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
-        '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
         '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
-        '<td><button class="btn btn-sm" onclick="orderModal('+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delOrder('+idx+')">删除</button></td>'+
+        '<td>'+esc(it.productId)+'</td>'+
+        '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
+        '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
+        '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
+        '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
+        '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
+        '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
+        '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
+        '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
+        '<td>'+esc(it.notes||o.notes||'')+'</td>'+
+        '<td><button class="btn btn-sm" onclick="orderModal('+oi+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delOrder('+oi+')">删除</button></td>'+
         '</tr>';
     });
     html+='</tbody></table></div>';
