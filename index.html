@@ -75,6 +75,11 @@ td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 tr:hover td{background:#f8fafc}
 .op-col{position:sticky;right:0;z-index:5;background:#ffffff;border-left:2px solid #e5e7eb}
 thead .op-col{background:#eef2ff;z-index:6}
+.sel-col{position:sticky;left:0;z-index:5;background:#fff;text-align:center;width:44px;vertical-align:middle;padding:6px 4px}
+thead .sel-col{background:#eef2ff;z-index:6}
+.sel-col input{cursor:pointer;width:16px;height:16px}
+.bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px}
+.bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
 .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
 .table-wrap::-webkit-scrollbar{height:10px}
 .table-wrap::-webkit-scrollbar-thumb{background:#c7cdd8;border-radius:5px;border:2px solid #fff}
@@ -970,6 +975,7 @@ function renderNav(){
 
 function switchTab(id){
   activeTab=id;
+  for(const k in selRows)selRows[k].clear();
   renderNav();
   const item=NAV.find(n=>n.id===id);
   document.getElementById('pageTitle').textContent=item?item.label:'';
@@ -1148,7 +1154,7 @@ function statCard(v,l,cls){
    产品主数据
 ================================================================ */
 function renderProducts(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜在右侧"操作"列进行编辑/删除</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button>'+formIOBtns('product')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜勾选记录后点上方按钮编辑/复制/删除</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button></div>';
   if(products.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg><br>暂无产品数据，点击「新增产品」开始</div>';
   }else{
@@ -1156,14 +1162,15 @@ function renderProducts(){
     TBL_SCHEMAS.product=cols.map(f=>({key:f.key,label:f.label,type:f.type==='number'?'number':(f.type==='date'?'date':'text'),select:f.type==='select',locked:f.locked}));
     TBL_ROWS.product=products;
     const shown=applyTable('product',products);
+    lastRowIds.product=shown.map(p=>products.indexOf(p));
+    html+=bulkBar('product');
     html+=filterBar('product');
-    html+='<div class="table-wrap"><table><thead><tr>';
-    TBL_SCHEMAS.product.forEach(c=>html+=thCol('product',c));
-    html+='<th class="op-col">操作</th></tr></thead><tbody>';
+    html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.product.map(c=>thCol('product',c)).join('')+'</tr></thead><tbody>';
     if(shown.length===0){html+=noMatchRow('product',cols.length+1);}
     shown.forEach((p)=>{
       const idx=products.indexOf(p);
-      html+='<tr>';
+      const checked=selSet('product').has(String(idx))?'checked':'';
+      html+='<tr><td class="sel-col"><input type="checkbox" '+checked+' onclick="toggleSel(\'product\','+idx+',this.checked)"></td>';
       cols.forEach(f=>{
         let val=p[f.key];
         if(f.key==='status'){
@@ -1175,7 +1182,7 @@ function renderProducts(){
           html+='<td>'+esc(val)+'</td>';
         }
       });
-      html+='<td class="op-col"><button class="btn btn-sm" onclick="productModal('+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delProduct('+idx+')">删除</button></td></tr>';
+      html+='</tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -1183,8 +1190,8 @@ function renderProducts(){
   return html;
 }
 
-function productModal(idx){
-  const p=idx!=null?{...products[idx]}:{status:'启用',unit:'台'};
+function productModal(idx,prefill){
+  const p=prefill!=null?{...prefill}:(idx!=null?{...products[idx]}:{status:'启用',unit:'台'});
   const cols=fields.product;
   let body='<div class="form-row">';
   cols.forEach((f,i)=>{
@@ -1341,7 +1348,7 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>框架订单管理 <span class="desc">客户框架订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="orderModal()">新增订单</button>'+formIOBtns('order')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>框架订单管理 <span class="desc">客户框架订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="orderModal()">新增订单</button></div>';
   if(orders.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><br>暂无订单数据</div>';
   }else{
@@ -1376,8 +1383,10 @@ function renderOrders(){
     if(shouldMerge)shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
     const groupMap=new Map();
     shown.forEach((r,i)=>{if(!groupMap.has(r.order.id))groupMap.set(r.order.id,{start:i,count:0});groupMap.get(r.order.id).count++;});
+    lastRowIds.order=shown.map(r=>r.orderIdx);
+    html+=bulkBar('order');
     html+=filterBar('order');
-    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.order.map(c=>thCol('order',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.order.map(c=>thCol('order',c)).join('')+'</tr></thead><tbody>';
     if(shown.length===0){html+=noMatchRow('order',TBL_SCHEMAS.order.length+1);}
     shown.forEach((r,i)=>{
       const o=r.order, it=r.item, oi=r.orderIdx;
@@ -1390,16 +1399,27 @@ function renderOrders(){
       const grp=groupMap.get(r.order.id);
       const isFirst=grp.start===i;
       const rs=grp.count;
+      const selChecked=selSet('order').has(String(oi))?'checked':'';
+      const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'order\','+oi+',this.checked)"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'order\','+oi+',this.checked)"></td>';
       let headCells='';
-      if(isFirst){
+      if(shouldMerge){
+        if(isFirst){
+          headCells=
+            '<td rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+            '<td rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
+            '<td rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
+            '<td rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
+            '<td rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+        }
+      }else{
         headCells=
-          '<td rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
-          '<td rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
-          '<td rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
-          '<td rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
-          '<td rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+          '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+          '<td>'+fmtDate(o.startDate)+'</td>'+
+          '<td style="font-weight:600">'+esc(o.id)+'</td>'+
+          '<td>'+esc(o.customer)+'</td>'+
+          '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
       }
-      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+headCells+
+      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+selCell+headCells+
         '<td>'+esc(it.productId)+'</td>'+
         '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
         '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -1410,7 +1430,6 @@ function renderOrders(){
         '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
         '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
         '<td>'+esc(it.notes||o.notes||'')+'</td>'+
-        (isFirst?'<td rowspan="'+rs+'"><button class="btn btn-sm" onclick="orderModal('+oi+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delOrder('+oi+')">删除</button></td>':'')+
         '</tr>';
     });
     html+='</tbody></table></div>';
@@ -1419,8 +1438,8 @@ function renderOrders(){
   return html;
 }
 
-function orderModal(idx){
-  const src=idx!=null?orders[idx]:null;
+function orderModal(idx,prefill){
+  const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
   const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',startDate:todayStr(),items:[]};
   const headCols=fields.order.filter(f=>!isLineField(f));
   let body='<div class="form-row">';
@@ -1532,7 +1551,7 @@ function delOrder(idx){
    半成品库存台账
 ================================================================ */
 function renderInventory(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>未包半成品库存台账 <span class="desc">记录每日出入库及库存余额 · 自动判断库存状态</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="inventoryModal()">新增记录</button>'+formIOBtns('inventory')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>未包半成品库存台账 <span class="desc">记录每日出入库及库存余额 · 自动判断库存状态</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="inventoryModal()">新增记录</button></div>';
 
   // 表格筛选/排序
   TBL_SCHEMAS.inventory=[
@@ -1556,20 +1575,24 @@ function renderInventory(){
   if(dates.length===0){
     html+=inventory.length>0?'<div class="empty" style="display:flex;align-items:center;justify-content:center;gap:8px">无匹配数据 <button class="btn btn-sm" onclick="clearAllFilt(\'inventory\')">清除筛选</button></div>':'<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><br>暂无库存数据</div>';
   }else{
+    lastRowIds.inventory=[];
+    html+=bulkBar('inventory');
     html+=filterBar('inventory');
     dates.forEach(d=>{
       const rows=sortRows('inventory',filteredInv.filter(i=>fmtDate(i.date)===d));
       html+='<h3 style="font-size:14px;margin:12px 0 6px;color:var(--text)">'+d+'</h3>';
-      html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.inventory.map(c=>thCol('inventory',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+      html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.inventory.map(c=>thCol('inventory',c)).join('')+'</tr></thead><tbody>';
       rows.forEach((r,idx)=>{
         const realIdx=inventory.indexOf(r);
+        lastRowIds.inventory.push(realIdx);
+        const selChecked=selSet('inventory').has(String(realIdx))?'checked':'';
         const st=num(r.closing)<num(r.stockMin)?STOCK_STATUS.low:(num(r.closing)>num(r.stockMax)?STOCK_STATUS.high:STOCK_STATUS.normal);
-        html+='<tr><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td><td style="text-align:right">'+r.opening+'</td><td style="text-align:right;color:var(--green)">+'+r.inbound+'</td><td style="text-align:right;color:var(--red)">-'+r.outbound+'</td><td style="text-align:right;font-weight:600">'+r.closing+'</td><td>'+r.stockMin+'</td><td>'+r.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td><td><button class="btn btn-sm" onclick="inventoryModal('+realIdx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delInventory('+realIdx+')">删除</button></td></tr>';
+        html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'inventory\','+realIdx+',this.checked)"></td><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td><td style="text-align:right">'+r.opening+'</td><td style="text-align:right;color:var(--green)">+'+r.inbound+'</td><td style="text-align:right;color:var(--red)">-'+r.outbound+'</td><td style="text-align:right;font-weight:600">'+r.closing+'</td><td>'+r.stockMin+'</td><td>'+r.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td></tr>';
       });
       // 小计
       const sumIn=rows.reduce((s,r)=>s+num(r.inbound),0);
       const sumOut=rows.reduce((s,r)=>s+num(r.outbound),0);
-      html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="2">小计</td><td></td><td style="text-align:right">+'+sumIn+'</td><td style="text-align:right">-'+sumOut+'</td><td colspan="4"></td><td></td></tr>';
+      html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="2">小计</td><td></td><td style="text-align:right">+'+sumIn+'</td><td style="text-align:right">-'+sumOut+'</td><td colspan="4"></td></tr>';
       html+='</tbody></table></div>';
     });
   }
@@ -1577,8 +1600,8 @@ function renderInventory(){
   return html;
 }
 
-function inventoryModal(idx){
-  const r=idx!=null?{...inventory[idx]}:{date:todayStr(),opening:0,inbound:0,outbound:0,closing:0,stockMin:0,stockMax:0};
+function inventoryModal(idx,prefill){
+  const r=prefill!=null?{...prefill}:(idx!=null?{...inventory[idx]}:{date:todayStr(),opening:0,inbound:0,outbound:0,closing:0,stockMin:0,stockMax:0});
   let body='<div class="form-row">'+
     '<div><label>日期 *</label><input type="date" id="inv_date" value="'+fmtDate(r.date)+'"></div>'+
     '<div><label>产品编码 *</label><select id="inv_productId" onchange="autoFillInv()"><option value="">请选择</option>'+products.map(p=>'<option value="'+esc(p.id)+'" data-name="'+esc(p.name)+'" '+(p.id===r.productId?'selected':'')+'>'+esc(p.id)+' - '+esc(p.name)+'</option>').join('')+'</select></div>'+
@@ -1660,7 +1683,7 @@ function renderDailyPlan(){
   const dayPkgs=dailyPkgs.filter(p=>fmtDate(p.date)===planDate);
 
   // 备货排产
-  html+='<div class="sec-header sec-stockup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M2 20h20M5 20V8l7-5 7 5v12"/></svg>备货排产 — 装配 → 内包 → 调试/老化 → 半成品入库 <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'stockup\')">新增备货排产</button>'+formIOBtns('dailyPlan')+'</div>';
+  html+='<div class="sec-header sec-stockup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M2 20h20M5 20V8l7-5 7 5v12"/></svg>备货排产 — 装配 → 内包 → 调试/老化 → 半成品入库 <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'stockup\')">新增备货排产</button></div>';
   if(dayPlans.length===0){
     html+='<div class="empty" style="padding:16px">当日无备货排产记录</div>';
   }else{
@@ -1675,27 +1698,29 @@ function renderDailyPlan(){
     ];
     TBL_ROWS.dp_stockup=dayPlans;
     const shownPlans=applyTable('dp_stockup',dayPlans);
+    lastRowIds.dp_stockup=shownPlans.map(p=>dailyPlans.indexOf(p));
+    html+=bulkBar('dp_stockup');
     html+=filterBar('dp_stockup');
-    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.dp_stockup.map(c=>thCol('dp_stockup',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.dp_stockup.map(c=>thCol('dp_stockup',c)).join('')+'</tr></thead><tbody>';
     if(shownPlans.length===0){html+=noMatchRow('dp_stockup',8);}
     let sumAssembly=0,sumInner=0,sumTest=0,sumSemi=0;
     shownPlans.forEach((p)=>{
       const idx=dailyPlans.indexOf(p);
-      html+='<tr><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td>'+
+      const selChecked=selSet('dp_stockup').has(String(idx))?'checked':'';
+      html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'dp_stockup\','+idx+',this.checked)"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td>'+
         '<td style="text-align:center;font-size:12px">'+(p.assemblyPlan||0)+' / <b>'+(p.assemblyDone||0)+'</b></td>'+
         '<td style="text-align:center;font-size:12px">'+(p.innerPackPlan||0)+' / <b>'+(p.innerPackDone||0)+'</b></td>'+
         '<td style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
         '<td style="text-align:center;font-weight:600">'+(p.semiInbound||0)+'</td>'+
-        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td>'+
-        '<td><button class="btn btn-sm" onclick="planModal(\'stockup\','+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delPlan('+idx+')">删除</button></td></tr>';
+        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
       sumAssembly+=num(p.assemblyDone);sumInner+=num(p.innerPackDone);sumTest+=num(p.testAgingDone);sumSemi+=num(p.semiInbound);
     });
-    html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="2">小计</td><td style="text-align:center">'+sumAssembly+'</td><td style="text-align:center">'+sumInner+'</td><td style="text-align:center">'+sumTest+'</td><td style="text-align:center">'+sumSemi+'</td><td colspan="2"></td></tr>';
+    html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="2">小计</td><td style="text-align:center">'+sumAssembly+'</td><td style="text-align:center">'+sumInner+'</td><td style="text-align:center">'+sumTest+'</td><td style="text-align:center">'+sumSemi+'</td><td></td></tr>';
     html+='</tbody></table></div>';
   }
 
   // 包装排产
-  html+='<div class="sec-header sec-packaging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>包装排产 — 半成品出库 → 包装 → 成品入库（按订单） <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'packaging\')">新增包装排产</button>'+formIOBtns('dailyPkg')+'</div>';
+  html+='<div class="sec-header sec-packaging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>包装排产 — 半成品出库 → 包装 → 成品入库（按订单） <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'packaging\')">新增包装排产</button></div>';
   if(dayPkgs.length===0){
     html+='<div class="empty" style="padding:16px">当日无包装排产记录</div>';
   }else{
@@ -1712,23 +1737,25 @@ function renderDailyPlan(){
     ];
     TBL_ROWS.dp_pkg=dayPkgs;
     const shownPkgs=applyTable('dp_pkg',dayPkgs);
+    lastRowIds.dp_pkg=shownPkgs.map(p=>dailyPkgs.indexOf(p));
+    html+=bulkBar('dp_pkg');
     html+=filterBar('dp_pkg');
-    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.dp_pkg.map(c=>thCol('dp_pkg',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.dp_pkg.map(c=>thCol('dp_pkg',c)).join('')+'</tr></thead><tbody>';
     if(shownPkgs.length===0){html+=noMatchRow('dp_pkg',10);}
     let sumPkg=0,sumFin=0;
     shownPkgs.forEach(p=>{
       const idx=dailyPkgs.indexOf(p);
-      html+='<tr><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td><td>'+esc(p.orderId)+'</td>'+
+      const selChecked=selSet('dp_pkg').has(String(idx))?'checked':'';
+      html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'dp_pkg\','+idx+',this.checked)"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td><td>'+esc(p.orderId)+'</td>'+
         '<td style="text-align:center;font-size:12px">'+(p.pkgPlan||0)+' / <b>'+(p.pkgDone||0)+'</b></td>'+
         '<td style="text-align:center;font-weight:600">'+(p.finInbound||0)+'</td>'+
         '<td style="text-align:right">'+money(p.orderTotal)+'</td>'+
         '<td style="text-align:right">'+money(p.delivered)+'</td>'+
         '<td style="text-align:right">'+money(p.undelivered)+'</td>'+
-        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td>'+
-        '<td><button class="btn btn-sm" onclick="planModal(\'packaging\','+idx+')">编辑</button> <button class="btn btn-sm btn-danger" onclick="delPkg('+idx+')">删除</button></td></tr>';
+        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
       sumPkg+=num(p.pkgDone);sumFin+=num(p.finInbound);
     });
-    html+='<tr style="font-weight:600;background:var(--amber-bg)"><td colspan="3">小计</td><td style="text-align:center">'+sumPkg+'</td><td style="text-align:center">'+sumFin+'</td><td colspan="4"></td></tr>';
+    html+='<tr style="font-weight:600;background:var(--amber-bg)"><td class="sel-col"></td><td colspan="3">小计</td><td style="text-align:center">'+sumPkg+'</td><td style="text-align:center">'+sumFin+'</td><td colspan="4"></td></tr>';
     html+='</tbody></table></div>';
   }
 
@@ -1747,9 +1774,9 @@ function shiftPlanDate(delta){
   renderContent();
 }
 
-function planModal(type,idx){
+function planModal(type,idx,prefill){
   if(type==='stockup'){
-    const p=idx!=null?{...dailyPlans[idx]}:{date:planDate,assemblyPlan:0,assemblyDone:0,innerPackPlan:0,innerPackDone:0,testAgingPlan:0,testAgingDone:0,semiInbound:0};
+    const p=prefill!=null?{...prefill}:(idx!=null?{...dailyPlans[idx]}:{date:planDate,assemblyPlan:0,assemblyDone:0,innerPackPlan:0,innerPackDone:0,testAgingPlan:0,testAgingDone:0,semiInbound:0});
     let body='<div class="form-row">'+
       '<div><label>日期 *</label><input type="date" id="sp_date" value="'+fmtDate(p.date)+'"></div>'+
       '<div><label>产品 *</label><select id="sp_productId" onchange="autoFillPlan()"><option value="">请选择</option>'+products.map(pr=>'<option value="'+esc(pr.id)+'" data-name="'+esc(pr.name)+'" data-cap="'+pr.dailyCapUnpkg+'" '+(pr.id===p.productId?'selected':'')+'>'+esc(pr.id)+' - '+esc(pr.name)+'</option>').join('')+'</select></div>'+
@@ -1769,7 +1796,7 @@ function planModal(type,idx){
       '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="savePlan('+(idx!=null?idx:-1)+')">保存</button>'
     );
   }else{
-    const p=idx!=null?{...dailyPkgs[idx]}:{date:planDate,pkgPlan:0,pkgDone:0,finInbound:0,orderTotal:0,delivered:0,undelivered:0};
+    const p=prefill!=null?{...prefill}:(idx!=null?{...dailyPkgs[idx]}:{date:planDate,pkgPlan:0,pkgDone:0,finInbound:0,orderTotal:0,delivered:0,undelivered:0});
     let body='<div class="form-row">'+
       '<div><label>日期 *</label><input type="date" id="pk_date" value="'+fmtDate(p.date)+'"></div>'+
       '<div><label>关联订单 *</label><select id="pk_orderId" onchange="autoFillOrder()"><option value="">请选择</option>'+orderItemOptions(p.orderId,p.productId)+'</select></div>'+
@@ -1998,7 +2025,7 @@ function shiftReportDate(delta){
    交付计划
 ================================================================ */
 function renderDelivery(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">分批交付 · 倒排排期 · 实际交付填报</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button>'+formIOBtns('delivery')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">分批交付 · 倒排排期 · 实际交付填报</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button></div>';
 
   // 交付计划汇总
   html+='<h3 style="font-size:14px;margin:6px 0 8px">一、交付计划汇总</h3>';
@@ -2020,12 +2047,15 @@ function renderDelivery(){
     ];
     TBL_ROWS.delivery=deliveries;
     const shownDl=applyTable('delivery',deliveries);
+    lastRowIds.delivery=shownDl.map(d=>deliveries.indexOf(d));
+    html+=bulkBar('delivery');
     html+=filterBar('delivery');
-    html+='<div class="table-wrap"><table><thead><tr>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'<th>操作</th></tr></thead><tbody>';
+    html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'</tr></thead><tbody>';
     if(shownDl.length===0){html+=noMatchRow('delivery',12);}
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
-      html+='<tr><td style="font-weight:600">'+esc(d.orderId)+'</td><td>'+esc(d.customer)+'</td><td>'+esc(d.productName)+'</td>'+
+      const selChecked=selSet('delivery').has(String(idx))?'checked':'';
+      html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'delivery\','+idx+',this.checked)"></td><td style="font-weight:600">'+esc(d.orderId)+'</td><td>'+esc(d.customer)+'</td><td>'+esc(d.productName)+'</td>'+
         '<td style="text-align:right">'+money(d.orderTotal)+'</td>'+
         '<td style="text-align:right">'+money(d.delivered)+'</td>'+
         '<td style="text-align:right">'+money(d.undelivered)+'</td>'+
@@ -2033,8 +2063,7 @@ function renderDelivery(){
         '<td>'+fmtDate(d.finalDate)+'</td>'+
         '<td>'+fmtDate(d.firstDate)+'</td>'+
         '<td style="text-align:center">'+(d.batchCount||'')+'</td>'+
-        '<td style="text-align:center">'+esc(d.perBatch)+'</td>'+
-        '<td><button class="btn btn-sm" onclick="deliveryModal('+idx+')">编辑</button> <button class="btn btn-sm" onclick="genBatches('+idx+')">生成排期</button> <button class="btn btn-sm btn-danger" onclick="delDelivery('+idx+')">删除</button></td></tr>';
+        '<td style="text-align:center">'+esc(d.perBatch)+'</td></tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -2072,8 +2101,8 @@ function renderDelivery(){
   return html;
 }
 
-function deliveryModal(idx){
-  const d=idx!=null?{...deliveries[idx]}:{};
+function deliveryModal(idx,prefill){
+  const d=prefill!=null?{...prefill}:(idx!=null?{...deliveries[idx]}:{});
   let body='<div class="form-row">'+
     '<div><label>订单编号 *</label><select id="dl_orderId" onchange="autoFillDelivery()"><option value="">请选择</option>'+orderItemOptions(d.orderId,d.productId)+'</select></div>'+
     '<div><label>客户名称 *</label><input type="text" id="dl_customer" value="'+esc(d.customer)+'"></div>'+
@@ -2733,14 +2762,15 @@ function exportXLSX(){
   logOp('导出','全量数据','全量导出 '+XLSX_SHEETS.length+' 个表单');
 }
 
-/* 单表单导出 */
-function exportForm(formKey){
+/* 单表单导出（rows 提供则导出选中行；否则导出全量） */
+function exportForm(formKey,rows){
   var cfg=XLSX_SHEETS.find(function(c){return c.formKey===formKey;});
   if(!cfg)return;
   var farr=fields[cfg.formKey]||[];
   var headers=farr.map(function(f){return f.label;});
-  var data=formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
-  var rows=data.map(function(item){
+  var isSel=(rows!=null);
+  if(!isSel)rows=formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
+  var data=rows.map(function(item){
     return farr.map(function(f){
       var val=item[f.key];
       if(f.type==='date'&&val)return fmtDate(val);
@@ -2748,13 +2778,13 @@ function exportForm(formKey){
       return val==null?'':val;
     });
   });
-  var bytes=XLSX.build([{name:cfg.sheet,headers:headers,rows:rows}]);
+  var bytes=XLSX.build([{name:cfg.sheet,headers:headers,rows:data}]);
   var blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');
-  a.href=url;a.download=cfg.sheet+'_'+todayStr()+'.xlsx';a.click();
+  a.href=url;a.download=cfg.sheet+(isSel?('_选中'+data.length+'条'):'')+'_'+todayStr()+'.xlsx';a.click();
   URL.revokeObjectURL(url);
-  logOp('导出',cfg.sheet,'导出 '+data.length+' 条记录');
+  logOp('导出',cfg.sheet,(isSel?'导出选中 ':'导出 ')+data.length+' 条记录');
 }
 
 /* 下载导入模板：表头与导出一致，必填字段标红 */
@@ -2865,6 +2895,130 @@ function formIOBtns(formKey){
   return '<button class="btn btn-sm" style="margin-left:6px" onclick="exportForm(\''+formKey+'\')" title="导出此表单数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>导出</button>'+
     '<button class="btn btn-sm" style="margin-left:4px" onclick="downloadTemplate(\''+formKey+'\')" title="下载导入模板（必填字段标红）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>模板</button>'+
     '<button class="btn btn-sm" style="margin-left:4px" onclick="triggerImport(\''+formKey+'\')" title="导入此表单数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>导入</button>';
+}
+
+/* ================================================================
+   批量操作：行选择 + 上方工具栏（编辑/复制/删除/导出选中/导入/全选）
+   说明：可编辑表单的"操作"改为「先勾选行 → 点上方按钮」；
+   编辑/复制/生成排期等仅支持单条的操作，多选时自动拒绝。
+================================================================ */
+var selRows={};        // selRows[模块] = Set(行标识字符串)
+var lastRowIds={};     // lastRowIds[模块] = 本次渲染的所有行标识（用于全选去重）
+function selSet(m){if(!selRows[m])selRows[m]=new Set();return selRows[m];}
+function selCount(m){return selSet(m).size;}
+function clearSel(m){if(selRows[m])selRows[m].clear();}
+function toggleSel(m,idx,checked){
+  const s=selSet(m);
+  if(checked)s.add(String(idx));else s.delete(String(idx));
+  renderContent();
+}
+function selAll(m,checked){
+  const s=selSet(m);
+  if(checked){(lastRowIds[m]||[]).forEach(id=>s.add(String(id)));}
+  else{s.clear();}
+  renderContent();
+}
+
+/* 各模块动作映射：edit/del 复用现有函数；copy 为新增；gen 仅交付计划有 */
+var FORM_ACTIONS={
+  product:{formKey:'product',get:function(i){return products[i];},edit:function(i){productModal(i);},del:function(i){delProduct(i);},copy:function(i){copyProduct(i);}},
+  order:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
+  inventory:{formKey:'inventory',get:function(i){return inventory[i];},edit:function(i){inventoryModal(i);},del:function(i){delInventory(i);},copy:function(i){copyInventory(i);}},
+  dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
+  dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
+  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);},gen:function(i){genBatches(i);}}
+};
+
+/* 表单上方批量操作工具栏 */
+function bulkBar(m){
+  const a=FORM_ACTIONS[m];if(!a)return '';
+  const btns=[];
+  btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" onchange="selAll(\''+m+'\',this.checked)"> 全选</label>');
+  btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
+  btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
+  if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
+  btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
+  btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
+  btns.push('<button class="btn btn-sm" onclick="downloadTemplate(\''+a.formKey+'\')" title="下载导入模板（必填字段标红）">模板</button>');
+  btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
+  const cnt=selCount(m)>0?(' <span class="sel-count">已选 '+selCount(m)+' 项</span>'):'';
+  return '<div class="bulk-bar">'+btns.join('')+cnt+'</div>';
+}
+
+/* 单选操作（编辑/复制/生成排期）：多选或空选时拒绝 */
+function bulkSingle(m,act){
+  const s=selSet(m);
+  const label={edit:'编辑',copy:'复制',gen:'生成排期'}[act];
+  if(s.size===0){alert('请先在左侧勾选要'+label+'的记录');return;}
+  if(s.size>1){alert('「'+label+'」仅支持选中单条记录，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
+  const i=Number([...s][0]);
+  const a=FORM_ACTIONS[m];
+  if(act==='edit')a.edit(i);
+  else if(act==='copy')a.copy(i);
+  else if(act==='gen'&&a.gen)a.gen(i);
+}
+
+/* 多选删除（一次确认） */
+function bulkDelete(m){
+  const s=selSet(m);
+  if(s.size===0){alert('请先在左侧勾选要删除的记录');return;}
+  if(!confirm('确认删除选中的 '+s.size+' 条记录？此操作不可撤销。'))return;
+  const idxs=[...s].map(Number).sort((x,y)=>y-x);
+  idxs.forEach(i=>{
+    const rec=FORM_ACTIONS[m].get(i);
+    if(rec&&rec.id)logOp('删除',m,'删除「'+rec.id+'」');
+    else if(rec&&rec.orderId)logOp('删除',m,'删除「'+rec.orderId+'」');
+    else logOp('删除',m,'删除记录');
+  });
+  if(m==='product'){idxs.forEach(i=>products.splice(i,1));save('products',products);}
+  else if(m==='order'){idxs.forEach(i=>orders.splice(i,1));save('orders',orders);}
+  else if(m==='inventory'){idxs.forEach(i=>inventory.splice(i,1));save('inventory',inventory);}
+  else if(m==='dp_stockup'){idxs.forEach(i=>dailyPlans.splice(i,1));save('dailyPlans',dailyPlans);}
+  else if(m==='dp_pkg'){idxs.forEach(i=>dailyPkgs.splice(i,1));save('dailyPkgs',dailyPkgs);}
+  else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));save('deliveries',deliveries);}
+  clearSel(m);
+  renderContent();
+}
+
+/* 导出选中条目（需求：表单导出改为导出选中） */
+function bulkExport(m){
+  const a=FORM_ACTIONS[m];if(!a)return;
+  const s=selSet(m);
+  if(s.size===0){alert('请先勾选要导出的记录');return;}
+  const idxs=[...s].map(Number);
+  let rows=idxs.map(i=>a.get(i)).filter(Boolean);
+  if(m==='order')rows=orderFlatRowsOf(idxs.map(i=>orders[i]));
+  exportForm(a.formKey,rows);
+  logOp('导出',a.formKey,'导出选中 '+rows.length+' 条记录');
+}
+
+/* 生成不冲突的复制主键（id 类字段） */
+function suggestCopyId(baseId,exists){
+  if(!exists(baseId))return baseId;
+  let i=2;
+  while(exists(baseId+'_'+i))i++;
+  return baseId+'_'+i;
+}
+function copyProduct(i){const c={...products[i]};c.id=suggestCopyId(c.id,id=>products.some(p=>p.id===id));productModal(-1,c);}
+function copyOrder(i){const c=JSON.parse(JSON.stringify(orders[i]));c.id=suggestCopyId(c.id,id=>orders.some(o=>o.id===id));orderModal(-1,c);}
+function copyInventory(i){const c={...inventory[i]};c.date=todayStr();inventoryModal(-1,c);}
+function copyPlan(type,i){
+  if(type==='stockup'){const c={...dailyPlans[i]};c.date=planDate;planModal('stockup',-1,c);}
+  else{const c={...dailyPkgs[i]};c.date=planDate;planModal('packaging',-1,c);}
+}
+function copyDelivery(i){const c={...deliveries[i]};c.orderId=suggestCopyId(c.orderId,id=>deliveries.some(d=>d.orderId===id));deliveryModal(-1,c);}
+
+/* 订单按选中订单列表展开为多商品行（供导出选中用） */
+function orderFlatRowsOf(list){
+  var rows=[];
+  (list||[]).forEach(function(o){
+    orderItems(o).forEach(function(it){
+      var r={};
+      (fields.order||[]).forEach(function(f){r[f.key]=isLineField(f)?it[f.key]:o[f.key];});
+      rows.push(r);
+    });
+  });
+  return rows;
 }
 
 /* ================================================================
