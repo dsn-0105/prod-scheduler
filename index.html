@@ -1382,7 +1382,7 @@ function orderSection(k,formKey,title,sub,prodMap){
      '</div>';
   if(!collapsed){
     if(typeOrders.length===0){
-      h+='<div class="order-sec-body"><div class="empty" style="padding:18px">暂无'+esc(title)+' <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button></div></div>';
+      h+='<div class="order-sec-body">'+bulkBar(formKey)+'<div class="empty" style="padding:18px">暂无'+esc(title)+' <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button></div></div>';
     }else{
       h+='<div class="order-sec-body">'+renderOrderTable(formKey,typeOrders,prodMap)+'</div>';
     }
@@ -3114,6 +3114,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.4</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.5</div>
 </body>
 </html>
