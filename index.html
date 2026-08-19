@@ -2912,10 +2912,13 @@ function toggleSel(m,idx,checked){
   if(checked)s.add(String(idx));else s.delete(String(idx));
   renderContent();
 }
-function selAll(m,checked){
+/* 全选复选框：点击切换——若当前已全选则清空，否则全选 */
+function toggleSelAll(m){
   const s=selSet(m);
-  if(checked){(lastRowIds[m]||[]).forEach(id=>s.add(String(id)));}
-  else{s.clear();}
+  const ids=lastRowIds[m]||[];
+  const allSelected=ids.length>0 && ids.every(id=>s.has(String(id)));
+  if(allSelected)s.clear();
+  else ids.forEach(id=>s.add(String(id)));
   renderContent();
 }
 
@@ -2933,7 +2936,9 @@ var FORM_ACTIONS={
 function bulkBar(m){
   const a=FORM_ACTIONS[m];if(!a)return '';
   const btns=[];
-  btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" onchange="selAll(\''+m+'\',this.checked)"> 全选</label>');
+  const ids=lastRowIds[m]||[];
+  const allChecked=ids.length>0 && ids.every(id=>selSet(m).has(String(id)));
+  btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
   if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
