@@ -52,6 +52,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
 .card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .card-title .desc{font-size:12px;color:var(--muted);font-weight:400}
+/* 订单管理：框架订单 / 库存订单 可收起区块 */
+.order-sec{border:1px solid var(--border);border-radius:10px;margin-top:12px;overflow:hidden;background:var(--card)}
+.order-sec-head{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;user-select:none;background:linear-gradient(0deg,var(--card),var(--card))}
+.order-sec-head:hover{background:#f5f7ff}
+.order-sec-head .chev{font-size:12px;color:var(--muted);width:14px;text-align:center;transition:transform .15s}
+.order-sec-head b{font-size:14px}
+.order-sec-head .desc{font-size:12px;color:var(--muted);font-weight:400}
+.order-sec.collapsed .order-sec-body{display:none}
+.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;padding:0 7px;border-radius:11px;background:var(--primary);color:#fff;font-size:12px;font-weight:600}
+.order-sec-body{padding:8px 12px 12px;border-top:1px solid var(--border)}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);font-size:13px;cursor:pointer;color:var(--text);transition:all .15s;min-height:36px;white-space:nowrap}
 .btn:hover{border-color:var(--primary);color:var(--primary)}
 .btn svg{width:15px;height:15px}
@@ -289,6 +299,7 @@ const PKG_STEPS=['packaging','finishedInbound'];
 const PKG_LABELS={packaging:'包装',finishedInbound:'成品入库'};
 const STOCK_STATUS={normal:{label:'正常',cls:'tag-green'},low:{label:'低于下限',cls:'tag-red'},high:{label:'高于上限',cls:'tag-amber'}};
 const ORDER_STATUS=['待排产','执行中','已完成','已取消'];
+const ORDER_TYPES=['框架订单','库存订单'];
 const DELIVERY_FREQ=['每周一次(周一)','每周一次(周五)','每三天一次','每日'];
 const LOCK='<svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 
@@ -460,6 +471,7 @@ const defaultFields={
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
+    {key:'orderType',label:'订单类型',type:'select',required:true,locked:false,options:ORDER_TYPES,default:'框架订单',level:'head'},
     {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
   ],
   inventory:[
@@ -555,6 +567,10 @@ let fieldsDraft=null;
 let planDate=todayStr();
 let reportDate=todayStr();
 let deliveryOrderId='';
+/* 订单管理：框架订单 / 库存订单 两类区块的收起状态（true=收起） */
+let orderCollapse={frame:false,inv:false};
+function toggleOrderSection(k){orderCollapse[k]=!orderCollapse[k];renderContent();}
+function orderTypeOf(o){return o&&o.orderType?o.orderType:'框架订单';}
 
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -573,9 +589,9 @@ function seed(){
     {id:'P004',name:'漏电断路器',spec:'RCBO',model:'100',unit:'台',dailyCapUnpkg:300,dailyCapPkg:200,status:'启用'}
   ];
   orders=[
-    {id:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderQty:500,deliveredQty:180,startDate:'2026-07-01',deadline:'2026-12-31',status:'执行中',notes:'Q3-Q4框架订单'},
-    {id:'O2026002',customer:'智慧楼宇工程',productId:'P002',productName:'塑壳断路器',orderQty:3000,deliveredQty:900,startDate:'2026-07-15',deadline:'2026-11-30',status:'执行中',notes:'半年框架订单'},
-    {id:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderQty:10000,deliveredQty:2500,startDate:'2026-08-01',deadline:'2026-12-31',status:'执行中',notes:'季度框架订单'}
+    {id:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderQty:500,deliveredQty:180,startDate:'2026-07-01',deadline:'2026-12-31',status:'执行中',orderType:'框架订单',notes:'Q3-Q4框架订单'},
+    {id:'O2026002',customer:'智慧楼宇工程',productId:'P002',productName:'塑壳断路器',orderQty:3000,deliveredQty:900,startDate:'2026-07-15',deadline:'2026-11-30',status:'执行中',orderType:'框架订单',notes:'半年框架订单'},
+    {id:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderQty:10000,deliveredQty:2500,startDate:'2026-08-01',deadline:'2026-12-31',status:'执行中',orderType:'框架订单',notes:'季度框架订单'}
   ];
   const d1='2026-08-13',d2='2026-08-14';
   inventory=[
@@ -1334,6 +1350,7 @@ function migrateOrders(){
       o.items=[{productId:o.productId||'',productName:o.productName||'',orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
       changed=true;
     }
+    if(!o.orderType){o.orderType='框架订单';changed=true;}
   });
   if(changed)save('orders',orders);
 }
@@ -1350,99 +1367,132 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>框架订单管理 <span class="desc">客户框架订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="orderModal()">新增订单</button></div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="orderModal()">新增订单</button></div>';
   if(orders.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><br>暂无订单数据</div>';
   }else{
     const prodMap={};products.forEach(p=>prodMap[p.id]=p);
-    const rows=[];
-    orders.forEach((o,oi)=>{orderItems(o).forEach(it=>rows.push({order:o,item:it,orderIdx:oi}));});
-    TBL_SCHEMAS.order=[
-      {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
-      {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
-      {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
-      {key:'customer',label:'客户',type:'text',get:r=>r.order.customer},
-      {key:'status',label:'审核状态',type:'text',select:true,get:r=>r.order.status},
-      {key:'productId',label:'商品编码',type:'text',get:r=>r.item.productId},
-      {key:'productName',label:'商品名称',type:'text',get:r=>r.item.productName||(r.item.productId&&prodMap[r.item.productId]?prodMap[r.item.productId].name:'')},
-      {key:'model',label:'型号',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.model:'';}},
-      {key:'spec',label:'规格',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.spec:'';}},
-      {key:'unit',label:'单位',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.unit:'';}},
-      {key:'orderQty',label:'数量',type:'number',get:r=>r.item.orderQty},
-      {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
-      {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
-      {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
-      {key:'notes',label:'商品行备注',type:'text',get:r=>r.item.notes||r.order.notes||''}
-    ];
-    TBL_ROWS.order=rows;
-    let shown=applyTable('order',rows);
-    /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
-       仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
-    const HEAD_COLS=5;
-    const sortKey=tState('order').sort?tState('order').sort.key:null;
-    const lineKeys=TBL_SCHEMAS.order.slice(HEAD_COLS).map(c=>c.key);
-    const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
-    if(shouldMerge)shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
-    const groupMap=new Map();
-    shown.forEach((r,i)=>{if(!groupMap.has(r.order.id))groupMap.set(r.order.id,{start:i,count:0});groupMap.get(r.order.id).count++;});
-    lastRowIds.order=shown.map(r=>r.orderIdx);
-    html+=bulkBar('order');
-    html+=filterBar('order');
-    html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.order.map(c=>thCol('order',c)).join('')+'</tr></thead><tbody>';
-    if(shown.length===0){html+=noMatchRow('order',TBL_SCHEMAS.order.length+1);}
-    shown.forEach((r,i)=>{
-      const o=r.order, it=r.item, oi=r.orderIdx;
-      const oq=num(it.orderQty), dq=num(it.deliveredQty);
-      const undel=oq-dq;
-      const pct=oq>0?Math.round(dq/oq*100):0;
-      const today=todayStr();
-      const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
-      const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':'tag-gray';
-      const grp=groupMap.get(r.order.id);
-      const isFirst=grp.start===i;
-      const rs=grp.count;
-      const selChecked=selSet('order').has(String(oi))?'checked':'';
-      const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'order\','+oi+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'order\','+oi+')"></td>';
-      let headCells='';
-      if(shouldMerge){
-        if(isFirst){
-          headCells=
-            '<td rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
-            '<td rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
-            '<td rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
-            '<td rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
-            '<td rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
-        }
-      }else{
-        headCells=
-          '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
-          '<td>'+fmtDate(o.startDate)+'</td>'+
-          '<td style="font-weight:600">'+esc(o.id)+'</td>'+
-          '<td>'+esc(o.customer)+'</td>'+
-          '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
-      }
-      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+' onclick="selRowClick(\'order\','+oi+')">'+selCell+headCells+
-        '<td>'+esc(it.productId)+'</td>'+
-        '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
-        '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
-        '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
-        '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
-        '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
-        '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
-        '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
-        '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
-        '<td>'+esc(it.notes||o.notes||'')+'</td>'+
-        '</tr>';
-    });
-    html+='</tbody></table></div>';
+    html+=orderSection('frame','order_frame','框架订单','客户框架订单 · 交付进度 · 状态跟踪',prodMap);
+    html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
   }
   html+='</div>';
   return html;
 }
 
+/* 单个分类区块（可收起/展开）：头部点击切换 orderCollapse[k]，并带该分类独立的新增入口 */
+function orderSection(k,formKey,title,sub,prodMap){
+  const type=k==='inv'?'库存订单':'框架订单';
+  const typeOrders=orders.map((o,i)=>({o,i})).filter(x=>orderTypeOf(x.o)===type);
+  const collapsed=!!orderCollapse[k];
+  let h='<div class="order-sec'+(collapsed?' collapsed':'')+'">';
+  h+='<div class="order-sec-head" onclick="toggleOrderSection(\''+k+'\')">'+
+       '<span class="chev">'+(collapsed?'▸':'▾')+'</span>'+
+       '<b>'+esc(title)+'</b>'+
+       '<span class="count-badge">'+typeOrders.length+'</span>'+
+       '<span class="desc">'+esc(sub)+'</span>'+
+       '<button class="btn btn-sm btn-primary" style="margin-left:auto" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button>'+
+     '</div>';
+  if(!collapsed){
+    if(typeOrders.length===0){
+      h+='<div class="order-sec-body"><div class="empty" style="padding:18px">暂无'+esc(title)+'</div></div>';
+    }else{
+      h+='<div class="order-sec-body">'+renderOrderTable(formKey,typeOrders,prodMap)+'</div>';
+    }
+  }
+  h+='</div>';
+  return h;
+}
+
+/* 某分类下的明细表格（合并单元格 + 批量操作/筛选，formKey 独立） */
+function renderOrderTable(formKey,typeOrders,prodMap){
+  const rows=[];
+  typeOrders.forEach(({o,i})=>{orderItems(o).forEach(it=>rows.push({order:o,item:it,orderIdx:i}));});
+  TBL_SCHEMAS[formKey]=[
+    {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
+    {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
+    {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
+    {key:'customer',label:'客户',type:'text',get:r=>r.order.customer},
+    {key:'status',label:'审核状态',type:'text',select:true,get:r=>r.order.status},
+    {key:'productId',label:'商品编码',type:'text',get:r=>r.item.productId},
+    {key:'productName',label:'商品名称',type:'text',get:r=>r.item.productName||(r.item.productId&&prodMap[r.item.productId]?prodMap[r.item.productId].name:'')},
+    {key:'model',label:'型号',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.model:'';}},
+    {key:'spec',label:'规格',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.spec:'';}},
+    {key:'unit',label:'单位',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.unit:'';}},
+    {key:'orderQty',label:'数量',type:'number',get:r=>r.item.orderQty},
+    {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
+    {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
+    {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
+    {key:'notes',label:'商品行备注',type:'text',get:r=>r.item.notes||r.order.notes||''}
+  ];
+  TBL_ROWS[formKey]=rows;
+  let shown=applyTable(formKey,rows);
+  /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
+     仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
+  const HEAD_COLS=5;
+  const sortKey=tState(formKey).sort?tState(formKey).sort.key:null;
+  const lineKeys=TBL_SCHEMAS[formKey].slice(HEAD_COLS).map(c=>c.key);
+  const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
+  if(shouldMerge)shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
+  const groupMap=new Map();
+  shown.forEach((r,i)=>{if(!groupMap.has(r.order.id))groupMap.set(r.order.id,{start:i,count:0});groupMap.get(r.order.id).count++;});
+  lastRowIds[formKey]=shown.map(r=>r.orderIdx);
+  let html=bulkBar(formKey);
+  html+=filterBar(formKey);
+  html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead><tbody>';
+  if(shown.length===0){html+=noMatchRow(formKey,TBL_SCHEMAS[formKey].length+1);}
+  shown.forEach((r,i)=>{
+    const o=r.order, it=r.item, oi=r.orderIdx;
+    const oq=num(it.orderQty), dq=num(it.deliveredQty);
+    const undel=oq-dq;
+    const pct=oq>0?Math.round(dq/oq*100):0;
+    const today=todayStr();
+    const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
+    const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':'tag-gray';
+    const grp=groupMap.get(r.order.id);
+    const isFirst=grp.start===i;
+    const rs=grp.count;
+    const selChecked=selSet(formKey).has(String(oi))?'checked':'';
+    const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\''+formKey+'\','+oi+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\''+formKey+'\','+oi+')"></td>';
+    let headCells='';
+    if(shouldMerge){
+      if(isFirst){
+        headCells=
+          '<td rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+          '<td rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
+          '<td rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
+          '<td rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
+          '<td rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+      }
+    }else{
+      headCells=
+        '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+        '<td>'+fmtDate(o.startDate)+'</td>'+
+        '<td style="font-weight:600">'+esc(o.id)+'</td>'+
+        '<td>'+esc(o.customer)+'</td>'+
+        '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+    }
+    html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+' onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
+      '<td>'+esc(it.productId)+'</td>'+
+      '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
+      '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
+      '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
+      '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
+      '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
+      '<td>'+esc(it.notes||o.notes||'')+'</td>'+
+      '</tr>';
+  });
+  html+='</tbody></table></div>';
+  return html;
+}
+
+function addOrderOfType(type){orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
+
 function orderModal(idx,prefill){
   const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
-  const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',startDate:todayStr(),items:[]};
+  const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'框架订单',startDate:todayStr(),items:[]};
   const headCols=fields.order.filter(f=>!isLineField(f));
   let body='<div class="form-row">';
   headCols.forEach((f,i)=>{
@@ -2930,6 +2980,8 @@ function toggleSelAll(m){
 var FORM_ACTIONS={
   product:{formKey:'product',get:function(i){return products[i];},edit:function(i){productModal(i);},del:function(i){delProduct(i);},copy:function(i){copyProduct(i);}},
   order:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
+  order_frame:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
+  order_inv:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
   inventory:{formKey:'inventory',get:function(i){return inventory[i];},edit:function(i){inventoryModal(i);},del:function(i){delInventory(i);},copy:function(i){copyInventory(i);}},
   dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
@@ -2980,7 +3032,7 @@ function bulkDelete(m){
     else logOp('删除',m,'删除记录');
   });
   if(m==='product'){idxs.forEach(i=>products.splice(i,1));save('products',products);}
-  else if(m==='order'){idxs.forEach(i=>orders.splice(i,1));save('orders',orders);}
+  else if(m==='order'||m==='order_frame'||m==='order_inv'){idxs.forEach(i=>orders.splice(i,1));save('orders',orders);}
   else if(m==='inventory'){idxs.forEach(i=>inventory.splice(i,1));save('inventory',inventory);}
   else if(m==='dp_stockup'){idxs.forEach(i=>dailyPlans.splice(i,1));save('dailyPlans',dailyPlans);}
   else if(m==='dp_pkg'){idxs.forEach(i=>dailyPkgs.splice(i,1));save('dailyPkgs',dailyPkgs);}
@@ -2996,7 +3048,7 @@ function bulkExport(m){
   if(s.size===0){alert('请先勾选要导出的记录');return;}
   const idxs=[...s].map(Number);
   let rows=idxs.map(i=>a.get(i)).filter(Boolean);
-  if(m==='order')rows=orderFlatRowsOf(idxs.map(i=>orders[i]));
+  if(m==='order'||m==='order_frame'||m==='order_inv')rows=orderFlatRowsOf(idxs.map(i=>orders[i]));
   exportForm(a.formKey,rows);
   logOp('导出',a.formKey,'导出选中 '+rows.length+' 条记录');
 }
@@ -3197,6 +3249,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.1</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.2</div>
 </body>
 </html>
