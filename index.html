@@ -279,7 +279,7 @@ const DB={
 function save(k,v){
   DB.set(k,v);
   // 业务数据变更后自动备份（仅在启动完成后，避免启动期误触发下载）
-  if(bootDone && ['products','orders','inventory','dailyPlans','dailyPkgs','deliveries','fields'].indexOf(k)>=0){
+  if(bootDone && ['products','orders','dailyPlans','dailyPkgs','deliveries','fields'].indexOf(k)>=0){
     try{scheduleAutoBackup();}catch(e){}
   }
   return v;
@@ -309,12 +309,11 @@ const LOCK='<svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentCol
 const FORM_DATA={
   product:()=>products,
   order:()=>orders,
-  inventory:()=>inventory,
   dailyPlan:()=>dailyPlans,
   dailyPkg:()=>dailyPkgs,
   delivery:()=>deliveries
 };
-const REF_FORM_LABELS={product:'产品主数据',order:'订单管理',inventory:'半成品库存',dailyPlan:'日排产-备货',dailyPkg:'日排产-包装',delivery:'交付计划'};
+const REF_FORM_LABELS={product:'产品主数据',order:'订单管理',dailyPlan:'日排产-备货',dailyPkg:'日排产-包装',delivery:'交付计划'};
 /* 支持引用字段的表单（其余表单的录入界面为固定结构，暂不在字段设置中开放引用） */
 const REF_ENABLED=['product','order'];
 
@@ -387,13 +386,8 @@ function logOp(action,target,detail,field,oldv,newv){
   if(logs.length>500)logs=logs.slice(0,500);
   save('logs',logs);
 }
-/* 字段级日志增强：硬编码表单(库存/排产/交付)的字段名映射 */
+/* 字段级日志增强：硬编码表单(排产/交付)的字段名映射 */
 const HARD_FIELDS={
-  inventory:[
-    {key:'date',label:'日期'},{key:'productId',label:'产品编码'},{key:'productName',label:'产品名称'},
-    {key:'opening',label:'期初'},{key:'inbound',label:'入库'},{key:'outbound',label:'出库'},
-    {key:'closing',label:'期末'},{key:'stockMin',label:'库存下限'},{key:'stockMax',label:'库存上限'},{key:'status',label:'状态'}
-  ],
   dailyPlan:[
     {key:'date',label:'日期'},{key:'productId',label:'产品编码'},{key:'productName',label:'产品名称'},
     {key:'assemblyPlan',label:'装配计划'},{key:'assemblyDone',label:'装配实际'},{key:'innerPackPlan',label:'内包装计划'},
@@ -457,8 +451,8 @@ const defaultFields={
     {key:'spec',label:'规格',type:'text',required:false,locked:true},
     {key:'model',label:'型号',type:'text',required:false,locked:false},
     {key:'unit',label:'单位',type:'text',required:false,locked:false},
-    {key:'dailyCapUnpkg',label:'日产能(未包)',type:'number',required:false,locked:true},
-    {key:'dailyCapPkg',label:'日产能(包装)',type:'number',required:false,locked:true},
+    {key:'dailyCap',label:'日产能',type:'number',required:false,locked:true},
+    {key:'stock',label:'库存',type:'number',required:false,locked:true},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:['启用','停用']}
   ],
   order:[
@@ -473,18 +467,6 @@ const defaultFields={
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
     {key:'orderType',label:'订单类型',type:'select',required:true,locked:false,options:ORDER_TYPES,default:'框架订单',level:'head'},
     {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
-  ],
-  inventory:[
-    {key:'date',label:'日期',type:'date',required:true,locked:true},
-    {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
-    {key:'productName',label:'产品名称',type:'text',required:true,locked:true},
-    {key:'opening',label:'期初库存',type:'number',required:true,locked:true},
-    {key:'inbound',label:'入库(装配产出)',type:'number',required:false,locked:false},
-    {key:'outbound',label:'出库(包装消耗)',type:'number',required:false,locked:false},
-    {key:'closing',label:'期末库存',type:'number',required:true,locked:true},
-    {key:'stockMin',label:'库存下限',type:'number',required:true,locked:true},
-    {key:'stockMax',label:'库存上限',type:'number',required:true,locked:true},
-    {key:'status',label:'库存状态',type:'text',required:false,locked:true}
   ],
   dailyPlan:[
     {key:'date',label:'日期',type:'date',required:true,locked:true},
@@ -530,9 +512,8 @@ const defaultFields={
 };
 
 const FORM_META={
-  product:{title:'产品主数据',sub:'产品基础信息 · 日产能 · 库存上下限',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
+  product:{title:'产品主数据',sub:'产品基础信息 · 日产能 · 库存',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
   order:{title:'订单管理',sub:'框架订单 · 交付进度 · 状态',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
-  inventory:{title:'半成品库存',sub:'每日出入库 · 库存余额 · 状态',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>'},
   dailyPlan:{title:'日排产计划',sub:'备货排产(装配→内包→调试老化) + 包装排产(按订单)',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2M8 18h2M14 18h2"/></svg>'},
   delivery:{title:'交付计划',sub:'分批交付 · 倒排排期 · 实际填报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7M5.5 19a2.5 2.5 0 0 0 5 0"/></svg>'}
 };
@@ -544,7 +525,6 @@ const NAV=[
   {id:'dashboard',label:'看板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>'},
   {id:'product',label:'产品主数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
   {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
-  {id:'inventory',label:'半成品库存',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>'},
   {id:'dailyPlan',label:'日排产',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
   {id:'dailyReport',label:'生产日报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>'},
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
@@ -555,7 +535,7 @@ const NAV=[
 /* ================================================================
    状态
 ================================================================ */
-let products=[],orders=[],inventory=[],dailyPlans=[],dailyPkgs=[],deliveries=[];
+let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[];
 let logs=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
 let meta={seq:0};
@@ -571,6 +551,8 @@ let deliveryOrderId='';
 let orderCollapse={frame:false,inv:false};
 function toggleOrderSection(k){orderCollapse[k]=!orderCollapse[k];renderContent();}
 function orderTypeOf(o){return o&&o.orderType?o.orderType:'框架订单';}
+/* 新增订单时记录"意图分类"，保存时强制写入，杜绝串类 */
+let pendingOrderType=null;
 
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -583,10 +565,10 @@ function money(v){return num(v).toLocaleString('zh-CN');}
 ================================================================ */
 function seed(){
   products=[
-    {id:'P001',name:'智能框架断路器',spec:'ACB',model:'2000',unit:'台',dailyCapUnpkg:50,dailyCapPkg:30,status:'启用'},
-    {id:'P002',name:'塑壳断路器',spec:'MCCB',model:'400',unit:'台',dailyCapUnpkg:200,dailyCapPkg:150,status:'启用'},
-    {id:'P003',name:'微型断路器',spec:'MCB',model:'1P-63',unit:'只',dailyCapUnpkg:500,dailyCapPkg:400,status:'启用'},
-    {id:'P004',name:'漏电断路器',spec:'RCBO',model:'100',unit:'台',dailyCapUnpkg:300,dailyCapPkg:200,status:'启用'}
+    {id:'P001',name:'智能框架断路器',spec:'ACB',model:'2000',unit:'台',dailyCap:80,stock:300,status:'启用'},
+    {id:'P002',name:'塑壳断路器',spec:'MCCB',model:'400',unit:'台',dailyCap:350,stock:630,status:'启用'},
+    {id:'P003',name:'微型断路器',spec:'MCB',model:'1P-63',unit:'只',dailyCap:900,stock:850,status:'启用'},
+    {id:'P004',name:'漏电断路器',spec:'RCBO',model:'100',unit:'台',dailyCap:500,stock:250,status:'启用'}
   ];
   orders=[
     {id:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderQty:500,deliveredQty:180,startDate:'2026-07-01',deadline:'2026-12-31',status:'执行中',orderType:'框架订单',notes:'Q3-Q4框架订单'},
@@ -594,16 +576,6 @@ function seed(){
     {id:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderQty:10000,deliveredQty:2500,startDate:'2026-08-01',deadline:'2026-12-31',status:'执行中',orderType:'框架订单',notes:'季度框架订单'}
   ];
   const d1='2026-08-13',d2='2026-08-14';
-  inventory=[
-    {date:d1,productId:'P001',productName:'智能框架断路器',opening:280,inbound:50,outbound:30,closing:300,stockMin:100,stockMax:500,status:'正常'},
-    {date:d1,productId:'P002',productName:'塑壳断路器',opening:580,inbound:200,outbound:150,closing:630,stockMin:300,stockMax:1500,status:'正常'},
-    {date:d1,productId:'P003',productName:'微型断路器',opening:750,inbound:500,outbound:400,closing:850,stockMin:800,stockMax:4000,status:'正常'},
-    {date:d1,productId:'P004',productName:'漏电断路器',opening:150,inbound:300,outbound:200,closing:250,stockMin:200,stockMax:1000,status:'正常'},
-    {date:d2,productId:'P001',productName:'智能框架断路器',opening:300,inbound:48,outbound:30,closing:318,stockMin:100,stockMax:500,status:'正常'},
-    {date:d2,productId:'P002',productName:'塑壳断路器',opening:630,inbound:195,outbound:150,closing:675,stockMin:300,stockMax:1500,status:'正常'},
-    {date:d2,productId:'P003',productName:'微型断路器',opening:850,inbound:498,outbound:400,closing:948,stockMin:800,stockMax:4000,status:'正常'},
-    {date:d2,productId:'P004',productName:'漏电断路器',opening:250,inbound:0,outbound:0,closing:250,stockMin:200,stockMax:1000,status:'正常'}
-  ];
   dailyPlans=[
     {date:d1,productId:'P001',productName:'智能框架断路器',assemblyPlan:50,assemblyDone:48,innerPackPlan:50,innerPackDone:50,testAgingPlan:50,testAgingDone:46,semiInbound:46,notes:'库存300→正常区间'},
     {date:d1,productId:'P002',productName:'塑壳断路器',assemblyPlan:200,assemblyDone:195,innerPackPlan:200,innerPackDone:198,testAgingPlan:200,testAgingDone:193,semiInbound:193,notes:'库存630→正常区间'},
@@ -628,7 +600,6 @@ function seed(){
   ];
   save('products',products);
   save('orders',orders);
-  save('inventory',inventory);
   save('dailyPlans',dailyPlans);
   save('dailyPkgs',dailyPkgs);
   save('deliveries',deliveries);
@@ -1020,7 +991,6 @@ function renderContent(){
     case 'dashboard':c.innerHTML=renderDashboard();break;
     case 'product':c.innerHTML=renderProducts();break;
     case 'order':c.innerHTML=renderOrders();break;
-    case 'inventory':c.innerHTML=renderInventory();break;
     case 'dailyPlan':c.innerHTML=renderDailyPlan();break;
     case 'dailyReport':c.innerHTML=renderDailyReport();break;
     case 'delivery':c.innerHTML=renderDelivery();break;
@@ -1028,7 +998,7 @@ function renderContent(){
     case 'logs':c.innerHTML=renderLogs();break;
     default:c.innerHTML='<div class="empty">未知模块</div>';
   }
-  if(products.length+orders.length+inventory.length>=30){
+  if(products.length+orders.length>=30){
     showBackupWarn();
   }
   applyTableLayout();
@@ -1038,7 +1008,7 @@ function showBackupWarn(){
   const c=document.getElementById('content');
   const w=document.createElement('div');
   w.className='backup-warn';
-  w.innerHTML='数据已积累 '+((products.length||0)+(orders.length||0)+(inventory.length||0))+' 条，建议导出 Excel 备份。';
+  w.innerHTML='数据已积累 '+((products.length||0)+(orders.length||0))+' 条，建议导出 Excel 备份。';
   c.insertBefore(w,c.firstChild);
 }
 
@@ -1052,9 +1022,8 @@ function renderAll(){
 ================================================================ */
 function countAlerts(){
   let n=0;
-  // 库存低于下限
-  const latestInv=getLatestInventory();
-  latestInv.forEach(i=>{if(i.closing<i.stockMin)n++;});
+  // 产品缺货（库存为 0 或空）
+  products.forEach(p=>{ if(p.stock!=null && num(p.stock)<=0) n++; });
   // 订单逾期
   orders.forEach(o=>{if(o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr())n++;});
   // 交付计划近期
@@ -1068,19 +1037,8 @@ function countAlerts(){
   return n;
 }
 
-function getLatestInventory(){
-  const byProduct={};
-  inventory.forEach(i=>{
-    if(!byProduct[i.productId]||fmtDate(i.date)>fmtDate(byProduct[i.productId].date)){
-      byProduct[i.productId]=i;
-    }
-  });
-  return Object.values(byProduct);
-}
-
 function renderDashboard(){
-  const latestInv=getLatestInventory();
-  const lowStock=latestInv.filter(i=>i.closing<i.stockMin);
+  const lowStock=products.filter(p=>p.stock!=null && num(p.stock)<=0);
   const overdueOrders=orders.filter(o=>o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr());
   const activeOrders=orders.filter(o=>o.status==='执行中');
   const todayPlan=dailyPlans.filter(p=>p.date===todayStr());
@@ -1105,8 +1063,8 @@ function renderDashboard(){
     html+='<div class="alert alert-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>暂无紧急事项，一切正常。</div>';
   }
 
-  lowStock.forEach(i=>{
-    html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg><div><b>'+esc(i.productName)+'</b>（'+esc(i.productId)+'）期末库存 <b>'+i.closing+'</b> 低于下限 <b>'+i.stockMin+'</b>，需立即备货排产。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'dailyPlan\')">去排产</button></div></div>';
+  lowStock.forEach(p=>{
+    html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg><div><b>'+esc(p.name)+'</b>（'+esc(p.id)+'）库存为 <b>'+num(p.stock)+'</b>，需及时补货。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'product\')">去产品</button></div></div>';
   });
 
   overdueOrders.forEach(o=>{
@@ -1132,15 +1090,16 @@ function renderDashboard(){
 
   html+='</div>';
 
-  // 最新库存快照
-  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>最新半成品库存快照</div>';
-  if(latestInv.length===0){
-    html+='<div class="empty">暂无库存数据</div>';
+  // 产品库存快照（库存现记入产品主数据）
+  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品库存</div>';
+  if(products.length===0){
+    html+='<div class="empty">暂无产品数据</div>';
   }else{
-    html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>期末库存</th><th>下限</th><th>上限</th><th>状态</th></tr></thead><tbody>';
-    latestInv.forEach(i=>{
-      const st=i.closing<i.stockMin?STOCK_STATUS.low:(i.closing>i.stockMax?STOCK_STATUS.high:STOCK_STATUS.normal);
-      html+='<tr><td>'+esc(i.productId)+'</td><td>'+esc(i.productName)+'</td><td style="font-weight:600">'+i.closing+'</td><td>'+i.stockMin+'</td><td>'+i.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td></tr>';
+    html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>日产能</th><th>库存</th><th>状态</th></tr></thead><tbody>';
+    products.forEach(p=>{
+      const s=num(p.stock);
+      const st=p.stock==null?null:(s<=0?STOCK_STATUS.low:STOCK_STATUS.normal);
+      html+='<tr><td>'+esc(p.id)+'</td><td>'+esc(p.name)+'</td><td>'+num(p.dailyCap)+'</td><td style="font-weight:600">'+s+'</td><td>'+(st?('<span class="tag '+st.cls+'">'+st.label+'</span>'):'<span class="tag tag-gray">未录入</span>')+'</td></tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -1315,7 +1274,7 @@ function migrateRemoveProductFields(){
     logOp('字段设置','产品主数据','系统迁移：删除「未包库存下限/上限、成品库存下限/上限」共4个字段');
   }
 }
-const OPTIONAL_PRODUCT_KEYS=['dailyCapUnpkg','dailyCapPkg'];
+const OPTIONAL_PRODUCT_KEYS=['dailyCap'];
 function migrateProductFieldsOptional(){
   let changed=false;
   [fields,fieldsDraft].forEach(cfg=>{
@@ -1330,6 +1289,39 @@ function migrateProductFieldsOptional(){
     if(fieldsAudit!=='draft'){ save('fields',fields); }
     if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
     logOp('字段设置','产品主数据','系统迁移：将「日产能(未包)、日产能(包装)」改为非必填');
+  }
+}
+/* 产品主数据：合并「日产能(未包)/日产能(包装)」为单一「日产能」，并补齐「库存」关键字段 */
+function migrateProductDailyCap(){
+  const OLD_CAP=['dailyCapUnpkg','dailyCapPkg'];
+  let cfgChanged=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.product))return;
+    const beforeLen=cfg.product.length;
+    cfg.product=cfg.product.filter(f=>OLD_CAP.indexOf(f.key)<0);
+    if(!cfg.product.some(f=>f.key==='dailyCap')){
+      const idx=cfg.product.findIndex(f=>f.key==='unit');
+      const def={key:'dailyCap',label:'日产能',type:'number',required:false,locked:true};
+      if(idx>=0)cfg.product.splice(idx+1,0,def); else cfg.product.push(def);
+    }
+    if(!cfg.product.some(f=>f.key==='stock')){
+      const idx=cfg.product.findIndex(f=>f.key==='dailyCap');
+      const stockDef={key:'stock',label:'库存',type:'number',required:false,locked:true};
+      if(idx>=0)cfg.product.splice(idx+1,0,stockDef); else cfg.product.push(stockDef);
+    }
+    if(cfg.product.length!==beforeLen||!cfg.product.some(f=>f.key==='dailyCap')||!cfg.product.some(f=>f.key==='stock'))cfgChanged=true;
+  });
+  /* 数据迁移：旧双产能求和写入 dailyCap，删除旧键 */
+  products.forEach(p=>{
+    if(p.dailyCapUnpkg!=null||p.dailyCapPkg!=null){
+      if(p.dailyCap==null)p.dailyCap=num(p.dailyCapUnpkg)+num(p.dailyCapPkg);
+      delete p.dailyCapUnpkg; delete p.dailyCapPkg;
+    }
+  });
+  if(cfgChanged){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+    logOp('字段设置','产品主数据','系统迁移：合并「日产能(未包)/日产能(包装)」为「日产能」，新增「库存」关键字段');
   }
 }
 function orderItems(o){
@@ -1367,7 +1359,7 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="orderModal()">新增订单</button></div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'框架订单\')">新增订单</button></div>';
   if(orders.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><br>暂无订单数据</div>';
   }else{
@@ -1488,7 +1480,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   return html;
 }
 
-function addOrderOfType(type){orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
+function addOrderOfType(type){pendingOrderType=type;orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
 
 function orderModal(idx,prefill){
   const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
@@ -1575,6 +1567,9 @@ function saveOrder(idx){
   orderHeadFields().forEach(f=>{ if(f.type==='ref'){ o[f.key]=lookupRef(f.refForm,f.refMatch,o[f.refKey],f.refField); } });
   orderLineFields().forEach(f=>{ if(f.type==='ref'){ items.forEach(it=>{ it[f.key]=lookupRef(f.refForm,f.refMatch,it[f.refKey],f.refField); }); } });
   o.items=items;
+  // 新增订单时，强制使用打开弹窗时记录的意图分类，避免串到其它分类
+  if(idx<0&&pendingOrderType){o.orderType=pendingOrderType;}
+  pendingOrderType=null;
   if(idx>=0){
     const oldO=orders[idx];
     orders[idx]=o;
@@ -1596,124 +1591,6 @@ function delOrder(idx){
   logOp('删除','订单管理','删除订单「'+orders[idx].id+'」('+orders[idx].customer+')');
   orders.splice(idx,1);
   save('orders',orders);
-  renderContent();
-}
-
-/* ================================================================
-   半成品库存台账
-================================================================ */
-function renderInventory(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>未包半成品库存台账 <span class="desc">记录每日出入库及库存余额 · 自动判断库存状态</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="inventoryModal()">新增记录</button></div>';
-
-  // 表格筛选/排序
-  TBL_SCHEMAS.inventory=[
-    {key:'date',label:'日期',type:'date'},
-    {key:'productId',label:'产品编码',type:'text'},
-    {key:'productName',label:'产品名称',type:'text'},
-    {key:'opening',label:'期初库存',type:'number'},
-    {key:'inbound',label:'入库(装配产出)',type:'number'},
-    {key:'outbound',label:'出库(包装消耗)',type:'number'},
-    {key:'closing',label:'期末库存',type:'number'},
-    {key:'stockMin',label:'下限',type:'number'},
-    {key:'stockMax',label:'上限',type:'number'},
-    {key:'status',label:'状态',type:'text',select:true,get:r=>{const c=num(r.closing);return c<num(r.stockMin)?STOCK_STATUS.low.label:(c>num(r.stockMax)?STOCK_STATUS.high.label:STOCK_STATUS.normal.label);}}
-  ];
-  TBL_ROWS.inventory=inventory;
-  const filteredInv=filterRows('inventory',inventory);
-
-  // 按日期分组
-  const dates=[...new Set(filteredInv.map(i=>fmtDate(i.date)))].sort().reverse();
-
-  if(dates.length===0){
-    html+=inventory.length>0?'<div class="empty" style="display:flex;align-items:center;justify-content:center;gap:8px">无匹配数据 <button class="btn btn-sm" onclick="clearAllFilt(\'inventory\')">清除筛选</button></div>':'<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><br>暂无库存数据</div>';
-  }else{
-    lastRowIds.inventory=[];
-    html+=bulkBar('inventory');
-    html+=filterBar('inventory');
-    dates.forEach(d=>{
-      const rows=sortRows('inventory',filteredInv.filter(i=>fmtDate(i.date)===d));
-      html+='<h3 style="font-size:14px;margin:12px 0 6px;color:var(--text)">'+d+'</h3>';
-      html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.inventory.map(c=>thCol('inventory',c)).join('')+'</tr></thead><tbody>';
-      rows.forEach((r,idx)=>{
-        const realIdx=inventory.indexOf(r);
-        lastRowIds.inventory.push(realIdx);
-        const selChecked=selSet('inventory').has(String(realIdx))?'checked':'';
-        const st=num(r.closing)<num(r.stockMin)?STOCK_STATUS.low:(num(r.closing)>num(r.stockMax)?STOCK_STATUS.high:STOCK_STATUS.normal);
-        html+='<tr onclick="selRowClick(\'inventory\','+realIdx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'inventory\','+realIdx+')"></td><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td><td style="text-align:right">'+r.opening+'</td><td style="text-align:right;color:var(--green)">+'+r.inbound+'</td><td style="text-align:right;color:var(--red)">-'+r.outbound+'</td><td style="text-align:right;font-weight:600">'+r.closing+'</td><td>'+r.stockMin+'</td><td>'+r.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td></tr>';
-      });
-      // 小计
-      const sumIn=rows.reduce((s,r)=>s+num(r.inbound),0);
-      const sumOut=rows.reduce((s,r)=>s+num(r.outbound),0);
-      html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="2">小计</td><td></td><td style="text-align:right">+'+sumIn+'</td><td style="text-align:right">-'+sumOut+'</td><td colspan="4"></td></tr>';
-      html+='</tbody></table></div>';
-    });
-  }
-  html+='</div>';
-  return html;
-}
-
-function inventoryModal(idx,prefill){
-  const r=prefill!=null?{...prefill}:(idx!=null?{...inventory[idx]}:{date:todayStr(),opening:0,inbound:0,outbound:0,closing:0,stockMin:0,stockMax:0});
-  let body='<div class="form-row">'+
-    '<div><label>日期 *</label><input type="date" id="inv_date" value="'+fmtDate(r.date)+'"></div>'+
-    '<div><label>产品编码 *</label><select id="inv_productId" onchange="autoFillInv()"><option value="">请选择</option>'+products.map(p=>'<option value="'+esc(p.id)+'" data-name="'+esc(p.name)+'" '+(p.id===r.productId?'selected':'')+'>'+esc(p.id)+' - '+esc(p.name)+'</option>').join('')+'</select></div>'+
-    '<div><label>产品名称 *</label><input type="text" id="inv_productName" value="'+esc(r.productName)+'"></div>'+
-    '</div><div class="form-row">'+
-    '<div><label>期初库存 *</label><input type="number" id="inv_opening" value="'+r.opening+'"></div>'+
-    '<div><label>入库(装配产出)</label><input type="number" id="inv_inbound" value="'+r.inbound+'" onchange="calcClosing()"></div>'+
-    '<div><label>出库(包装消耗)</label><input type="number" id="inv_outbound" value="'+r.outbound+'" onchange="calcClosing()"></div>'+
-    '<div><label>期末库存 *</label><input type="number" id="inv_closing" value="'+r.closing+'"></div>'+
-    '</div><div class="form-row">'+
-    '<div><label>库存下限 *</label><input type="number" id="inv_stockMin" value="'+r.stockMin+'"></div>'+
-    '<div><label>库存上限 *</label><input type="number" id="inv_stockMax" value="'+r.stockMax+'"></div>'+
-    '</div>';
-  showModal(idx!=null?'编辑库存记录':'新增库存记录',body,
-    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveInventory('+(idx!=null?idx:-1)+')">保存</button>'
-  );
-}
-
-function autoFillInv(){
-  const sel=document.getElementById('inv_productId');
-  const opt=sel.options[sel.selectedIndex];
-  if(opt){
-    document.getElementById('inv_productName').value=opt.dataset.name||'';
-  }
-}
-
-function calcClosing(){
-  const o=num(document.getElementById('inv_opening').value);
-  const i=num(document.getElementById('inv_inbound').value);
-  const out=num(document.getElementById('inv_outbound').value);
-  document.getElementById('inv_closing').value=o+i-out;
-}
-
-function saveInventory(idx){
-  const r={
-    date:document.getElementById('inv_date').value,
-    productId:document.getElementById('inv_productId').value,
-    productName:document.getElementById('inv_productName').value,
-    opening:num(document.getElementById('inv_opening').value),
-    inbound:num(document.getElementById('inv_inbound').value),
-    outbound:num(document.getElementById('inv_outbound').value),
-    closing:num(document.getElementById('inv_closing').value),
-    stockMin:num(document.getElementById('inv_stockMin').value),
-    stockMax:num(document.getElementById('inv_stockMax').value),
-    status:''
-  };
-  if(!r.productId){alert('请选择产品');return;}
-  r.status=r.closing<r.stockMin?'低于下限':(r.closing>r.stockMax?'高于上限':'正常');
-  if(idx>=0){const oldR=inventory[idx];inventory[idx]=r;logFieldDiffs('半成品库存',HARD_FIELDS.inventory,oldR,r,r.productName+' '+fmtDate(r.date));}
-  else{inventory.push(r);logOp('新增','半成品库存','新增库存记录「'+r.productName+'」'+fmtDate(r.date));}
-  save('inventory',inventory);
-  closeModal();
-  renderContent();
-}
-
-function delInventory(idx){
-  if(!confirm('确认删除该库存记录？'))return;
-  logOp('删除','半成品库存','删除库存记录「'+inventory[idx].productName+'」'+fmtDate(inventory[idx].date));
-  inventory.splice(idx,1);
-  save('inventory',inventory);
   renderContent();
 }
 
@@ -1831,7 +1708,7 @@ function planModal(type,idx,prefill){
     const p=prefill!=null?{...prefill}:(idx!=null?{...dailyPlans[idx]}:{date:planDate,assemblyPlan:0,assemblyDone:0,innerPackPlan:0,innerPackDone:0,testAgingPlan:0,testAgingDone:0,semiInbound:0});
     let body='<div class="form-row">'+
       '<div><label>日期 *</label><input type="date" id="sp_date" value="'+fmtDate(p.date)+'"></div>'+
-      '<div><label>产品 *</label><select id="sp_productId" onchange="autoFillPlan()"><option value="">请选择</option>'+products.map(pr=>'<option value="'+esc(pr.id)+'" data-name="'+esc(pr.name)+'" data-cap="'+pr.dailyCapUnpkg+'" '+(pr.id===p.productId?'selected':'')+'>'+esc(pr.id)+' - '+esc(pr.name)+'</option>').join('')+'</select></div>'+
+      '<div><label>产品 *</label><select id="sp_productId" onchange="autoFillPlan()"><option value="">请选择</option>'+products.map(pr=>'<option value="'+esc(pr.id)+'" data-name="'+esc(pr.name)+'" data-cap="'+num(pr.dailyCap)+'" '+(pr.id===p.productId?'selected':'')+'>'+esc(pr.id)+' - '+esc(pr.name)+'</option>').join('')+'</select></div>'+
       '<div><label>产品名称 *</label><input type="text" id="sp_productName" value="'+esc(p.productName)+'"></div>'+
       '</div><div class="form-row">'+
       '<div><label>装配计划</label><input type="number" id="sp_assemblyPlan" value="'+p.assemblyPlan+'"></div>'+
@@ -2388,7 +2265,6 @@ function renderFields(){
   const formMeta=[
     {key:'product',label:'产品主数据',sub:'产品基础信息'},
     {key:'order',label:'订单管理',sub:'框架订单'},
-    {key:'inventory',label:'半成品库存',sub:'库存台账'},
     {key:'dailyPlan',label:'日排产-备货',sub:'装配→内包→调试'},
     {key:'dailyPkg',label:'日排产-包装',sub:'包装→成品入库'},
     {key:'delivery',label:'交付计划',sub:'分批交付排期'}
@@ -2723,7 +2599,6 @@ var XLSX=(function(){
 var XLSX_SHEETS=[
   {sheet:'产品主数据',varName:'products',formKey:'product'},
   {sheet:'订单管理',varName:'orders',formKey:'order'},
-  {sheet:'半成品库存',varName:'inventory',formKey:'inventory'},
   {sheet:'备货排产',varName:'dailyPlans',formKey:'dailyPlan'},
   {sheet:'包装排产',varName:'dailyPkgs',formKey:'dailyPkg'},
   {sheet:'交付计划',varName:'deliveries',formKey:'delivery'}
@@ -2734,7 +2609,6 @@ function dataByVar(name){
   switch(name){
     case 'products':return products;
     case 'orders':return orders;
-    case 'inventory':return inventory;
     case 'dailyPlans':return dailyPlans;
     case 'dailyPkgs':return dailyPkgs;
     case 'deliveries':return deliveries;
@@ -2746,7 +2620,6 @@ function setDataByVar(name,arr){
   switch(name){
     case 'products':products=arr;break;
     case 'orders':orders=arr;break;
-    case 'inventory':inventory=arr;break;
     case 'dailyPlans':dailyPlans=arr;break;
     case 'dailyPkgs':dailyPkgs=arr;break;
     case 'deliveries':deliveries=arr;break;
@@ -2982,7 +2855,6 @@ var FORM_ACTIONS={
   order:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
   order_frame:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
   order_inv:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
-  inventory:{formKey:'inventory',get:function(i){return inventory[i];},edit:function(i){inventoryModal(i);},del:function(i){delInventory(i);},copy:function(i){copyInventory(i);}},
   dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
   delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);},gen:function(i){genBatches(i);}}
@@ -3033,7 +2905,6 @@ function bulkDelete(m){
   });
   if(m==='product'){idxs.forEach(i=>products.splice(i,1));save('products',products);}
   else if(m==='order'||m==='order_frame'||m==='order_inv'){idxs.forEach(i=>orders.splice(i,1));save('orders',orders);}
-  else if(m==='inventory'){idxs.forEach(i=>inventory.splice(i,1));save('inventory',inventory);}
   else if(m==='dp_stockup'){idxs.forEach(i=>dailyPlans.splice(i,1));save('dailyPlans',dailyPlans);}
   else if(m==='dp_pkg'){idxs.forEach(i=>dailyPkgs.splice(i,1));save('dailyPkgs',dailyPkgs);}
   else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));save('deliveries',deliveries);}
@@ -3062,7 +2933,6 @@ function suggestCopyId(baseId,exists){
 }
 function copyProduct(i){const c={...products[i]};c.id=suggestCopyId(c.id,id=>products.some(p=>p.id===id));productModal(-1,c);}
 function copyOrder(i){const c=JSON.parse(JSON.stringify(orders[i]));c.id=suggestCopyId(c.id,id=>orders.some(o=>o.id===id));orderModal(-1,c);}
-function copyInventory(i){const c={...inventory[i]};c.date=todayStr();inventoryModal(-1,c);}
 function copyPlan(type,i){
   if(type==='stockup'){const c={...dailyPlans[i]};c.date=planDate;planModal('stockup',-1,c);}
   else{const c={...dailyPkgs[i]};c.date=planDate;planModal('packaging',-1,c);}
@@ -3095,7 +2965,7 @@ function autoBackupNow(force){
   lastAutoBackup=now;
   var data={
     version:2,exportDate:new Date().toISOString(),
-    products:products,orders:orders,inventory:inventory,
+    products:products,orders:orders,
     dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,
     logs:logs,fields:fields,meta:meta
   };
@@ -3108,7 +2978,7 @@ function autoBackupNow(force){
   URL.revokeObjectURL(url);
   var t=new Date().toLocaleTimeString('zh-CN',{hour12:false});
   logOp('自动备份','全部数据','自动备份 '+
-    ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+    ((products.length||0)+(orders.length||0)+
      (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
   updateAutoBackupStatus(t);
 }
@@ -3134,7 +3004,6 @@ function backupAll(){
     exportDate:new Date().toISOString(),
     products:products,
     orders:orders,
-    inventory:inventory,
     dailyPlans:dailyPlans,
     dailyPkgs:dailyPkgs,
     deliveries:deliveries,
@@ -3150,7 +3019,7 @@ function backupAll(){
   a.click();
   URL.revokeObjectURL(url);
   logOp('备份','全部数据','一键备份 '+
-    ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+    ((products.length||0)+(orders.length||0)+
      (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
 }
 
@@ -3165,8 +3034,7 @@ function restoreBackup(e){
       if(!data||typeof data!=='object')throw new Error('文件格式不正确');
       if(data.products)products=data.products;
       if(data.orders)orders=data.orders;
-      if(data.inventory)inventory=data.inventory;
-      if(data.dailyPlans)dailyPlans=data.dailyPlans;
+            if(data.dailyPlans)dailyPlans=data.dailyPlans;
       if(data.dailyPkgs)dailyPkgs=data.dailyPkgs;
       if(data.deliveries)deliveries=data.deliveries;
       if(data.logs)logs=data.logs;
@@ -3177,15 +3045,15 @@ function restoreBackup(e){
       save('fieldsAudit','audited');save('fieldsDraft',null);
       normalizeFields();   // 兼容旧版字段：补齐 level 标记
       migrateOrders();   // 兼容旧版平铺订单备份
-      save('products',products);save('orders',orders);save('inventory',inventory);
+      save('products',products);save('orders',orders);
       save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
       save('logs',logs);save('fields',fields);save('meta',meta);
       renderAll();
       logOp('恢复','全部数据','从备份文件恢复 '+
-        ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+        ((products.length||0)+(orders.length||0)+
          (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
       alert('恢复成功！共恢复 ' +
-        ((products.length||0)+(orders.length||0)+(inventory.length||0)+
+        ((products.length||0)+(orders.length||0)+
          (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)) + ' 条记录。');
     }catch(err){
       alert('恢复失败：'+err.message+'\n\n请确认文件为系统导出的 .json 备份文件。');
@@ -3198,8 +3066,8 @@ function restoreBackup(e){
 function confirmClear(){
   if(!confirm('确认清空所有数据？此操作不可恢复，建议先导出备份！'))return;
   if(!confirm('再次确认：所有产品、订单、库存、排产、交付数据将被删除！'))return;
-  products=[];orders=[];inventory=[];dailyPlans=[];dailyPkgs=[];deliveries=[];
-  save('products',products);save('orders',orders);save('inventory',inventory);
+  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];
+  save('products',products);save('orders',orders);
   save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
   logOp('清空','全部数据','清空所有业务数据');
   renderAll();
@@ -3211,7 +3079,6 @@ function confirmClear(){
 async function bootstrap(){
   products=await DB.get('products',[]);
   orders=await DB.get('orders',[]);
-  inventory=await DB.get('inventory',[]);
   dailyPlans=await DB.get('dailyPlans',[]);
   dailyPkgs=await DB.get('dailyPkgs',[]);
   deliveries=await DB.get('deliveries',[]);
@@ -3231,9 +3098,11 @@ async function bootstrap(){
   migrateRemoveProductFields();
   // 产品主数据：日产能2字段改为非必填（配置迁移）
   migrateProductFieldsOptional();
+  // 产品主数据：合并双日产能为单字段 + 补齐库存关键字段（配置迁移）
+  migrateProductDailyCap();
 
   // 仅当"从未成功保存过任何数据"的纯净环境才灌入示例；一旦有过数据(meta.seeded)绝不重置，避免覆盖
-  if(!meta.seeded && products.length===0&&orders.length===0&&inventory.length===0&&dailyPlans.length===0&&dailyPkgs.length===0&&deliveries.length===0){
+  if(!meta.seeded && products.length===0&&orders.length===0&&dailyPlans.length===0&&dailyPkgs.length===0&&deliveries.length===0){
     seed();
     meta.seeded=true; save('meta',meta);
   }
@@ -3249,6 +3118,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.2</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.3</div>
 </body>
 </html>
