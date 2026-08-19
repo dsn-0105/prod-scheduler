@@ -78,6 +78,8 @@ thead .op-col{background:#eef2ff;z-index:6}
 .sel-col{position:sticky;left:0;z-index:5;background:#fff;text-align:center;width:44px;vertical-align:middle;padding:6px 4px}
 thead .sel-col{background:#eef2ff;z-index:6}
 .sel-col input{cursor:pointer;width:16px;height:16px}
+.table-wrap tbody tr{cursor:pointer}
+.table-wrap tbody tr:hover{background:#f5f7ff}
 .bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px}
 .bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
 .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
@@ -1170,7 +1172,7 @@ function renderProducts(){
     shown.forEach((p)=>{
       const idx=products.indexOf(p);
       const checked=selSet('product').has(String(idx))?'checked':'';
-      html+='<tr><td class="sel-col"><input type="checkbox" '+checked+' onclick="toggleSel(\'product\','+idx+',this.checked)"></td>';
+      html+='<tr onclick="selRowClick(\'product\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' onclick="event.stopPropagation();selRowClick(\'product\','+idx+')"></td>';
       cols.forEach(f=>{
         let val=p[f.key];
         if(f.key==='status'){
@@ -1400,7 +1402,7 @@ function renderOrders(){
       const isFirst=grp.start===i;
       const rs=grp.count;
       const selChecked=selSet('order').has(String(oi))?'checked':'';
-      const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'order\','+oi+',this.checked)"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'order\','+oi+',this.checked)"></td>';
+      const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'order\','+oi+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'order\','+oi+')"></td>';
       let headCells='';
       if(shouldMerge){
         if(isFirst){
@@ -1419,7 +1421,7 @@ function renderOrders(){
           '<td>'+esc(o.customer)+'</td>'+
           '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
       }
-      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+'>'+selCell+headCells+
+      html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+' onclick="selRowClick(\'order\','+oi+')">'+selCell+headCells+
         '<td>'+esc(it.productId)+'</td>'+
         '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
         '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -1587,7 +1589,7 @@ function renderInventory(){
         lastRowIds.inventory.push(realIdx);
         const selChecked=selSet('inventory').has(String(realIdx))?'checked':'';
         const st=num(r.closing)<num(r.stockMin)?STOCK_STATUS.low:(num(r.closing)>num(r.stockMax)?STOCK_STATUS.high:STOCK_STATUS.normal);
-        html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'inventory\','+realIdx+',this.checked)"></td><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td><td style="text-align:right">'+r.opening+'</td><td style="text-align:right;color:var(--green)">+'+r.inbound+'</td><td style="text-align:right;color:var(--red)">-'+r.outbound+'</td><td style="text-align:right;font-weight:600">'+r.closing+'</td><td>'+r.stockMin+'</td><td>'+r.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td></tr>';
+        html+='<tr onclick="selRowClick(\'inventory\','+realIdx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'inventory\','+realIdx+')"></td><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td><td style="text-align:right">'+r.opening+'</td><td style="text-align:right;color:var(--green)">+'+r.inbound+'</td><td style="text-align:right;color:var(--red)">-'+r.outbound+'</td><td style="text-align:right;font-weight:600">'+r.closing+'</td><td>'+r.stockMin+'</td><td>'+r.stockMax+'</td><td><span class="tag '+st.cls+'">'+st.label+'</span></td></tr>';
       });
       // 小计
       const sumIn=rows.reduce((s,r)=>s+num(r.inbound),0);
@@ -1707,7 +1709,7 @@ function renderDailyPlan(){
     shownPlans.forEach((p)=>{
       const idx=dailyPlans.indexOf(p);
       const selChecked=selSet('dp_stockup').has(String(idx))?'checked':'';
-      html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'dp_stockup\','+idx+',this.checked)"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td>'+
+      html+='<tr onclick="selRowClick(\'dp_stockup\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_stockup\','+idx+')"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td>'+
         '<td style="text-align:center;font-size:12px">'+(p.assemblyPlan||0)+' / <b>'+(p.assemblyDone||0)+'</b></td>'+
         '<td style="text-align:center;font-size:12px">'+(p.innerPackPlan||0)+' / <b>'+(p.innerPackDone||0)+'</b></td>'+
         '<td style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
@@ -1746,7 +1748,7 @@ function renderDailyPlan(){
     shownPkgs.forEach(p=>{
       const idx=dailyPkgs.indexOf(p);
       const selChecked=selSet('dp_pkg').has(String(idx))?'checked':'';
-      html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'dp_pkg\','+idx+',this.checked)"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td><td>'+esc(p.orderId)+'</td>'+
+      html+='<tr onclick="selRowClick(\'dp_pkg\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_pkg\','+idx+')"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td><td>'+esc(p.orderId)+'</td>'+
         '<td style="text-align:center;font-size:12px">'+(p.pkgPlan||0)+' / <b>'+(p.pkgDone||0)+'</b></td>'+
         '<td style="text-align:center;font-weight:600">'+(p.finInbound||0)+'</td>'+
         '<td style="text-align:right">'+money(p.orderTotal)+'</td>'+
@@ -2055,7 +2057,7 @@ function renderDelivery(){
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
       const selChecked=selSet('delivery').has(String(idx))?'checked':'';
-      html+='<tr><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="toggleSel(\'delivery\','+idx+',this.checked)"></td><td style="font-weight:600">'+esc(d.orderId)+'</td><td>'+esc(d.customer)+'</td><td>'+esc(d.productName)+'</td>'+
+      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td style="font-weight:600">'+esc(d.orderId)+'</td><td>'+esc(d.customer)+'</td><td>'+esc(d.productName)+'</td>'+
         '<td style="text-align:right">'+money(d.orderTotal)+'</td>'+
         '<td style="text-align:right">'+money(d.delivered)+'</td>'+
         '<td style="text-align:right">'+money(d.undelivered)+'</td>'+
@@ -2907,9 +2909,11 @@ var lastRowIds={};     // lastRowIds[模块] = 本次渲染的所有行标识（
 function selSet(m){if(!selRows[m])selRows[m]=new Set();return selRows[m];}
 function selCount(m){return selSet(m).size;}
 function clearSel(m){if(selRows[m])selRows[m].clear();}
-function toggleSel(m,idx,checked){
+/* 点击表格任意位置切换该行选中状态（复选框点击需 stopPropagation 避免双重切换） */
+function selRowClick(m,id){
+  id=String(id);
   const s=selSet(m);
-  if(checked)s.add(String(idx));else s.delete(String(idx));
+  if(s.has(id))s.delete(id);else s.add(id);
   renderContent();
 }
 /* 全选复选框：点击切换——若当前已全选则清空，否则全选 */
