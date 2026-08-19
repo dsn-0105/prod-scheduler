@@ -8,6 +8,7 @@
   & "C:\Users\WINDOWS\.workbuddy\binaries\PortableGit\versions\1.2.0\cmd\git.exe" -C "C:\Users\WINDOWS\WorkBuddy\2026-08-18-16-59-26" push
   ```
 - 版本号机制：`index.html` 中 `build X.Y` 为占位，push 后由 `.github/workflows/deploy.yml` 的 sed 自动注入 `日期.全局run_number`，源码无需手动改版本。
+- **每次更新后需告知最新 build 版本**（2026-08-19 确认）：助手在每次改动提交后，告知当前源码占位版本；用户 push 后可用 GitHub API 查询最新 run_number 得出线上真实版本（`https://api.github.com/repos/dsn-0105/prod-scheduler/actions/workflows/deploy.yml/runs?per_page=1`，线上 build = `日期.run_number`）。参考：线上当前 build `2026-08-19.11`（run#11）。
 
 ## 系统架构要点
 - 单文件 HTML（`index.html`），零依赖 Vanilla JS + localStorage，自建 DB 抽象层（预留 API_BASE）。
