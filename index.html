@@ -1360,13 +1360,9 @@ function orderItemOptions(selOrderId,selProductId){
 
 function renderOrders(){
   let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'框架订单\')">新增订单</button></div>';
-  if(orders.length===0){
-    html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><br>暂无订单数据</div>';
-  }else{
-    const prodMap={};products.forEach(p=>prodMap[p.id]=p);
-    html+=orderSection('frame','order_frame','框架订单','客户框架订单 · 交付进度 · 状态跟踪',prodMap);
-    html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
-  }
+  const prodMap={};products.forEach(p=>prodMap[p.id]=p);
+  html+=orderSection('frame','order_frame','框架订单','客户框架订单 · 交付进度 · 状态跟踪',prodMap);
+  html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
   html+='</div>';
   return html;
 }
@@ -1386,7 +1382,7 @@ function orderSection(k,formKey,title,sub,prodMap){
      '</div>';
   if(!collapsed){
     if(typeOrders.length===0){
-      h+='<div class="order-sec-body"><div class="empty" style="padding:18px">暂无'+esc(title)+'</div></div>';
+      h+='<div class="order-sec-body"><div class="empty" style="padding:18px">暂无'+esc(title)+' <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button></div></div>';
     }else{
       h+='<div class="order-sec-body">'+renderOrderTable(formKey,typeOrders,prodMap)+'</div>';
     }
@@ -3118,6 +3114,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.3</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.4</div>
 </body>
 </html>
