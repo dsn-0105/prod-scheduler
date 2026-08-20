@@ -466,6 +466,7 @@ const defaultFields={
     {key:'stockMax',label:'最大库存量',type:'number',required:false,locked:false,level:'line'},
     {key:'stockMin',label:'最小库存量',type:'number',required:false,locked:false,level:'line'},
     {key:'deliveredQty',label:'已交付数量',type:'number',required:true,locked:true,level:'line'},
+    {key:'lineNotes',label:'商品行备注',type:'text',required:false,locked:false,level:'line'},
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
@@ -1223,7 +1224,7 @@ function delProduct(idx){
    订单管理
 ================================================================ */
 /* ---- 订单多行明细支持 ---- */
-const ORDER_LINE_KEYS=['productId','productName','spec','model','orderQty','stockMax','stockMin','deliveredQty'];  // 明细行级字段（每行一种产品）
+const ORDER_LINE_KEYS=['productId','productName','spec','model','orderQty','stockMax','stockMin','deliveredQty','lineNotes'];  // 明细行级字段（每行一种产品）
 /* 行级字段判定：字段设置中标记 level:'line' 即为表体字段，否则为表头字段 */
 function isLineField(f){return f&&f.level==='line';}
 function orderLineFields(){return (fields.order||[]).filter(isLineField);}
@@ -1409,6 +1410,37 @@ function migrateOrderItemProductAttrs(){
     logOp('系统','订单管理','系统迁移：为存量订单每条明细行补齐「产品规格/型号」字段位');
   }
 }
+/* 订单管理：明细行新增「商品行备注」（字段配置 + 存量数据迁移；兼容旧 item.notes） */
+function migrateOrderItemLineNotes(){
+  let cfgChanged=false,dataChanged=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.order))return;
+    const beforeLen=cfg.order.length;
+    let insIdx=-1;
+    cfg.order.forEach((f,i)=>{ if(f.key==='deliveredQty')insIdx=i; });
+    if(!cfg.order.some(f=>f.key==='lineNotes')){
+      const def={key:'lineNotes',label:'商品行备注',type:'text',required:false,locked:false,level:'line'};
+      if(insIdx>=0){ cfg.order.splice(insIdx+1,0,def); } else cfg.order.push(def);
+    }
+    if(cfg.order.length!==beforeLen)cfgChanged=true;
+  });
+  /* 存量订单：每条明细行补齐 lineNotes（旧 item.notes 内容并入） */
+  orders.forEach(o=>{
+    if(!Array.isArray(o.items))return;
+    o.items.forEach(it=>{
+      if(it.lineNotes==null){ it.lineNotes=(it.notes!=null?it.notes:''); dataChanged=true; }
+    });
+  });
+  if(cfgChanged){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+    logOp('字段设置','订单管理','系统迁移：明细行新增「商品行备注」字段');
+  }
+  if(dataChanged){
+    save('orders',orders);
+    logOp('系统','订单管理','系统迁移：为存量订单每条明细行补齐「商品行备注」字段位');
+  }
+}
 /* 旧数据迁移：平铺字段 → items[] */
 function migrateOrders(){
   let changed=false;
@@ -1487,7 +1519,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
     {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
     {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
-    {key:'notes',label:'商品行备注',type:'text',get:r=>r.item.notes||r.order.notes||''}
+    {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.item.lineNotes!=null?r.item.lineNotes:(r.item.notes||'')}
   ];
   TBL_ROWS[formKey]=rows;
   let shown=applyTable(formKey,rows);
@@ -1548,7 +1580,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
       '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
-      '<td>'+esc(it.notes||o.notes||'')+'</td>'+
+      '<td>'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
       '</tr>';
   });
   html+='</tbody></table></div>';
@@ -1648,21 +1680,15 @@ function ensureOrderItemRow(){
   if(tb&&!tb.rows.length)tb.insertAdjacentHTML('beforeend',orderItemRow({}));
 }
 function openProductPicker(btn){
-  const tr=btn.closest('tr');
-  const idInp=tr.querySelector('[data-key="productId"]');
-  const cur=idInp?(idInp.value||'').trim():'';
   productPickerModal({
     mode:'multi',
-    preselected:cur?[cur]:[],
+    preselected:[],
     onConfirm:function(ids){
       removeEmptyOrderItems();
-      const existing=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
-      const exSet=new Set(existing);
       ids.forEach(function(pid){
-        if(exSet.has(pid))return;
         const p=products.find(function(x){return x.id===pid;});
         if(!p)return;
-        const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',notes:''};
+        const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',lineNotes:''};
         document.querySelector('#orderItemsTbl tbody').insertAdjacentHTML('beforeend',orderItemRow(it));
       });
       ensureOrderItemRow();
@@ -1697,7 +1723,7 @@ function productPickerModal(opts){
     body+=ppTh(col);
   });
   body+='</tr></thead><tbody id="pp_tbody"></tbody></table></div>';
-  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'单选：点选单选框后点「确定」。':'多选：勾选产品后点「确定」，选中条目追加到订单明细下方（原有数据不覆盖）；点「取消」放弃本次操作。')+'</div>';
+  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'单选：点选单选框后点「确定」。':'多选：勾选产品后点「确定」，选中条目追加到订单明细下方；同一产品编码可重复添加为不同行；点「取消」放弃本次操作。')+'</div>';
   /* 二级浮层：不替换底层弹窗 DOM，保证「新增订单」表头输入与明细保留 */
   const ov=document.createElement('div');
   ov.className='modal-bg';
@@ -1842,21 +1868,17 @@ function ppConfirm(){
   window.__ppOpts=null;window.__ppFilterState=null;
   if(opts.onConfirm)opts.onConfirm(ids);
 }
-/* 订单明细表头：批量选择产品（多选追加多行明细，已存在跳过；先清空残留空行） */
+/* 订单明细表头：批量选择产品（允许多选追加，同一产品编码可重复出现在不同行） */
 function batchPickProducts(){
-  const existing=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
   productPickerModal({
     mode:'multi',
-    preselected:existing,
+    preselected:[],
     onConfirm:function(ids){
       removeEmptyOrderItems();
-      const curRows=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
-      const exSet=new Set(curRows);
       ids.forEach(function(pid){
-        if(exSet.has(pid))return;
         const p=products.find(function(x){return x.id===pid;});
         if(!p)return;
-        const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',notes:''};
+        const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',lineNotes:''};
         document.querySelector('#orderItemsTbl tbody').insertAdjacentHTML('beforeend',orderItemRow(it));
       });
       ensureOrderItemRow();
@@ -3436,6 +3458,8 @@ async function bootstrap(){
   migrateOrderStockRange();
   // 订单管理：明细行补齐「产品规格/型号」字段（配置 + 存量数据；由产品编码联动）
   migrateOrderItemProductAttrs();
+  // 订单管理：明细行补齐「商品行备注」字段（配置 + 存量数据）
+  migrateOrderItemLineNotes();
 
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
@@ -3445,6 +3469,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.15</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.16</div>
 </body>
 </html>
