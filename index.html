@@ -1329,8 +1329,9 @@ function migrateProductDailyCap(){
   }
 }
 function orderItems(o){
-  return Array.isArray(o.items)&&o.items.length?o.items:
-    [{productId:o.productId,productName:o.productName,orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
+  if(Array.isArray(o.items)&&o.items.length)return o.items;
+  if(Array.isArray(o.items)&&!o.items.length)return [];   // 新增订单/空明细：不再生成默认空行
+  return [{productId:o.productId,productName:o.productName,orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
 }
 /* 订单管理：明细行新增「最大库存量/最小库存量」（字段配置 + 存量数据迁移） */
 const ORDER_STOCK_KEYS=['stockMax','stockMin'];
@@ -1631,16 +1632,14 @@ function fillOrderItemByProduct(tr,p){
   }
 }
 /* 行级：打开产品库选择（复选多选；与表头「批量选择产品」行为一致：当前行 productId 预选，未存在的追加为新明细行） */
-/* 移除订单明细中的空行（产品编码与订单数量均为空）。兜底补空行由调用方在追加完成后执行，避免误补 */
+/* 移除订单明细中的空行（产品编码为空即删，兼容数量为 0 的旧空行）。兜底补空行由调用方在追加完成后执行，避免误补 */
 function removeEmptyOrderItems(){
   const tb=document.querySelector('#orderItemsTbl tbody');
   if(!tb)return;
   Array.from(tb.rows).forEach(function(tr){
     const idInp=tr.querySelector('[data-key="productId"]');
-    const qtyInp=tr.querySelector('[data-key="orderQty"]');
     const idV=idInp?(idInp.value||'').trim():'';
-    const qtyV=qtyInp?(qtyInp.value||'').trim():'';
-    if(!idV&&!qtyV)tr.remove();
+    if(!idV)tr.remove();
   });
 }
 /* 兜底：明细表无任何行时补一行空行（供手动录入） */
@@ -3446,6 +3445,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.14</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.15</div>
 </body>
 </html>
