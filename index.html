@@ -461,6 +461,8 @@ const defaultFields={
     {key:'productId',label:'产品编码',type:'text',required:true,locked:true,level:'line'},
     {key:'productName',label:'产品名称',type:'text',required:true,locked:true,level:'line'},
     {key:'orderQty',label:'订单数量',type:'number',required:true,locked:true,level:'line'},
+    {key:'stockMax',label:'最大库存量',type:'number',required:false,locked:false,level:'line'},
+    {key:'stockMin',label:'最小库存量',type:'number',required:false,locked:false,level:'line'},
     {key:'deliveredQty',label:'已交付数量',type:'number',required:true,locked:true,level:'line'},
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
@@ -1219,7 +1221,7 @@ function delProduct(idx){
    订单管理
 ================================================================ */
 /* ---- 订单多行明细支持 ---- */
-const ORDER_LINE_KEYS=['productId','productName','orderQty','deliveredQty'];  // 明细行级字段（每行一种产品）
+const ORDER_LINE_KEYS=['productId','productName','orderQty','stockMax','stockMin','deliveredQty'];  // 明细行级字段（每行一种产品）
 /* 行级字段判定：字段设置中标记 level:'line' 即为表体字段，否则为表头字段 */
 function isLineField(f){return f&&f.level==='line';}
 function orderLineFields(){return (fields.order||[]).filter(isLineField);}
@@ -1328,6 +1330,41 @@ function orderItems(o){
   return Array.isArray(o.items)&&o.items.length?o.items:
     [{productId:o.productId,productName:o.productName,orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
 }
+/* 订单管理：明细行新增「最大库存量/最小库存量」（字段配置 + 存量数据迁移） */
+const ORDER_STOCK_KEYS=['stockMax','stockMin'];
+function migrateOrderStockRange(){
+  let cfgChanged=false,dataChanged=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.order))return;
+    const beforeLen=cfg.order.length;
+    let insIdx=-1;
+    cfg.order.forEach((f,i)=>{ if(f.key==='orderQty')insIdx=i; });
+    ORDER_STOCK_KEYS.forEach(k=>{
+      if(!cfg.order.some(f=>f.key===k)){
+        const def={key:k,label:(k==='stockMax'?'最大库存量':'最小库存量'),type:'number',required:false,locked:false,level:'line'};
+        if(insIdx>=0){ insIdx++; cfg.order.splice(insIdx,0,def); } else cfg.order.push(def);
+      }
+    });
+    if(cfg.order.length!==beforeLen)cfgChanged=true;
+  });
+  /* 存量订单：每条明细行补齐两字段 */
+  orders.forEach(o=>{
+    if(!Array.isArray(o.items))return;
+    o.items.forEach(it=>{
+      if(it.stockMax==null){ it.stockMax=''; dataChanged=true; }
+      if(it.stockMin==null){ it.stockMin=''; dataChanged=true; }
+    });
+  });
+  if(cfgChanged){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+    logOp('字段设置','订单管理','系统迁移：明细行新增「最大库存量」「最小库存量」字段');
+  }
+  if(dataChanged){
+    save('orders',orders);
+    logOp('系统','订单管理','系统迁移：为存量订单每条明细行补齐「最大库存量/最小库存量」');
+  }
+}
 function orderQtyOf(o){return orderItems(o).reduce((s,i)=>s+num(i.orderQty),0);}
 function orderDeliveredOf(o){return orderItems(o).reduce((s,i)=>s+num(i.deliveredQty),0);}
 function orderProductNames(o){
@@ -1407,6 +1444,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'spec',label:'规格',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.spec:'';}},
     {key:'unit',label:'单位',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.unit:'';}},
     {key:'orderQty',label:'数量',type:'number',get:r=>r.item.orderQty},
+    {key:'stockMax',label:'最大库存量',type:'number',get:r=>r.item.stockMax},
+    {key:'stockMin',label:'最小库存量',type:'number',get:r=>r.item.stockMin},
     {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
     {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
     {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
@@ -1466,6 +1505,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
       '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
       '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
@@ -3105,6 +3146,8 @@ async function bootstrap(){
 
   // 旧版平铺订单数据 → 多行明细结构
   migrateOrders();
+  // 订单管理：明细行补齐「最大库存量/最小库存量」字段（配置 + 存量数据）
+  migrateOrderStockRange();
 
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
@@ -3114,6 +3157,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.5</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.6</div>
 </body>
 </html>
