@@ -1174,11 +1174,11 @@ function renderProducts(){
         let val=p[f.key];
         if(f.key==='status'){
           const cls=val==='启用'?'tag-green':'tag-gray';
-          html+='<td><span class="tag '+cls+'">'+esc(val)+'</span></td>';
+          html+='<td data-key="'+f.key+'"><span class="tag '+cls+'">'+esc(val)+'</span></td>';
         }else if(f.type==='number'){
-          html+='<td style="font-variant-numeric:tabular-nums">'+esc(val)+'</td>';
+          html+='<td data-key="'+f.key+'" style="font-variant-numeric:tabular-nums">'+esc(val)+'</td>';
         }else{
-          html+='<td>'+esc(val)+'</td>';
+          html+='<td data-key="'+f.key+'">'+esc(val)+'</td>';
         }
       });
       html+='</tr>';
@@ -2035,12 +2035,12 @@ function renderDailyPlan(){
     shownPlans.forEach((p)=>{
       const idx=dailyPlans.indexOf(p);
       const selChecked=selSet('dp_stockup').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'dp_stockup\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_stockup\','+idx+')"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td>'+
-        '<td style="text-align:center;font-size:12px">'+(p.assemblyPlan||0)+' / <b>'+(p.assemblyDone||0)+'</b></td>'+
-        '<td style="text-align:center;font-size:12px">'+(p.innerPackPlan||0)+' / <b>'+(p.innerPackDone||0)+'</b></td>'+
-        '<td style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
-        '<td style="text-align:center;font-weight:600">'+(p.semiInbound||0)+'</td>'+
-        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
+      html+='<tr onclick="selRowClick(\'dp_stockup\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_stockup\','+idx+')"></td><td data-key="productId">'+esc(p.productId)+'</td><td data-key="productName">'+esc(p.productName)+'</td>'+
+        '<td data-key="assemblyDone" style="text-align:center;font-size:12px">'+(p.assemblyPlan||0)+' / <b>'+(p.assemblyDone||0)+'</b></td>'+
+        '<td data-key="innerPackDone" style="text-align:center;font-size:12px">'+(p.innerPackPlan||0)+' / <b>'+(p.innerPackDone||0)+'</b></td>'+
+        '<td data-key="testAgingDone" style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
+        '<td data-key="semiInbound" style="text-align:center;font-weight:600">'+(p.semiInbound||0)+'</td>'+
+        '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
       sumAssembly+=num(p.assemblyDone);sumInner+=num(p.innerPackDone);sumTest+=num(p.testAgingDone);sumSemi+=num(p.semiInbound);
     });
     html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="2">小计</td><td style="text-align:center">'+sumAssembly+'</td><td style="text-align:center">'+sumInner+'</td><td style="text-align:center">'+sumTest+'</td><td style="text-align:center">'+sumSemi+'</td><td></td></tr>';
@@ -2074,13 +2074,13 @@ function renderDailyPlan(){
     shownPkgs.forEach(p=>{
       const idx=dailyPkgs.indexOf(p);
       const selChecked=selSet('dp_pkg').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'dp_pkg\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_pkg\','+idx+')"></td><td>'+esc(p.productId)+'</td><td>'+esc(p.productName)+'</td><td>'+esc(p.orderId)+'</td>'+
-        '<td style="text-align:center;font-size:12px">'+(p.pkgPlan||0)+' / <b>'+(p.pkgDone||0)+'</b></td>'+
-        '<td style="text-align:center;font-weight:600">'+(p.finInbound||0)+'</td>'+
-        '<td style="text-align:right">'+money(p.orderTotal)+'</td>'+
-        '<td style="text-align:right">'+money(p.delivered)+'</td>'+
-        '<td style="text-align:right">'+money(p.undelivered)+'</td>'+
-        '<td style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
+      html+='<tr onclick="selRowClick(\'dp_pkg\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_pkg\','+idx+')"></td><td data-key="productId">'+esc(p.productId)+'</td><td data-key="productName">'+esc(p.productName)+'</td><td data-key="orderId">'+esc(p.orderId)+'</td>'+
+        '<td data-key="pkgDone" style="text-align:center;font-size:12px">'+(p.pkgPlan||0)+' / <b>'+(p.pkgDone||0)+'</b></td>'+
+        '<td data-key="finInbound" style="text-align:center;font-weight:600">'+(p.finInbound||0)+'</td>'+
+        '<td data-key="orderTotal" style="text-align:right">'+money(p.orderTotal)+'</td>'+
+        '<td data-key="delivered" style="text-align:right">'+money(p.delivered)+'</td>'+
+        '<td data-key="undelivered" style="text-align:right">'+money(p.undelivered)+'</td>'+
+        '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
       sumPkg+=num(p.pkgDone);sumFin+=num(p.finInbound);
     });
     html+='<tr style="font-weight:600;background:var(--amber-bg)"><td class="sel-col"></td><td colspan="3">小计</td><td style="text-align:center">'+sumPkg+'</td><td style="text-align:center">'+sumFin+'</td><td colspan="4"></td></tr>';
@@ -2287,14 +2287,14 @@ function renderDailyReport(){
     if(rows.length===0){html+=noMatchRow('report',9);}
     let sumA=0,sumI=0,sumT=0,sumS=0,sumP=0,sumF=0;
     rows.forEach(r=>{
-      html+='<tr><td>'+esc(r.productId)+'</td><td>'+esc(r.productName)+'</td>'+
-        '<td style="text-align:right">'+r.assemblyDone+'</td>'+
-        '<td style="text-align:right">'+r.innerPackDone+'</td>'+
-        '<td style="text-align:right">'+r.testAgingDone+'</td>'+
-        '<td style="text-align:right">'+r.semiInbound+'</td>'+
-        '<td style="text-align:right;font-weight:600">'+r.packagingDone+'</td>'+
-        '<td style="text-align:right;font-weight:600">'+r.finishedInbound+'</td>'+
-        '<td>'+esc(r.orderId)+'</td></tr>';
+      html+='<tr><td data-key="productId">'+esc(r.productId)+'</td><td data-key="productName">'+esc(r.productName)+'</td>'+
+        '<td data-key="assemblyDone" style="text-align:right">'+r.assemblyDone+'</td>'+
+        '<td data-key="innerPackDone" style="text-align:right">'+r.innerPackDone+'</td>'+
+        '<td data-key="testAgingDone" style="text-align:right">'+r.testAgingDone+'</td>'+
+        '<td data-key="semiInbound" style="text-align:right">'+r.semiInbound+'</td>'+
+        '<td data-key="packagingDone" style="text-align:right;font-weight:600">'+r.packagingDone+'</td>'+
+        '<td data-key="finishedInbound" style="text-align:right;font-weight:600">'+r.finishedInbound+'</td>'+
+        '<td data-key="orderId">'+esc(r.orderId)+'</td></tr>';
       sumA+=r.assemblyDone;sumI+=r.innerPackDone;sumT+=r.testAgingDone;sumS+=r.semiInbound;sumP+=r.packagingDone;sumF+=r.finishedInbound;
     });
     html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="2">日合计</td><td style="text-align:right">'+sumA+'</td><td style="text-align:right">'+sumI+'</td><td style="text-align:right">'+sumT+'</td><td style="text-align:right">'+sumS+'</td><td style="text-align:right">'+sumP+'</td><td style="text-align:right">'+sumF+'</td><td></td></tr>';
@@ -2383,15 +2383,15 @@ function renderDelivery(){
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
       const selChecked=selSet('delivery').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td style="font-weight:600">'+esc(d.orderId)+'</td><td>'+esc(d.customer)+'</td><td>'+esc(d.productName)+'</td>'+
-        '<td style="text-align:right">'+money(d.orderTotal)+'</td>'+
-        '<td style="text-align:right">'+money(d.delivered)+'</td>'+
-        '<td style="text-align:right">'+money(d.undelivered)+'</td>'+
-        '<td>'+esc(d.freq)+'</td>'+
-        '<td>'+fmtDate(d.finalDate)+'</td>'+
-        '<td>'+fmtDate(d.firstDate)+'</td>'+
-        '<td style="text-align:center">'+(d.batchCount||'')+'</td>'+
-        '<td style="text-align:center">'+esc(d.perBatch)+'</td></tr>';
+      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td data-key="orderId" style="font-weight:600">'+esc(d.orderId)+'</td><td data-key="customer">'+esc(d.customer)+'</td><td data-key="productName">'+esc(d.productName)+'</td>'+
+        '<td data-key="orderTotal" style="text-align:right">'+money(d.orderTotal)+'</td>'+
+        '<td data-key="delivered" style="text-align:right">'+money(d.delivered)+'</td>'+
+        '<td data-key="undelivered" style="text-align:right">'+money(d.undelivered)+'</td>'+
+        '<td data-key="freq">'+esc(d.freq)+'</td>'+
+        '<td data-key="finalDate">'+fmtDate(d.finalDate)+'</td>'+
+        '<td data-key="firstDate">'+fmtDate(d.firstDate)+'</td>'+
+        '<td data-key="batchCount" style="text-align:center">'+(d.batchCount||'')+'</td>'+
+        '<td data-key="perBatch" style="text-align:center">'+esc(d.perBatch)+'</td></tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -2600,11 +2600,11 @@ function renderLogs(){
     if(shownLogs.length===0){html+=noMatchRow('logs',5);}
     shownLogs.forEach(l=>{
       const cls=ACTION_CLS[l.action]||'tag-gray';
-      html+='<tr><td style="font-size:12px;color:var(--muted);white-space:nowrap">'+esc(l.time)+'</td>'
-        +'<td><span class="tag '+cls+'">'+esc(l.action)+'</span></td>'
-        +'<td>'+esc(l.target)+'</td>'
-        +'<td style="font-size:13px;color:var(--primary);font-weight:600">'+(l.field?esc(l.field):'<span style="color:var(--muted);font-weight:400">—</span>')+'</td>'
-        +'<td style="font-size:13px">'+esc(l.detail)+'</td></tr>';
+      html+='<tr><td data-key="time" style="font-size:12px;color:var(--muted);white-space:nowrap">'+esc(l.time)+'</td>'
+        +'<td data-key="action"><span class="tag '+cls+'">'+esc(l.action)+'</span></td>'
+        +'<td data-key="target">'+esc(l.target)+'</td>'
+        +'<td data-key="field" style="font-size:13px;color:var(--primary);font-weight:600">'+(l.field?esc(l.field):'<span style="color:var(--muted);font-weight:400">—</span>')+'</td>'
+        +'<td data-key="detail" style="font-size:13px">'+esc(l.detail)+'</td></tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -3524,6 +3524,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.18</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.19</div>
 </body>
 </html>
