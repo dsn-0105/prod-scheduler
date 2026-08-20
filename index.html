@@ -1631,7 +1631,7 @@ function fillOrderItemByProduct(tr,p){
   }
 }
 /* 行级：打开产品库选择（复选多选；与表头「批量选择产品」行为一致：当前行 productId 预选，未存在的追加为新明细行） */
-/* 移除订单明细中的空行（产品编码与订单数量均为空），防止批量添加后残留空行 */
+/* 移除订单明细中的空行（产品编码与订单数量均为空）。兜底补空行由调用方在追加完成后执行，避免误补 */
 function removeEmptyOrderItems(){
   const tb=document.querySelector('#orderItemsTbl tbody');
   if(!tb)return;
@@ -1642,6 +1642,10 @@ function removeEmptyOrderItems(){
     const qtyV=qtyInp?(qtyInp.value||'').trim():'';
     if(!idV&&!qtyV)tr.remove();
   });
+}
+/* 兜底：明细表无任何行时补一行空行（供手动录入） */
+function ensureOrderItemRow(){
+  const tb=document.querySelector('#orderItemsTbl tbody');
   if(tb&&!tb.rows.length)tb.insertAdjacentHTML('beforeend',orderItemRow({}));
 }
 function openProductPicker(btn){
@@ -1662,6 +1666,7 @@ function openProductPicker(btn){
         const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',notes:''};
         document.querySelector('#orderItemsTbl tbody').insertAdjacentHTML('beforeend',orderItemRow(it));
       });
+      ensureOrderItemRow();
     }
   });
 }
@@ -1855,6 +1860,7 @@ function batchPickProducts(){
         const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',notes:''};
         document.querySelector('#orderItemsTbl tbody').insertAdjacentHTML('beforeend',orderItemRow(it));
       });
+      ensureOrderItemRow();
     }
   });
 }
@@ -3440,6 +3446,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.13</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.14</div>
 </body>
 </html>
