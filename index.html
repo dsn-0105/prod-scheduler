@@ -1630,18 +1630,24 @@ function fillOrderItemByProduct(tr,p){
     if(modelInp) modelInp.value='';
   }
 }
-/* 行级：打开产品库选择（单选）；用于「选」按钮 */
+/* 行级：打开产品库选择（复选多选；与表头「批量选择产品」行为一致：当前行 productId 预选，未存在的追加为新明细行） */
 function openProductPicker(btn){
   const tr=btn.closest('tr');
+  const idInp=tr.querySelector('[data-key="productId"]');
+  const cur=idInp?(idInp.value||'').trim():'';
   productPickerModal({
-    mode:'single',
-    preselected:[],
+    mode:'multi',
+    preselected:cur?[cur]:[],
     onConfirm:function(ids){
-      if(!ids.length)return;
-      const idInp=tr.querySelector('[data-key="productId"]');
-      idInp.value=ids[0];
-      const p=products.find(x=>x.id===ids[0]);
-      fillOrderItemByProduct(tr,p);
+      const existing=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
+      const exSet=new Set(existing);
+      ids.forEach(function(pid){
+        if(exSet.has(pid))return;
+        const p=products.find(function(x){return x.id===pid;});
+        if(!p)return;
+        const it={productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',notes:''};
+        document.querySelector('#orderItemsTbl tbody').insertAdjacentHTML('beforeend',orderItemRow(it));
+      });
     }
   });
 }
@@ -3397,6 +3403,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.9</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.10</div>
 </body>
 </html>
