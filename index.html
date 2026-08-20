@@ -1679,8 +1679,14 @@ function productPickerModal(opts){
     body+=ppTh(col);
   });
   body+='</tr></thead><tbody id="pp_tbody"></tbody></table></div>';
-  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'单选：点选单选框后点确认；可结合列筛选缩小范围。':'多选：勾选产品后点确认；可结合列筛选缩小范围，已存在的产品会自动跳过。')+'</div>';
-  const foot='<button class="btn" onclick="ppCancel()">取消</button><button class="btn btn-primary" onclick="ppConfirm()">确认</button>';
+  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'单选：点选单选框后点确认即可完成选择。':'多选：勾选产品后点「添加」（追加为明细行，可多次添加）；点「完成」关闭弹窗；点「取消」放弃本次操作。')+'</div>';
+  /* 按钮：单选=确认（一次性）；多选=「添加」（追加不关）+「完成」（关闭） */
+  let foot='<button class="btn" onclick="ppCancel()">取消</button>';
+  if(mode==='single'){
+    foot+='<button class="btn btn-primary" onclick="ppConfirm()">确认</button>';
+  }else{
+    foot+='<button class="btn" onclick="ppAppend()">添加</button><button class="btn btn-primary" onclick="ppDone()">完成</button>';
+  }
   showModal(mode==='single'?'选择产品':'批量选择产品（可多选）',body,foot);
   ppRenderRows();
 }
@@ -1791,17 +1797,24 @@ function ppRenderRows(){
   tbody.innerHTML=html;
 }
 function ppCancel(){closeModal();window.__ppOpts=null;window.__ppFilterState=null;}
+/* 单选模式：确认 → 关闭 + 回调 */
 function ppConfirm(){
   const opts=window.__ppOpts;if(!opts)return;
-  let ids;
-  if((opts.mode||'multi')==='single'){
-    const sel=document.querySelector('#pp_table tbody .pp_radio:checked');
-    ids=sel?[sel.value]:[];
-  }else{
-    ids=Array.from(document.querySelectorAll('#pp_table tbody .pp_chk:checked')).map(function(c){return c.dataset.id;});
-  }
+  const sel=document.querySelector('#pp_table tbody .pp_radio:checked');
+  const ids=sel?[sel.value]:[];
   closeModal();window.__ppOpts=null;window.__ppFilterState=null;
   if(opts.onConfirm)opts.onConfirm(ids);
+}
+/* 多选模式：添加 → 追加勾选的产品到明细（不关闭弹窗），随后清空勾选方便继续选 */
+function ppAppend(){
+  const opts=window.__ppOpts;if(!opts)return;
+  const ids=Array.from(document.querySelectorAll('#pp_table tbody .pp_chk:checked')).map(function(c){return c.dataset.id;});
+  if(opts.onConfirm)opts.onConfirm(ids);
+  document.querySelectorAll('#pp_table tbody .pp_chk:checked').forEach(function(c){c.checked=false;});
+}
+/* 多选模式：完成 → 关闭弹窗（已添加的已生效，不再重复回调）） */
+function ppDone(){
+  closeModal();window.__ppOpts=null;window.__ppFilterState=null;
 }
 /* 订单明细表头：批量选择产品（多选追加多行明细，已存在跳过） */
 function batchPickProducts(){
@@ -3403,6 +3416,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.10</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.11</div>
 </body>
 </html>
