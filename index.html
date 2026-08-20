@@ -1631,6 +1631,19 @@ function fillOrderItemByProduct(tr,p){
   }
 }
 /* 行级：打开产品库选择（复选多选；与表头「批量选择产品」行为一致：当前行 productId 预选，未存在的追加为新明细行） */
+/* 移除订单明细中的空行（产品编码与订单数量均为空），防止批量添加后残留空行 */
+function removeEmptyOrderItems(){
+  const tb=document.querySelector('#orderItemsTbl tbody');
+  if(!tb)return;
+  Array.from(tb.rows).forEach(function(tr){
+    const idInp=tr.querySelector('[data-key="productId"]');
+    const qtyInp=tr.querySelector('[data-key="orderQty"]');
+    const idV=idInp?(idInp.value||'').trim():'';
+    const qtyV=qtyInp?(qtyInp.value||'').trim():'';
+    if(!idV&&!qtyV)tr.remove();
+  });
+  if(tb&&!tb.rows.length)tb.insertAdjacentHTML('beforeend',orderItemRow({}));
+}
 function openProductPicker(btn){
   const tr=btn.closest('tr');
   const idInp=tr.querySelector('[data-key="productId"]');
@@ -1639,6 +1652,7 @@ function openProductPicker(btn){
     mode:'multi',
     preselected:cur?[cur]:[],
     onConfirm:function(ids){
+      removeEmptyOrderItems();
       const existing=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
       const exSet=new Set(existing);
       ids.forEach(function(pid){
@@ -1824,14 +1838,16 @@ function ppConfirm(){
   window.__ppOpts=null;window.__ppFilterState=null;
   if(opts.onConfirm)opts.onConfirm(ids);
 }
-/* 订单明细表头：批量选择产品（多选追加多行明细，已存在跳过） */
+/* 订单明细表头：批量选择产品（多选追加多行明细，已存在跳过；先清空残留空行） */
 function batchPickProducts(){
   const existing=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
   productPickerModal({
     mode:'multi',
     preselected:existing,
     onConfirm:function(ids){
-      const exSet=new Set(existing);
+      removeEmptyOrderItems();
+      const curRows=Array.from(document.querySelectorAll('#orderItemsTbl tbody tr [data-key="productId"]')).map(function(i){return (i.value||'').trim();}).filter(Boolean);
+      const exSet=new Set(curRows);
       ids.forEach(function(pid){
         if(exSet.has(pid))return;
         const p=products.find(function(x){return x.id===pid;});
@@ -3424,6 +3440,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.12</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.13</div>
 </body>
 </html>
