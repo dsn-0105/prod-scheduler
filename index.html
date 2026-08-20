@@ -1589,6 +1589,43 @@ function renderOrderTable(formKey,typeOrders,prodMap){
 
 function addOrderOfType(type){pendingOrderType=type;orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
 
+/* 销售订单编号：XSDD-YYYYMMDD-XXXXX（销售订单大写-日期-5位序号，每日从 00001 刷新） */
+function nextOrderNo(dateStr){
+  const d=String(dateStr||todayStr()).replace(/-/g,'');
+  const prefix='XSDD-'+d+'-';
+  let max=0;
+  (orders||[]).forEach(o=>{
+    if(o.id&&typeof o.id==='string'&&o.id.indexOf(prefix)===0){
+      const n=parseInt(o.id.slice(prefix.length),10);
+      if(!isNaN(n)&&n>max)max=n;
+    }
+  });
+  return prefix+String(max+1).padStart(5,'0');
+}
+
+/* 产品主数据：「生成订单」——选中产品生成库存订单（跳转订单管理并打开新增弹窗，明细预填选中商品） */
+function bulkGenOrder(){
+  const s=selSet('product');
+  if(s.size===0){alert('请先在左侧勾选要生成订单的产品');return;}
+  const items=[];
+  Array.from(s).map(Number).sort(function(a,b){return a-b;}).forEach(function(i){
+    const p=products[i];if(!p)return;
+    items.push({productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',lineNotes:''});
+  });
+  switchTab('order');
+  pendingOrderType='库存订单';
+  orderModal(null,{
+    id:nextOrderNo(todayStr()),
+    customer:'库存',
+    status:'执行中',
+    orderType:'库存订单',
+    startDate:todayStr(),
+    deadline:'',
+    notes:'',
+    items:items
+  });
+}
+
 function orderModal(idx,prefill){
   const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
   const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'框架订单',startDate:todayStr(),items:[]};
@@ -3214,6 +3251,7 @@ function bulkBar(m){
   btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
+  if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
   if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
   btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
@@ -3469,6 +3507,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.16</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.17</div>
 </body>
 </html>
