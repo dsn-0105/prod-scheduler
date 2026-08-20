@@ -1646,76 +1646,155 @@ function openProductPicker(btn){
   });
 }
 /* 弹窗：产品主数据复选/单选选择器 */
+/* 产品复选/单选弹窗：列头筛选（参考产品主数据表格样式）+ 行内 checkbox/radio（不响应行点击，避免双翻转） */
+var PP_SCHEMA=[
+  {key:'id',label:'产品编码',type:'text',get:function(p){return p.id;}},
+  {key:'name',label:'产品名称',type:'text',get:function(p){return p.name||'';}},
+  {key:'spec',label:'规格',type:'text',get:function(p){return p.spec||'';}},
+  {key:'model',label:'型号',type:'text',get:function(p){return p.model||'';}},
+  {key:'unit',label:'单位',type:'text',get:function(p){return p.unit||'';}},
+  {key:'dailyCap',label:'日产能',type:'number',get:function(p){return p.dailyCap==null?'':p.dailyCap;}},
+  {key:'stock',label:'库存',type:'number',get:function(p){return p.stock==null?'':p.stock;}},
+  {key:'status',label:'状态',type:'select',get:function(p){return p.status||'';}}
+];
 function productPickerModal(opts){
   window.__ppOpts=opts;
+  window.__ppFilterState={};
+  window.__ppSchema=PP_SCHEMA;
+  /* 收集各列唯一值，供筛选弹窗用 */
+  window.__ppUniques={};
+  PP_SCHEMA.forEach(function(col){
+    window.__ppUniques[col.key]=[...new Set(products.map(function(p){return String(col.get(p));}))].filter(function(v){return v!=='';}).sort();
+  });
+  const mode=opts.mode||'multi';
+  /* 表头：单/复选 + 各列名（带筛选漏斗） */
+  let body='<div class="table-wrap" style="max-height:55vh;overflow:auto"><table id="pp_table"><thead><tr><th style="width:36px">'+(mode==='single'?'单选':'复选')+'</th>';
+  PP_SCHEMA.forEach(function(col){
+    body+=ppTh(col);
+  });
+  body+='</tr></thead><tbody id="pp_tbody"></tbody></table></div>';
+  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'单选：点选单选框后点确认；可结合列筛选缩小范围。':'多选：勾选产品后点确认；可结合列筛选缩小范围，已存在的产品会自动跳过。')+'</div>';
+  const foot='<button class="btn" onclick="ppCancel()">取消</button><button class="btn btn-primary" onclick="ppConfirm()">确认</button>';
+  showModal(mode==='single'?'选择产品':'批量选择产品（可多选）',body,foot);
+  ppRenderRows();
+}
+/* 列头：列名 + 漏斗筛选图标（与 thCol 一致风格） */
+function ppTh(col){
+  const f=window.__ppFilterState[col.key];
+  const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));
+  return '<th style="white-space:nowrap">'+esc(col.label)+
+    '<span class="filt-ico'+(act?' on':'')+'" style="margin-left:4px" onclick="event.stopPropagation();ppOpenFilter(this,\''+col.key+'\')" title="筛选">'+FILT_SVG+'</span>'+
+    '</th>';
+}
+/* 筛选弹窗（参考产品主数据 openFilter：复选 ≤15项 / 关键字 + 模式 / 数值 + 模式） */
+function ppOpenFilter(btn,key){
+  closeFiltPop();
+  const col=PP_SCHEMA.find(function(c){return c.key===key;});if(!col)return;
+  const uniques=window.__ppUniques[key]||[];
+  const f=window.__ppFilterState[key]||{mode:'contains',val:'',vals:[]};
+  let inner='';
+  const useChecks=col.type!=='number'&&(col.select||uniques.length<=15);
+  if(useChecks){
+    const sel=f.vals||[];
+    inner+='<div class="fp-opts">'+uniques.map(function(v){return '<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>';}).join('')+'</div>'+
+      '<div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="ppFiltCheckAll(this,true)">全选</button><button class="btn btn-sm" onclick="ppFiltCheckAll(this,false)">全不选</button></div>';
+  }else if(col.type==='number'){
+    inner+='<select id="fp_mode">'+[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].map(function(x){return '<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select>'+
+      '<input type="number" id="fp_val" value="'+(f.val!=null?esc(f.val):'')+'" placeholder="输入数值">';
+  }else{
+    inner+='<select id="fp_mode">'+[['contains','包含'],['eq','等于'],['neq','不等于']].map(function(x){return '<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select>'+
+      '<input type="text" id="fp_val" value="'+esc(f.val||'')+'" placeholder="输入关键字">';
+  }
+  const pop=document.createElement('div');
+  pop.className='filt-pop';
+  pop.innerHTML='<div class="fp-title">筛选：'+esc(col.label)+'</div>'+inner+
+    '<div class="fp-btns"><button class="btn btn-sm" onclick="ppClearFilt(\''+key+'\')">清除</button><button class="btn btn-sm btn-primary" onclick="ppApplyFilt(\''+key+'\','+useChecks+')">确定</button></div>';
+  document.body.appendChild(pop);
+  pop.addEventListener('click',function(e){e.stopPropagation();});
+  const r=btn.getBoundingClientRect();
+  let left=r.left;if(left+240>window.innerWidth-8)left=window.innerWidth-248;if(left<8)left=8;
+  pop.style.left=left+'px';
+  pop.style.top=(r.bottom+6+window.scrollY)+'px';
+  filtPop=pop;
+  const inp=pop.querySelector('#fp_val');if(inp)inp.focus();
+}
+function ppFiltCheckAll(btn,on){btn.closest('.filt-pop').querySelectorAll('input[type=checkbox]').forEach(function(c){c.checked=on;});}
+function ppClearFilt(key){delete window.__ppFilterState[key];closeFiltPop();ppRenderRows();ppUpdateHeader();}
+function ppApplyFilt(key,useChecks){
+  const f={mode:'contains',val:'',vals:[]};
+  if(useChecks){
+    const vals=[];filtPop.querySelectorAll('input[type=checkbox]:checked').forEach(function(c){vals.push(c.value);});
+    f.vals=vals;f.mode='in';
+  }else{
+    f.mode=document.getElementById('fp_mode').value;
+    f.val=document.getElementById('fp_val').value;
+  }
+  window.__ppFilterState[key]=f;
+  closeFiltPop();ppRenderRows();ppUpdateHeader();
+}
+function ppUpdateHeader(){
+  /* 刷新表头筛选图标状态（高亮有筛选的列） */
+  PP_SCHEMA.forEach(function(col){
+    const f=window.__ppFilterState[col.key];
+    const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));
+    const th=document.querySelector('#pp_table thead th .filt-ico[onclick*="'+col.key+'"]');
+    if(th)th.className='filt-ico'+(act?' on':'');
+  });
+}
+function ppRenderRows(){
+  const tbody=document.getElementById('pp_tbody');if(!tbody)return;
+  const fs=window.__ppFilterState;
+  const visible=products.filter(function(p){
+    for(const k in fs){
+      const f=fs[k];if(!f)continue;
+      const col=PP_SCHEMA.find(function(c){return c.key===k;});if(!col)continue;
+      const v=String(col.get(p));
+      if(f.mode==='in' && f.vals && f.vals.length){
+        if(f.vals.indexOf(v)<0)return false;
+      }else if(f.val!=='' && f.val!=null){
+        const fv=String(f.val);
+        if(f.mode==='contains' && v.toLowerCase().indexOf(fv.toLowerCase())<0)return false;
+        if(f.mode==='eq' && v!==fv)return false;
+        if(f.mode==='neq' && v===fv)return false;
+        if(f.mode==='gte' && num(v)<num(fv))return false;
+        if(f.mode==='lte' && num(v)>num(fv))return false;
+      }
+    }
+    return true;
+  });
+  const opts=window.__ppOpts||{};
   const mode=opts.mode||'multi';
   const preSet=new Set(opts.preselected||[]);
-  /* 搜索框 + 操作按钮 */
-  let body='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
-    +'<input type="text" id="pp_search" placeholder="搜索 编码/名称/规格/型号" oninput="ppFilter(this.value)" style="flex:1;min-width:180px">';
-  if(mode==='multi'){
-    body+='<button type="button" class="btn btn-sm" onclick="ppToggleAll(true)">全选</button>'
-        +'<button type="button" class="btn btn-sm" onclick="ppToggleAll(false)">全清</button>';
+  if(!visible.length){
+    tbody.innerHTML='<tr><td colspan="'+(PP_SCHEMA.length+1)+'" style="text-align:center;padding:18px;color:var(--muted)">无匹配产品</td></tr>';
+    return;
   }
-  body+='</div>';
-  /* 表格 */
-  body+='<div class="table-wrap" style="max-height:55vh;overflow:auto"><table id="pp_table"><thead><tr><th style="width:36px">'+(mode==='single'?'单选':'复选')+'</th><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>单位</th><th>日产能</th><th>库存</th><th>状态</th></tr></thead><tbody>';
-  if(!products.length){
-    body+='<tr><td colspan="9" class="empty">暂无产品数据，请先在「产品主数据」中添加</td></tr>';
-  }else{
-    products.forEach(function(p){
-      const checked=preSet.has(p.id);
-      const onclick=mode==='single'?' onclick="ppRowClick(this)" style="cursor:pointer"':' onclick="ppRowClick(this)"';
-      const inputCtrl=mode==='single'
-        ?'<input type="radio" class="pp_radio" name="pp_single" value="'+esc(p.id)+'" '+(checked?'checked':'')+'>'
-        :'<input type="checkbox" class="pp_chk" data-id="'+esc(p.id)+'" '+(checked?'checked':'')+'>';
-      body+='<tr data-id="'+esc(p.id)+'" data-search="'+esc((p.id+' '+(p.name||'')+' '+(p.spec||'')+' '+(p.model||'')).toLowerCase())+'"'+onclick+'>'
-        +'<td>'+inputCtrl+'</td>'
-        +'<td>'+esc(p.id)+'</td>'
-        +'<td>'+esc(p.name||'')+'</td>'
-        +'<td>'+esc(p.spec||'')+'</td>'
-        +'<td>'+esc(p.model||'')+'</td>'
-        +'<td>'+esc(p.unit||'')+'</td>'
-        +'<td>'+esc(p.dailyCap==null?'':p.dailyCap)+'</td>'
-        +'<td>'+esc(p.stock==null?'':p.stock)+'</td>'
-        +'<td>'+esc(p.status||'')+'</td>'
-        +'</tr>';
+  let html='';
+  visible.forEach(function(p){
+    const checked=preSet.has(p.id);
+    const inputCtrl=mode==='single'
+      ?'<input type="radio" class="pp_radio" name="pp_single" value="'+esc(p.id)+'" '+(checked?'checked':'')+'>'
+      :'<input type="checkbox" class="pp_chk" data-id="'+esc(p.id)+'" '+(checked?'checked':'')+'>';
+    html+='<tr data-id="'+esc(p.id)+'"><td>'+inputCtrl+'</td>';
+    PP_SCHEMA.forEach(function(col){
+      const v=col.get(p);
+      html+='<td>'+esc(v)+'</td>';
     });
-  }
-  body+='</tbody></table></div>';
-  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'点击行选中 → 立即确认；也可用单选框点选。':'勾选要加入订单明细的产品（已存在的产品会被跳过），然后确认。')+'</div>';
-  const foot='<button class="btn" onclick="ppCancel()">取消</button>'+(mode==='multi'?'<button class="btn btn-primary" onclick="ppConfirm()">确认</button>':'');
-  showModal(mode==='single'?'选择产品':'批量选择产品（可多选）',body,foot);
-}
-function ppRowClick(tr){
-  const opts=window.__ppOpts;if(!opts)return;
-  if(opts.mode==='single'){
-    const id=tr.dataset.id;
-    closeModal();window.__ppOpts=null;
-    if(opts.onConfirm)opts.onConfirm([id]);
-  }else{
-    const chk=tr.querySelector('.pp_chk');
-    if(chk)chk.checked=!chk.checked;
-  }
-}
-function ppToggleAll(checked){
-  document.querySelectorAll('#pp_table tbody .pp_chk').forEach(function(c){
-    const tr=c.closest('tr');
-    if(tr.style.display!=='none')c.checked=!!checked;
+    html+='</tr>';
   });
+  tbody.innerHTML=html;
 }
-function ppFilter(q){
-  q=(q||'').toLowerCase().trim();
-  document.querySelectorAll('#pp_table tbody tr').forEach(function(tr){
-    const s=tr.dataset.search||'';
-    tr.style.display=(q===''||s.indexOf(q)>=0)?'':'none';
-  });
-}
-function ppCancel(){closeModal();window.__ppOpts=null;}
+function ppCancel(){closeModal();window.__ppOpts=null;window.__ppFilterState=null;}
 function ppConfirm(){
   const opts=window.__ppOpts;if(!opts)return;
-  const ids=Array.from(document.querySelectorAll('#pp_table tbody .pp_chk:checked')).map(function(c){return c.dataset.id;});
-  closeModal();window.__ppOpts=null;
+  let ids;
+  if((opts.mode||'multi')==='single'){
+    const sel=document.querySelector('#pp_table tbody .pp_radio:checked');
+    ids=sel?[sel.value]:[];
+  }else{
+    ids=Array.from(document.querySelectorAll('#pp_table tbody .pp_chk:checked')).map(function(c){return c.dataset.id;});
+  }
+  closeModal();window.__ppOpts=null;window.__ppFilterState=null;
   if(opts.onConfirm)opts.onConfirm(ids);
 }
 /* 订单明细表头：批量选择产品（多选追加多行明细，已存在跳过） */
@@ -3318,6 +3397,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.8</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.9</div>
 </body>
 </html>
