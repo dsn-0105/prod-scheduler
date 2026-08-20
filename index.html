@@ -817,10 +817,27 @@ function applyTableLayout(){
     /* 目标顺序 = 已存顺序(过滤仍存在的) + 新增列按当前顺序 */
     var order=(lo.order||[]).filter(function(k){return curKeys.indexOf(k)>=0;});
     curKeys.forEach(function(k){if(order.indexOf(k)<0)order.push(k);});
-    /* 重排所有行（含表头），只动可拖列槽位，静态列(如"操作")位置不变 */
+    /* 重排所有行（含表头）：
+       优先按 data-key 匹配重排（支持订单表格 rowspan 合并行——每行只移动该行实际存在的列，数据跟随表头移动）；
+       无 data-key 的行（其他表格）退化为按物理索引重排，仅当列数与表头一致时执行。 */
     [...tbl.rows].forEach(function(row){
-      if(row.cells.length!==headCells.length)return;
+      if(row.cells.length<2)return;
       var cells=[...row.cells];
+      var keyed=cells.filter(function(c){return c.getAttribute&&c.getAttribute('data-key');});
+      if(keyed.length>=2){
+        var curKeys=keyed.map(function(c){return c.getAttribute('data-key');});
+        var target=order.filter(function(k){return curKeys.indexOf(k)>=0;});
+        curKeys.forEach(function(k){if(target.indexOf(k)<0)target.push(k);});
+        var same=target.length===curKeys.length&&target.every(function(k,i){return k===curKeys[i];});
+        if(same)return;
+        target.forEach(function(k){
+          var idx=curKeys.indexOf(k);
+          row.appendChild(keyed[idx]);
+        });
+        return;
+      }
+      /* 兼容：无 data-key 且列数一致 → 按物理索引重排 */
+      if(row.cells.length!==headCells.length)return;
       var keyedCells=slots.map(function(i){return cells[i];});
       slots.forEach(function(slot,j){
         var key=order[j];
@@ -1554,33 +1571,33 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     if(shouldMerge){
       if(isFirst){
         headCells=
-          '<td rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
-          '<td rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
-          '<td rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
-          '<td rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
-          '<td rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+          '<td data-key="deadline" rowspan="'+rs+'"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+          '<td data-key="startDate" rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
+          '<td data-key="id" rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
+          '<td data-key="customer" rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
+          '<td data-key="status" rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
       }
     }else{
       headCells=
-        '<td'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
-        '<td>'+fmtDate(o.startDate)+'</td>'+
-        '<td style="font-weight:600">'+esc(o.id)+'</td>'+
-        '<td>'+esc(o.customer)+'</td>'+
-        '<td><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+        '<td data-key="deadline"'+(overdue?' style="color:var(--red);font-weight:600"':'')+'>'+fmtDate(o.deadline)+(overdue?' ⚠':'')+'</td>'+
+        '<td data-key="startDate">'+fmtDate(o.startDate)+'</td>'+
+        '<td data-key="id" style="font-weight:600">'+esc(o.id)+'</td>'+
+        '<td data-key="customer">'+esc(o.customer)+'</td>'+
+        '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
     }
     html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+' onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
-      '<td>'+esc(it.productId)+'</td>'+
-      '<td>'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
-      '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
-      '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
-      '<td>'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
-      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
-      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
-      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
-      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
-      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
-      '<td style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
-      '<td>'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
+      '<td data-key="productId">'+esc(it.productId)+'</td>'+
+      '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
+      '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
+      '<td data-key="spec">'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
+      '<td data-key="unit">'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
+      '<td data-key="orderQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
+      '<td data-key="stockMax" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
+      '<td data-key="stockMin" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
+      '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(dq)+'</td>'+
+      '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
+      '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
+      '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
       '</tr>';
   });
   html+='</tbody></table></div>';
@@ -3507,6 +3524,6 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.17</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.18</div>
 </body>
 </html>
