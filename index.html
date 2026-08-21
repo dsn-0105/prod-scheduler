@@ -268,6 +268,7 @@ body.col-dragging{cursor:grabbing;user-select:none}
         <button class="btn btn-sm" onclick="triggerImport()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>全量导入</button>
         <span style="width:1px;height:20px;background:var(--border);margin:0 4px;display:inline-block"></span>
         <button class="btn btn-sm" style="background:var(--primary);color:#fff" onclick="backupAll()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M18 9l-6-6-6 6M12 3v12"/></svg>备份</button>
+        <button class="btn btn-sm" id="logoutBtn" style="display:none" onclick="logout()" title="退出登录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>退出</button>
         <button class="btn btn-sm" onclick="document.getElementById('backupFile').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M6 9l6-6 6 6M12 3v12"/></svg>恢复</button>
         <button class="btn btn-sm" id="autoBackupBtn" onclick="toggleAutoBackup()" title="数据变更时自动下载 .json 备份文件，链接轮换/换设备后可一键恢复">自动备份：关</button>
         <span id="autoBackupStatus" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
@@ -291,28 +292,121 @@ body.col-dragging{cursor:grabbing;user-select:none}
    现在：localStorage  |  将来：把 API_BASE 填上服务器地址，
    DB.get/set 内部换成 fetch 即可，前端其余逻辑无需改动。
 ================================================================ */
-const API_BASE=''; // 服务器部署时填: 'http://192.168.x.x:3000/api'
+/* ================================================================
+   DB 异步数据层 — 服务器模式（多员工共享，实时同步）
+   服务器模式：API_BASE='/api'，数据存服务器，5 秒轮询版本号自动同步
+   本地模式：API_BASE=''，数据存 localStorage（单机兜底）
+================================================================ */
+const API_BASE='/api'; // 服务器模式；本地单机调试可改为 '' 回退 localStorage
 const KEY='wb_cb_prod_';
+let authToken='';
+try{authToken=localStorage.getItem(KEY+'token')||'';}catch(e){}
+let serverData=null;
+let serverRevs={};
+let syncTimer=null;
+
+async function apiReq(path,opts){
+  const r=await fetch(API_BASE+path,opts);
+  if(r.status===401){showLogin();throw new Error('unauthorized');}
+  return r;
+}
+async function pullAll(){
+  const r=await apiReq('/data?token='+authToken);
+  const j=await r.json();
+  serverData=j.data;serverRevs=j.revs||{};
+}
 const DB={
   async get(k,def){
     if(API_BASE){
-      // const r=await fetch(API_BASE+'/'+k); return await r.json();
+      try{
+        if(!serverData)await pullAll();
+        return serverData&&serverData[k]!==undefined?serverData[k]:def;
+      }catch(e){return def;}
     }
     try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}
   },
   async set(k,v){
     if(API_BASE){
-      // await fetch(API_BASE+'/'+k,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});
+      try{
+        await apiReq('/save?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v})});
+        if(serverData)serverData[k]=v;
+      }catch(e){}
+      return v;
     }
     localStorage.setItem(KEY+k,JSON.stringify(v));
     return v;
   }
 };
+/* ---- 实时同步：轮询版本号，有变化自动拉取刷新 ---- */
+async function pollRevs(){
+  if(!API_BASE||!authToken)return;
+  try{
+    const r=await fetch(API_BASE+'/revs?token='+authToken);
+    if(r.status===401){showLogin();return;}
+    const j=await r.json();
+    let changed=false;
+    for(const k in j.revs){if(j.revs[k]!==(serverRevs[k]||0)){changed=true;break;}}
+    if(changed){
+      await pullAll();
+      if(typeof bootDone!=='undefined'&&bootDone)renderContent();
+    }
+  }catch(e){}
+}
+function startSync(){
+  if(syncTimer||!API_BASE)return;
+  syncTimer=setInterval(pollRevs,5000);
+}
+/* ---- 登录界面 ---- */
+function showLogin(msg){
+  let el=document.getElementById('loginBox');
+  if(!el){
+    el=document.createElement('div');
+    el.id='loginBox';
+    el.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:300;display:flex;align-items:center;justify-content:center';
+    el.innerHTML='<div style="background:#fff;border-radius:12px;padding:28px 30px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+      +'<h2 style="font-size:17px;margin-bottom:2px">生产排单系统</h2>'
+      +'<div style="font-size:12px;color:#94a3b8;margin-bottom:16px">多员工在线版 · 请登录</div>'
+      +'<label>用户名</label><input id="loginUser" style="margin-bottom:10px">'
+      +'<label>密码</label><input id="loginPwd" type="password" style="margin-bottom:4px">'
+      +'<div id="loginErr" style="color:#ef4444;font-size:12px;min-height:18px;margin-top:4px">'+(msg||'')+'</div>'
+      +'<button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">登 录</button>'
+      +'</div>';
+    document.body.appendChild(el);
+    el.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
+  }else{
+    const err=el.querySelector('#loginErr');if(err&&msg)err.textContent=msg;
+  }
+  el.style.display='flex';
+}
+async function doLogin(){
+  const u=document.getElementById('loginUser').value.trim();
+  const p=document.getElementById('loginPwd').value;
+  const err=document.getElementById('loginErr');
+  if(!u||!p){err.textContent='请输入用户名和密码';return;}
+  try{
+    const r=await fetch(API_BASE+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    const j=await r.json();
+    if(!r.ok){err.textContent=j.error||'登录失败';return;}
+    authToken=j.token;
+    try{localStorage.setItem(KEY+'token',authToken);}catch(e){}
+    serverData=null;serverRevs={};
+    const lb=document.getElementById('loginBox');if(lb)lb.style.display='none';
+    try{await pullAll();}catch(e){}
+    await initApp();
+  }catch(e){err.textContent='无法连接服务器';}
+}
+function logout(){
+  if(!confirm('确认退出登录？'))return;
+  authToken='';
+  try{localStorage.removeItem(KEY+'token');}catch(e){}
+  serverData=null;serverRevs={};
+  showLogin();
+}
 /* 兼容包装：旧代码 save/load 同步调用 */
 function save(k,v){
   DB.set(k,v);
-  // 业务数据变更后自动备份（仅在启动完成后，避免启动期误触发下载）
-  if(bootDone && ['products','orders','dailyPlans','dailyPkgs','deliveries','fields'].indexOf(k)>=0){
+  // 业务数据变更后自动备份（仅本地模式；服务器模式数据已持久化在服务器）
+  if(!API_BASE && bootDone && ['products','orders','dailyPlans','dailyPkgs','deliveries','fields'].indexOf(k)>=0){
     try{scheduleAutoBackup();}catch(e){}
   }
   return v;
@@ -3559,6 +3653,15 @@ function confirmClear(){
    初始化
 ================================================================ */
 async function bootstrap(){
+  if(API_BASE){
+    /* 服务器模式：先登录 */
+    if(!authToken){showLogin('请先登录');return;}
+    try{await pullAll();}
+    catch(e){showLogin('登录已过期，请重新登录');return;}
+  }
+  await initApp();
+}
+async function initApp(){
   products=await DB.get('products',[]);
   orders=await DB.get('orders',[]);
   dailyPlans=await DB.get('dailyPlans',[]);
@@ -3606,12 +3709,14 @@ async function bootstrap(){
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
   if(ab)ab.textContent='自动备份：'+(autoBackupOn?'开':'关');
+  if(API_BASE){var lb=document.getElementById('logoutBtn');if(lb)lb.style.display='inline-flex';}
   renderAll();
+  startSync();   // 服务器模式：启动 5 秒轮询实时同步
 }
 
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.20</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.1</div>
 </body>
 </html>
