@@ -268,6 +268,7 @@ body.col-dragging{cursor:grabbing;user-select:none}
         <button class="btn btn-sm" onclick="triggerImport()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>全量导入</button>
         <span style="width:1px;height:20px;background:var(--border);margin:0 4px;display:inline-block"></span>
         <button class="btn btn-sm" style="background:var(--primary);color:#fff" onclick="backupAll()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M18 9l-6-6-6 6M12 3v12"/></svg>备份</button>
+        <button class="btn btn-sm" id="pwdBtn" style="display:none" onclick="pwdModal()" title="修改自己的登录密码"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>改密</button>
         <button class="btn btn-sm" id="logoutBtn" style="display:none" onclick="logout()" title="退出登录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>退出</button>
         <button class="btn btn-sm" onclick="document.getElementById('backupFile').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M6 9l6-6 6 6M12 3v12"/></svg>恢复</button>
         <button class="btn btn-sm" id="autoBackupBtn" onclick="toggleAutoBackup()" title="数据变更时自动下载 .json 备份文件，链接轮换/换设备后可一键恢复">自动备份：关</button>
@@ -388,6 +389,7 @@ async function doLogin(){
     const j=await r.json();
     if(!r.ok){err.textContent=j.error||'登录失败';return;}
     authToken=j.token;
+    currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{}};
     try{localStorage.setItem(KEY+'token',authToken);}catch(e){}
     serverData=null;serverRevs={};
     const lb=document.getElementById('loginBox');if(lb)lb.style.display='none';
@@ -397,10 +399,26 @@ async function doLogin(){
 }
 function logout(){
   if(!confirm('确认退出登录？'))return;
-  authToken='';
+  authToken='';currentUser=null;
   try{localStorage.removeItem(KEY+'token');}catch(e){}
   serverData=null;serverRevs={};
   showLogin();
+}
+/* ---- 权限：按表单控制写权限（管理员全放行；员工按 perms 逐表单） ---- */
+let currentUser=null;
+function formToKey(formKey){
+  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',fields:'fields',report:'report',logs:'logs'};
+  return m[formKey]||formKey;
+}
+function canWriteKey(k){
+  if(!currentUser)return false;
+  if(currentUser.role==='admin')return true;
+  return !!(currentUser.perms&&currentUser.perms[k]===true);
+}
+function canWriteForm(formKey){return canWriteKey(formToKey(formKey));}
+function ensureWrite(formKey){
+  if(!canWriteForm(formKey)){alert('当前账号无该表单的编辑权限');return false;}
+  return true;
 }
 /* 兼容包装：旧代码 save/load 同步调用 */
 function save(k,v){
@@ -661,7 +679,8 @@ const NAV=[
   {id:'dailyReport',label:'生产日报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>'},
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
   {id:'fields',label:'字段设置',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>'},
-  {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'}
+  {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'},
+  {id:'users',label:'员工管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>'}
 ];
 
 /* ================================================================
@@ -1100,7 +1119,12 @@ document.addEventListener('wheel',function(e){
 ================================================================ */
 function renderNav(){
   const nav=document.getElementById('nav');
-  nav.innerHTML=NAV.map(n=>{
+  const items=NAV.filter(n=>{
+    if(n.id==='users')return currentUser&&currentUser.role==='admin';
+    if(n.id==='fields')return canWriteKey('fields');
+    return true;
+  });
+  nav.innerHTML=items.map(n=>{
     let badge='';
     if(n.id==='dashboard'){
       const alerts=countAlerts();
@@ -1144,6 +1168,7 @@ function renderContent(){
     case 'delivery':c.innerHTML=renderDelivery();break;
     case 'fields':c.innerHTML=renderFields();break;
     case 'logs':c.innerHTML=renderLogs();break;
+    case 'users':c.innerHTML=renderUsers();break;
     default:c.innerHTML='<div class="empty">未知模块</div>';
   }
   if(products.length+orders.length>=30){
@@ -1329,7 +1354,7 @@ function statCard(v,l,cls){
    产品主数据
 ================================================================ */
 function renderProducts(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜勾选记录后点上方按钮编辑/复制/删除</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button></div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜勾选记录后点上方按钮编辑/复制/删除</span> '+(canWriteForm('product')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button>':'')+'</div>';
   if(products.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg><br>暂无产品数据，点击「新增产品」开始</div>';
   }else{
@@ -1366,6 +1391,7 @@ function renderProducts(){
 }
 
 function productModal(idx,prefill){
+  if(!ensureWrite('product'))return;
   const p=prefill!=null?{...prefill}:(idx!=null?{...products[idx]}:{status:'启用',unit:'台'});
   const cols=fields.product;
   let body='<div class="form-row">';
@@ -1659,7 +1685,7 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'框架订单\')">新增订单</button></div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> '+(canWriteForm('order')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'框架订单\')">新增订单</button>':'')+'</div>';
   const prodMap={};products.forEach(p=>prodMap[p.id]=p);
   html+=orderSection('frame','order_frame','框架订单','客户框架订单 · 交付进度 · 状态跟踪',prodMap);
   html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
@@ -1678,11 +1704,11 @@ function orderSection(k,formKey,title,sub,prodMap){
        '<b>'+esc(title)+'</b>'+
        '<span class="count-badge">'+typeOrders.length+'</span>'+
        '<span class="desc">'+esc(sub)+'</span>'+
-       '<button class="btn btn-sm btn-primary" style="margin-left:auto" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button>'+
+       (canWriteForm(formKey)?'<button class="btn btn-sm btn-primary" style="margin-left:auto" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button>':'')+
      '</div>';
   if(!collapsed){
     if(typeOrders.length===0){
-      h+='<div class="order-sec-body">'+bulkBar(formKey)+'<div class="empty" style="padding:18px">暂无'+esc(title)+' <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button></div></div>';
+      h+='<div class="order-sec-body">'+bulkBar(formKey)+'<div class="empty" style="padding:18px">暂无'+esc(title)+(canWriteForm(formKey)?' <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="event.stopPropagation();addOrderOfType(\''+type+'\')">+ 新增</button>':'')+'</div></div>';
     }else{
       h+='<div class="order-sec-body">'+renderOrderTable(formKey,typeOrders,prodMap)+'</div>';
     }
@@ -1780,7 +1806,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   return html;
 }
 
-function addOrderOfType(type){pendingOrderType=type;orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
+function addOrderOfType(type){if(!ensureWrite('order'))return;pendingOrderType=type;orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
 
 /* 销售订单编号：XSDD-YYYYMMDD-XXXXX（销售订单大写-日期-5位序号，每日从 00001 刷新） */
 function nextOrderNo(dateStr){
@@ -2100,6 +2126,7 @@ function ppConfirm(){
 }
 /* 订单明细表头：批量选择产品（允许多选追加，同一产品编码可重复出现在不同行） */
 function batchPickProducts(){
+  if(!ensureWrite('order'))return;
   productPickerModal({
     mode:'multi',
     preselected:[],
@@ -2187,7 +2214,7 @@ function renderDailyPlan(){
   const dayPkgs=dailyPkgs.filter(p=>fmtDate(p.date)===planDate);
 
   // 备货排产
-  html+='<div class="sec-header sec-stockup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M2 20h20M5 20V8l7-5 7 5v12"/></svg>备货排产 — 装配 → 内包 → 调试/老化 → 半成品入库 <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'stockup\')">新增备货排产</button></div>';
+  html+='<div class="sec-header sec-stockup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M2 20h20M5 20V8l7-5 7 5v12"/></svg>备货排产 — 装配 → 内包 → 调试/老化 → 半成品入库 '+(canWriteForm('dp_stockup')?'<button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'stockup\')">新增备货排产</button>':'')+'</div>';
   if(dayPlans.length===0){
     html+='<div class="empty" style="padding:16px">当日无备货排产记录</div>';
   }else{
@@ -2224,7 +2251,7 @@ function renderDailyPlan(){
   }
 
   // 包装排产
-  html+='<div class="sec-header sec-packaging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>包装排产 — 半成品出库 → 包装 → 成品入库（按订单） <button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'packaging\')">新增包装排产</button></div>';
+  html+='<div class="sec-header sec-packaging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>包装排产 — 半成品出库 → 包装 → 成品入库（按订单） '+(canWriteForm('dp_pkg')?'<button class="btn btn-sm" style="margin-left:auto" onclick="planModal(\'packaging\')">新增包装排产</button>':'')+'</div>';
   if(dayPkgs.length===0){
     html+='<div class="empty" style="padding:16px">当日无包装排产记录</div>';
   }else{
@@ -2279,6 +2306,7 @@ function shiftPlanDate(delta){
 }
 
 function planModal(type,idx,prefill){
+  if(!ensureWrite(type==='stockup'?'dp_stockup':'dp_pkg'))return;
   if(type==='stockup'){
     const p=prefill!=null?{...prefill}:(idx!=null?{...dailyPlans[idx]}:{date:planDate,assemblyPlan:0,assemblyDone:0,innerPackPlan:0,innerPackDone:0,testAgingPlan:0,testAgingDone:0,semiInbound:0});
     let body='<div class="form-row">'+
@@ -2529,7 +2557,7 @@ function shiftReportDate(delta){
    交付计划
 ================================================================ */
 function renderDelivery(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">分批交付 · 倒排排期 · 实际交付填报</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button></div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">分批交付 · 倒排排期 · 实际交付填报</span> '+(canWriteForm('delivery')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button>':'')+'</div>';
 
   // 交付计划汇总
   html+='<h3 style="font-size:14px;margin:6px 0 8px">一、交付计划汇总</h3>';
@@ -2571,8 +2599,7 @@ function renderDelivery(){
     });
     html+='</tbody></table></div>';
   }
-  html+='<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="deliveryModal()">新增交付计划</button>';
-
+  if(canWriteForm('delivery'))html+='<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="deliveryModal()">新增交付计划</button>';
   // 交付排期明细
   html+='<h3 style="font-size:14px;margin:18px 0 8px">二、交付排期明细</h3>';
   const hasBatches=deliveries.some(d=>d.batches&&d.batches.length>0);
@@ -2606,6 +2633,7 @@ function renderDelivery(){
 }
 
 function deliveryModal(idx,prefill){
+  if(!ensureWrite('delivery'))return;
   const d=prefill!=null?{...prefill}:(idx!=null?{...deliveries[idx]}:{});
   let body='<div class="form-row">'+
     '<div><label>订单编号 *</label><select id="dl_orderId" onchange="autoFillDelivery()"><option value="">请选择</option>'+orderItemOptions(d.orderId,d.productId)+'</select></div>'+
@@ -2794,6 +2822,106 @@ function clearLogs(){
   save('logs',logs);
   logOp('清空','操作日志','清空全部日志');
   renderContent();
+}
+
+/* ================================================================
+   员工管理（仅管理员） + 修改密码
+================================================================ */
+const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'备货排产',dailyPkgs:'包装排产',deliveries:'交付计划',fields:'字段设置'};
+async function loadUsers(){
+  try{
+    const r=await apiReq('/users?token='+authToken);
+    const j=await r.json();
+    window.__usersCache=j.users||[];
+  }catch(e){window.__usersCache=[];}
+}
+function renderUsers(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>员工管理 <span class="desc">账号 · 角色 · 按表单写权限（勾选=可编辑，不勾=只读）</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="userModal()">新增员工</button></div>';
+  if(!(window.__usersCache&&window.__usersCache.length)){
+    html+='<div class="empty">加载中...</div></div>';
+    loadUsers().then(function(){renderContent();});
+    return html;
+  }
+  html+='<div class="table-wrap"><table><thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>状态</th><th>表单写权限</th><th style="width:130px">操作</th></tr></thead><tbody>';
+  window.__usersCache.forEach(u=>{
+    const permStr=Object.keys(PERM_FORMS).filter(k=>u.perms&&u.perms[k]===true).map(k=>PERM_FORMS[k]).join('、')||'（无，全部只读）';
+    const admin=u.role==='admin';
+    html+='<tr><td style="font-weight:600">'+esc(u.username)+'</td><td>'+esc(u.name)+'</td>'
+      +'<td>'+(admin?'<span class="tag tag-red">管理员</span>':'<span class="tag tag-blue">员工</span>')+'</td>'
+      +'<td>'+(u.status==='active'?'<span class="tag tag-green">启用</span>':'<span class="tag tag-gray">停用</span>')+'</td>'
+      +'<td style="font-size:12px">'+esc(permStr)+'</td>'
+      +'<td><button class="btn btn-sm" onclick="userModal(\''+u.username+'\')">编辑</button> '
+      +(!admin?'<button class="btn btn-sm btn-danger" onclick="delUser(\''+u.username+'\')">删除</button>':'')
+      +'</td></tr>';
+  });
+  html+='</tbody></table></div></div>';
+  return html;
+}
+function userModal(username){
+  const list=window.__usersCache||[];
+  const u=username?list.find(x=>x.username===username):null;
+  const p=u||{username:'',name:'',role:'staff',status:'active',perms:{}};
+  let body='<div class="form-row"><div><label>用户名（登录名）</label><input id="uf_user" '+(u?'readonly':'')+' value="'+esc(p.username)+'" placeholder="2-20位字母数字下划线"></div>'
+    +'<div><label>姓名</label><input id="uf_name" value="'+esc(p.name)+'"></div></div>'
+    +'<div class="form-row"><div><label>角色</label><select id="uf_role"><option value="staff" '+(p.role!=='admin'?'selected':'')+'>员工</option><option value="admin" '+(p.role==='admin'?'selected':'')+'>管理员</option></select></div>'
+    +'<div><label>状态</label><select id="uf_status"><option value="active" '+(p.status!=='disabled'?'selected':'')+'>启用</option><option value="disabled" '+(p.status==='disabled'?'selected':'')+'>停用</option></select></div></div>'
+    +'<div class="form-row"><div><label>'+(u?'重置密码（留空则不修改）':'初始密码')+'</label><input id="uf_pwd" type="text" value=""></div></div>'
+    +'<div><label style="font-weight:600">表单写权限（勾选=该表单可编辑；不勾=只读）</label></div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px">'
+    +Object.keys(PERM_FORMS).map(k=>'<label style="display:flex;align-items:center;gap:4px;min-width:130px;font-size:13px;color:var(--text)"><input type="checkbox" data-perm="'+k+'" '+(p.perms&&p.perms[k]===true?'checked':'')+'>'+PERM_FORMS[k]+'</label>').join('')
+    +'</div>';
+  showModal(u?'编辑员工':'新增员工',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveUser('+(u?"'"+u.username+"'":'null')+')">保存</button>');
+}
+async function saveUser(username){
+  const uname=document.getElementById('uf_user').value.trim();
+  const name=document.getElementById('uf_name').value.trim();
+  const role=document.getElementById('uf_role').value;
+  const status=document.getElementById('uf_status').value;
+  const pwd=document.getElementById('uf_pwd').value;
+  const perms={};
+  document.querySelectorAll('#modal input[data-perm]').forEach(c=>{perms[c.dataset.perm]=c.checked;});
+  const payload={username:uname||username,name:name||uname||username,role:role,status:status,perms:perms};
+  if(pwd)payload.password=pwd;
+  try{
+    const r=await apiReq('/users?token='+authToken,{method:username?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json();
+    if(!r.ok){alert(j.error||'保存失败');return;}
+    closeModal();
+    await loadUsers();
+    if(currentUser&&currentUser.username===uname&&role==='staff')currentUser.role='staff';
+    renderContent();
+  }catch(e){alert('保存失败，请检查网络');}
+}
+async function delUser(username){
+  if(!confirm('确认删除员工「'+username+'」？此操作不可恢复。'))return;
+  try{
+    const r=await apiReq('/users?token='+authToken+'&username='+encodeURIComponent(username),{method:'DELETE'});
+    const j=await r.json();
+    if(!r.ok){alert(j.error||'删除失败');return;}
+    await loadUsers();renderContent();
+  }catch(e){alert('删除失败');}
+}
+/* 修改本人密码 */
+function pwdModal(){
+  const body='<div class="form-row"><div><label>原密码</label><input id="cp_old" type="password"></div></div>'
+    +'<div class="form-row"><div><label>新密码</label><input id="cp_new" type="password"></div></div>'
+    +'<div class="form-row"><div><label>确认新密码</label><input id="cp_new2" type="password"></div></div>';
+  showModal('修改密码',body,'<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="savePwd()">保存</button>');
+}
+async function savePwd(){
+  const old=document.getElementById('cp_old').value;
+  const n1=document.getElementById('cp_new').value;
+  const n2=document.getElementById('cp_new2').value;
+  if(!old||!n1){alert('请填写完整');return;}
+  if(n1.length<6){alert('新密码至少6位');return;}
+  if(n1!==n2){alert('两次新密码不一致');return;}
+  try{
+    const r=await apiReq('/change-pwd?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old:old,new:n1})});
+    const j=await r.json();
+    if(!r.ok){alert(j.error||'修改失败');return;}
+    alert('密码已修改');closeModal();
+  }catch(e){alert('修改失败');}
 }
 
 /* ================================================================
@@ -3439,17 +3567,20 @@ var FORM_ACTIONS={
 function bulkBar(m){
   const a=FORM_ACTIONS[m];if(!a)return '';
   const btns=[];
+  const writable=canWriteForm(m);
   const ids=lastRowIds[m]||[];
   const allChecked=ids.length>0 && ids.every(id=>selSet(m).has(String(id)));
   btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
-  btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
-  btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
-  if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
-  if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
-  btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
+  if(writable){
+    btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
+    btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
+    if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
+    if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
+    btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
+  }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
   btns.push('<button class="btn btn-sm" onclick="downloadTemplate(\''+a.formKey+'\')" title="下载导入模板（必填字段标红）">模板</button>');
-  btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
+  if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
   const cnt=selCount(m)>0?(' <span class="sel-count">已选 '+selCount(m)+' 项</span>'):'';
   return '<div class="bulk-bar">'+btns.join('')+cnt+'</div>';
 }
@@ -3662,6 +3793,14 @@ async function bootstrap(){
   await initApp();
 }
 async function initApp(){
+  /* 服务器模式：刷新页面后恢复当前用户信息（权限） */
+  if(API_BASE&&!currentUser){
+    try{
+      const r=await apiReq('/me?token='+authToken);
+      const j=await r.json();
+      currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{}};
+    }catch(e){}
+  }
   products=await DB.get('products',[]);
   orders=await DB.get('orders',[]);
   dailyPlans=await DB.get('dailyPlans',[]);
@@ -3709,7 +3848,7 @@ async function initApp(){
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
   if(ab)ab.textContent='自动备份：'+(autoBackupOn?'开':'关');
-  if(API_BASE){var lb=document.getElementById('logoutBtn');if(lb)lb.style.display='inline-flex';}
+  if(API_BASE){var lb=document.getElementById('logoutBtn');if(lb)lb.style.display='inline-flex';var pb=document.getElementById('pwdBtn');if(pb)pb.style.display='inline-flex';}
   renderAll();
   startSync();   // 服务器模式：启动 5 秒轮询实时同步
 }
@@ -3717,6 +3856,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.1</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.2</div>
 </body>
 </html>
