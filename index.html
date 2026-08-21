@@ -1176,6 +1176,8 @@ function renderContent(){
   }
   applyTableLayout();
   syncBottomScrollbar();
+  /* 布局完成后再次校正（字体/图片等加载可能改变表格宽度，避免滚动条不出现或错位） */
+  requestAnimationFrame(function(){syncBottomScrollbar();});
 }
 
 /* ================================================================
@@ -1205,7 +1207,11 @@ function syncBottomScrollbar(){
   }
   __bsWrap=target;
   sb.style.display='block';
-  inner.style.width=target.scrollWidth+'px';
+  /* 滚动条可滚动范围 = 表格可滚动范围：
+     inner宽 = 滚动条可视宽度(sb.clientWidth) + 表格可滚动距离(scrollWidth-clientWidth)
+     保证两者 scrollLeft 一一对应；此前直接用 scrollWidth 导致内宽小于视口宽时滚动条不出现 */
+  const range=Math.max(target.scrollWidth-target.clientWidth,0);
+  inner.style.width=(sb.clientWidth+range)+'px';
   if(sb._sync)return;sb._sync=true;sb.scrollLeft=target.scrollLeft;sb._sync=false;
 }
 /* 表格自身横向滚动（capture 捕获不冒泡的 scroll）→ 同步底部滚动条 */
@@ -3856,6 +3862,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.2</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.3</div>
 </body>
 </html>
