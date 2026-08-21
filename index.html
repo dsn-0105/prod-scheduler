@@ -186,7 +186,7 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .empty{text-align:center;padding:30px;color:var(--muted);font-size:13px}
 .empty svg{width:40px;height:40px;margin-bottom:8px;opacity:.4}
 /* 表格筛选/排序 */
-.th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.th-sort{cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .th-sort:hover{filter:brightness(.96)}
 .sort-ico{font-size:9px;margin-left:3px;color:#c7d2fe;display:inline-block}
 .sort-ico.on{color:var(--primary)}
@@ -990,10 +990,10 @@ function applyTableLayout(){
         if(row.cells[slot]!==keyedCells[src])row.replaceChild(keyedCells[src],row.cells[slot]);
       });
     });
-    /* 应用列宽和表格最小宽度（撑开时出横向滚动条） */
+    /* 应用列宽和表格最小宽度（撑开时出横向滚动条）；已存宽度低于表头最小宽时自动提升 */
     headCells.forEach(function(th){
       var k=th.getAttribute('data-key');
-      if(k&&lo.widths&&lo.widths[k])th.style.width=lo.widths[k]+'px';
+      if(k&&lo.widths&&lo.widths[k])th.style.width=Math.max(minThWidth(th),lo.widths[k])+'px';
     });
     if(lo.minW)tbl.style.minWidth=lo.minW+'px';
   });
@@ -1063,15 +1063,35 @@ function startColDrag(e,th){
 }
 
 /* ---- 拖拽调宽 ---- */
+/* 表头可拖至的最小宽度：字段名第一个字 + “..”(省略号) + 排序符号 + 筛选符号（含 padding 与余量） */
+function minThWidth(th){
+  try{
+    var label='';
+    for(var i=0;i<th.childNodes.length;i++){
+      if(th.childNodes[i].nodeType===3){label=(th.childNodes[i].textContent||'').trim();break;}
+    }
+    var cs=getComputedStyle(th);
+    var ctx=document.createElement('canvas').getContext('2d');
+    ctx.font=cs.fontSize+' '+cs.fontFamily;
+    var firstW=label?ctx.measureText(label.charAt(0)).width:0;
+    var dotsW=ctx.measureText('..').width;
+    ctx.font='9px '+cs.fontFamily;                       // 排序符号字号 9px
+    var sortW=ctx.measureText('⇅').width;                // 最宽排序符号
+    if(sortW<6)sortW=9;
+    var extra=th.querySelector('.lock')?18:0;            // 锁定字段多留锁图标宽
+    return Math.ceil(firstW+dotsW+sortW+19+20+extra+4);  // 19=筛选图标12+左距5+padding2; 20=th左右padding; 4=余量
+  }catch(e){return 60;}
+}
 function startColResize(e,th){
   e.preventDefault();e.stopPropagation();
   var m=th.getAttribute('data-m'),key=th.getAttribute('data-key');
   var tbl=th.closest('table');
   var startX=e.clientX,startW=th.offsetWidth;
   var baseW=tbl?tbl.scrollWidth:0;   // 拖动前的表格总宽，用于同步撑开表格
+  var minW=minThWidth(th);           // 最小宽度：第一个字+“..”+排序+筛选
   document.body.classList.add('col-resizing');
   var move=function(ev){
-    var w=Math.max(50,startW+ev.clientX-startX);
+    var w=Math.max(minW,startW+ev.clientX-startX);
     th.style.width=w+'px';
     /* 表格加宽超出容器 → .table-wrap 出横向滚动条；收窄则同步收回 */
     if(tbl)tbl.style.minWidth=Math.max(0,baseW+(w-startW))+'px';
@@ -3862,6 +3882,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.3</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.4</div>
 </body>
 </html>
