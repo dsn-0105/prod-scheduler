@@ -28,6 +28,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 .nav-item svg{width:18px;height:18px;flex-shrink:0}
 .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600}
+/* 侧边栏折叠按钮与折叠态（仅桌面端生效） */
+.sidebar-collapse{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border:none;background:var(--card);border-top:1px solid var(--border);color:var(--muted);font-size:13px;width:100%;transition:all .15s}
+.sidebar-collapse:hover{color:var(--primary);background:var(--primary-light)}
+.sidebar-collapse svg{width:18px;height:18px;flex-shrink:0;transition:transform .2s}
+.sidebar.collapsed{width:56px}
+.sidebar.collapsed .sidebar-header{padding:18px 0 14px;text-align:center}
+.sidebar.collapsed .sidebar-header h1{justify-content:center}
+.sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:none}
+.sidebar.collapsed .nav-item{justify-content:center;padding:10px 0}
+.sidebar.collapsed .nav-item span,.sidebar.collapsed .nav-badge{display:none}
+.sidebar.collapsed .sidebar-collapse{justify-content:center;padding:12px 0}
+.sidebar.collapsed .sidebar-collapse span{display:none}
+.sidebar.collapsed .sidebar-collapse svg{transform:rotate(180deg)}
+.sidebar.collapsed~.main{margin-left:56px}
 .main{flex:1;margin-left:210px;min-width:0}
 .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;gap:12px;flex-wrap:wrap}
 .topbar-left{display:flex;align-items:center;gap:10px}
@@ -44,6 +58,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 @media(max-width:768px){
   .sidebar{transform:translateX(-100%);width:240px}
   .sidebar.open{transform:translateX(0)}
+  .sidebar.collapsed{width:240px}
+  .sidebar.collapsed .sidebar-header{padding:18px 16px 14px}
+  .sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:inline}
+  .sidebar.collapsed .nav-item{justify-content:flex-start;padding:10px 16px}
+  .sidebar.collapsed .nav-item span{display:inline}
+  .sidebar.collapsed .sidebar-collapse{justify-content:flex-start;padding:12px 16px}
+  .sidebar.collapsed .sidebar-collapse span{display:inline}
+  .sidebar.collapsed .sidebar-collapse svg{transform:none}
+  .sidebar.collapsed~.main{margin-left:0}
   .main{margin-left:0}
   .mobile-header{display:flex}
   .content{padding:12px 12px 60px}
@@ -82,6 +105,9 @@ label{font-size:12px;color:var(--muted);display:block;margin-bottom:3px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{background:var(--primary-light);color:var(--primary);font-weight:600;text-align:left;padding:8px 10px;white-space:nowrap;border-bottom:2px solid var(--border)}
 td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+/* 页面主区表格单元格：超出行宽不换行，超出部分省略号 */
+#content .table-wrap table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+#content .table-wrap table td .progress-wrap{max-width:100%}
 tr:hover td{background:#f8fafc}
 .op-col{position:sticky;right:0;z-index:5;background:#ffffff;border-left:2px solid #e5e7eb}
 thead .op-col{background:#eef2ff;z-index:6}
@@ -92,11 +118,14 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .table-wrap tbody tr:hover{background:#f5f7ff}
 .bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px}
 .bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
-.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
-.table-wrap::-webkit-scrollbar{height:10px}
-.table-wrap::-webkit-scrollbar-thumb{background:#c7cdd8;border-radius:5px;border:2px solid #fff}
-.table-wrap::-webkit-scrollbar-thumb:hover{background:#a8b1c0}
-.table-wrap::-webkit-scrollbar-track{background:transparent}
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);scrollbar-width:none}
+.table-wrap::-webkit-scrollbar{display:none;height:0}
+/* 页面底部固定横向滚动条（不随页面/表格滚动位移） */
+.bottom-scrollbar{position:fixed;left:0;right:0;bottom:0;height:14px;overflow-x:auto;overflow-y:hidden;background:#fff;border-top:1px solid var(--border);z-index:150;display:none;scrollbar-width:thin}
+.bottom-scrollbar::-webkit-scrollbar{height:10px}
+.bottom-scrollbar::-webkit-scrollbar-thumb{background:#c7cdd8;border-radius:5px;border:2px solid #fff}
+.bottom-scrollbar::-webkit-scrollbar-thumb:hover{background:#a8b1c0}
+.bottom-scrollbar::-webkit-scrollbar-track{background:transparent}
 .tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
 .tag-green{background:var(--green-bg);color:var(--green)}
 .tag-red{background:var(--red-bg);color:var(--red)}
@@ -213,10 +242,14 @@ body.col-dragging{cursor:grabbing;user-select:none}
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;color:var(--primary)"><path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/></svg>生产排单系统</h1>
+      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;color:var(--primary)"><path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/></svg><span>生产排单系统</span></h1>
       <div class="sub">智能断路器 · 辰微</div>
     </div>
     <nav class="nav" id="nav"></nav>
+    <button class="sidebar-collapse" id="collapseBtn" onclick="toggleSidebarCollapse()" title="收起/展开侧边栏">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      <span>收起</span>
+    </button>
   </aside>
   <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
 
@@ -707,10 +740,9 @@ function toggleSort(m,key){
   renderContent();
 }
 
-/* 筛选面板 */
+/* 筛选面板（点击外部不关闭，通过「确定/清除/取消」按钮关闭） */
 var filtPop=null;
 function closeFiltPop(){if(filtPop){filtPop.remove();filtPop=null;}}
-document.addEventListener('click',function(e){if(filtPop&&!filtPop.contains(e.target))closeFiltPop();});
 
 function openFilter(el,m,key){
   closeFiltPop();
@@ -739,7 +771,7 @@ function openFilter(el,m,key){
   const pop=document.createElement('div');
   pop.className='filt-pop';
   pop.innerHTML='<div class="fp-title">筛选：'+esc(col.label)+'</div>'+inner+
-    '<div class="fp-btns"><button class="btn btn-sm" onclick="clearFilt(\''+m+'\',\''+key+'\')">清除</button><button class="btn btn-sm btn-primary" onclick="applyFilt(\''+m+'\',\''+key+'\','+useChecks+')">确定</button></div>';
+    '<div class="fp-btns"><button class="btn btn-sm" onclick="closeFiltPop()">取消</button><button class="btn btn-sm" onclick="clearFilt(\''+m+'\',\''+key+'\')">清除</button><button class="btn btn-sm btn-primary" onclick="applyFilt(\''+m+'\',\''+key+'\','+useChecks+')">确定</button></div>';
   document.body.appendChild(pop);
   pop.addEventListener('click',e=>e.stopPropagation());
   const r=el.getBoundingClientRect();
@@ -1024,7 +1056,57 @@ function renderContent(){
     showBackupWarn();
   }
   applyTableLayout();
+  syncBottomScrollbar();
 }
+
+/* ================================================================
+   侧边栏折叠 + 页面底部固定横向滚动条
+================================================================ */
+function toggleSidebarCollapse(){
+  const sb=document.getElementById('sidebar');
+  const collapsed=sb.classList.toggle('collapsed');
+  try{localStorage.setItem('sidebarCollapsed',collapsed?'1':'0');}catch(e){}
+  syncBottomScrollbar();
+}
+var __bsWrap=null;   // 当前绑定的可横向滚动表格
+/* 查找第一个可横向滚动的表格并同步底部固定滚动条 */
+function syncBottomScrollbar(){
+  const sb=document.getElementById('bottomScrollbar');
+  const inner=document.getElementById('bottomScrollbarInner');
+  if(!sb||!inner)return;
+  const wraps=Array.prototype.slice.call(document.querySelectorAll('#content .table-wrap'));
+  let target=null;
+  for(let i=0;i<wraps.length;i++){
+    const w=wraps[i];
+    if(w.offsetParent===null)continue;              // 隐藏（如折叠区块）跳过
+    if(w.scrollWidth>w.clientWidth+2){target=w;break;}
+  }
+  if(!target){
+    sb.style.display='none';__bsWrap=null;return;
+  }
+  __bsWrap=target;
+  sb.style.display='block';
+  inner.style.width=target.scrollWidth+'px';
+  if(sb._sync)return;sb._sync=true;sb.scrollLeft=target.scrollLeft;sb._sync=false;
+}
+/* 表格自身横向滚动（capture 捕获不冒泡的 scroll）→ 同步底部滚动条 */
+document.addEventListener('scroll',function(e){
+  const t=e.target;
+  if(!t||!t.classList||!t.classList.contains('table-wrap'))return;
+  const sb=document.getElementById('bottomScrollbar');
+  if(sb&&sb.style.display==='block'&&__bsWrap===t){
+    if(sb._sync)return;sb._sync=true;sb.scrollLeft=t.scrollLeft;sb._sync=false;
+  }
+},true);
+/* 底部滚动条滚动 → 同步绑定的表格 */
+document.addEventListener('scroll',function(e){
+  const t=e.target;
+  if(!t||!t.id||t.id!=='bottomScrollbar')return;
+  if(__bsWrap){
+    if(__bsWrap._sync)return;__bsWrap._sync=true;__bsWrap.scrollLeft=t.scrollLeft;__bsWrap._sync=false;
+  }
+},true);
+window.addEventListener('resize',function(){syncBottomScrollbar();});
 
 function showBackupWarn(){
   const c=document.getElementById('content');
@@ -1823,7 +1905,7 @@ function ppOpenFilter(btn,key){
   const pop=document.createElement('div');
   pop.className='filt-pop';
   pop.innerHTML='<div class="fp-title">筛选：'+esc(col.label)+'</div>'+inner+
-    '<div class="fp-btns"><button class="btn btn-sm" onclick="ppClearFilt(\''+key+'\')">清除</button><button class="btn btn-sm btn-primary" onclick="ppApplyFilt(\''+key+'\','+useChecks+')">确定</button></div>';
+    '<div class="fp-btns"><button class="btn btn-sm" onclick="closeFiltPop()">取消</button><button class="btn btn-sm" onclick="ppClearFilt(\''+key+'\')">清除</button><button class="btn btn-sm btn-primary" onclick="ppApplyFilt(\''+key+'\','+useChecks+')">确定</button></div>';
   document.body.appendChild(pop);
   pop.addEventListener('click',function(e){e.stopPropagation();});
   const r=btn.getBoundingClientRect();
@@ -3490,6 +3572,11 @@ async function bootstrap(){
   tblLayout=await DB.get('tblLayout',{})||{};
   autoBackupOn=false;
 
+  /* 恢复侧边栏折叠状态 */
+  try{
+    if(localStorage.getItem('sidebarCollapsed')==='1')document.getElementById('sidebar').classList.add('collapsed');
+  }catch(e){}
+
   // 兼容旧字段：为订单字段补齐 level 标记（表头/表体）
   normalizeFields();
   // 产品主数据：规格型号 → 规格 + 型号（字段配置 + 数据迁移）
@@ -3524,6 +3611,7 @@ async function bootstrap(){
 
 bootstrap();
 </script>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.19</div>
+<div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-19.20</div>
 </body>
 </html>
