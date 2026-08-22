@@ -25,6 +25,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .nav{flex:1;overflow-y:auto;padding:8px 0}
 .nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;font-size:13px;color:var(--text);border-left:3px solid transparent;transition:all .15s}
 .nav-item:hover{background:var(--primary-light)}
+.nav-item.nav-dragging{opacity:.55;background:var(--primary-light);box-shadow:0 4px 12px rgba(0,0,0,.15)}
 .nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 .nav-item svg{width:18px;height:18px;flex-shrink:0}
 .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600}
@@ -1148,18 +1149,29 @@ document.addEventListener('wheel',function(e){
 ================================================================ */
 function renderNav(){
   const nav=document.getElementById('nav');
-  const items=NAV.filter(n=>{
+  let items=NAV.filter(n=>{
     if(n.id==='users')return currentUser&&currentUser.role==='admin';
     if(n.id==='fields')return canWriteKey('fields');
     return true;
   });
+  /* 应用已保存的菜单顺序（长按拖动调整），新增/无权限项自动跟随默认顺序 */
+  try{
+    const saved=JSON.parse(localStorage.getItem(KEY+'navOrder')||'null');
+    if(Array.isArray(saved)&&saved.length){
+      const savedIds=saved.filter(id=>items.some(n=>n.id===id));
+      if(savedIds.length){
+        const rest=items.filter(n=>savedIds.indexOf(n.id)<0);
+        items=savedIds.map(id=>items.find(n=>n.id===id)).concat(rest);
+      }
+    }
+  }catch(e){}
   nav.innerHTML=items.map(n=>{
     let badge='';
     if(n.id==='dashboard'){
       const alerts=countAlerts();
       if(alerts>0)badge='<span class="nav-badge">'+alerts+'</span>';
     }
-    return '<div class="nav-item'+(activeTab===n.id?' active':'')+'" onclick="switchTab(\''+n.id+'\')">'+n.icon+'<span>'+n.label+'</span>'+badge+'</div>';
+    return '<div class="nav-item'+(activeTab===n.id?' active':'')+'" data-id="'+n.id+'" onclick="switchTab(\''+n.id+'\')">'+n.icon+'<span>'+n.label+'</span>'+badge+'</div>';
   }).join('');
 }
 
@@ -1173,6 +1185,58 @@ function switchTab(id){
   document.getElementById('mobileTitle').textContent=item?item.label:'';
   renderContent();
   if(window.innerWidth<=768)closeSidebar();
+}
+
+/* ---- 侧边栏导航：长按拖动调整菜单顺序 ---- */
+var navDrag=null;
+var navDragSuppress=false;
+function initNavDrag(){
+  const nav=document.getElementById('nav');
+  if(!nav)return;
+  /* 拖动结束后抑制本次 click（防止松手后误切页） */
+  nav.addEventListener('click',function(e){
+    if(navDragSuppress){navDragSuppress=false;e.preventDefault();e.stopPropagation();}
+  },true);
+  nav.addEventListener('mousedown',function(e){
+    if(e.button!==0)return;
+    if(document.getElementById('sidebar').classList.contains('collapsed'))return;  // 折叠模式禁用
+    const item=e.target.closest?e.target.closest('.nav-item'):null;
+    if(!item)return;
+    const startY=e.clientY;
+    let timer=setTimeout(function(){
+      navDrag={item:item,moved:false,entered:true};
+      item.classList.add('nav-dragging');
+    },400);
+    const mv=function(ev){
+      if(!navDrag)return;
+      if(!navDrag.moved&&Math.abs(ev.clientY-startY)<6)return;
+      navDrag.moved=true;
+      const el=document.elementFromPoint(ev.clientX,ev.clientY);
+      const t=el&&el.closest?el.closest('.nav-item'):null;
+      if(t&&t!==navDrag.item){
+        const r=t.getBoundingClientRect();
+        if(ev.clientY<r.top+r.height/2)nav.insertBefore(navDrag.item,t);
+        else nav.insertBefore(navDrag.item,t.nextSibling);
+      }
+    };
+    const up=function(){
+      clearTimeout(timer);
+      document.removeEventListener('mousemove',mv);
+      document.removeEventListener('mouseup',up);
+      if(navDrag){
+        navDrag.item.classList.remove('nav-dragging');
+        if(navDrag.moved||navDrag.entered)navDragSuppress=true;
+        if(navDrag.moved){
+          const order=[...nav.querySelectorAll('.nav-item')].map(x=>x.getAttribute('data-id')).filter(Boolean);
+          try{localStorage.setItem(KEY+'navOrder',JSON.stringify(order));}catch(err){}
+          renderNav();
+        }
+        navDrag=null;
+      }
+    };
+    document.addEventListener('mousemove',mv);
+    document.addEventListener('mouseup',up);
+  });
 }
 
 function toggleSidebar(){
@@ -2674,7 +2738,6 @@ function renderDelivery(){
     });
     html+='</tbody></table></div>';
   }
-  if(canWriteForm('delivery'))html+='<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="deliveryModal()">新增交付计划</button>';
   // 交付排期明细
   html+='<h3 style="font-size:14px;margin:18px 0 8px">二、交付排期明细</h3>';
   const hasBatches=deliveries.some(d=>d.batches&&d.batches.length>0);
@@ -4033,12 +4096,13 @@ async function initApp(){
   if(ab)ab.textContent='自动备份：'+(autoBackupOn?'开':'关');
   if(API_BASE){var lb=document.getElementById('logoutBtn');if(lb)lb.style.display='inline-flex';var pb=document.getElementById('pwdBtn');if(pb)pb.style.display='inline-flex';}
   renderAll();
+  initNavDrag();   // 侧边栏导航长按拖动排序（事件委托绑定一次）
   startSync();   // 服务器模式：启动 5 秒轮询实时同步
 }
 
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.14</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.15</div>
 </body>
 </html>
