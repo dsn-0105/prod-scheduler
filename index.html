@@ -1288,46 +1288,60 @@ function toggleSidebarCollapse(){
   try{localStorage.setItem('sidebarCollapsed',collapsed?'1':'0');}catch(e){}
   syncBottomScrollbar();
 }
-var __bsWrap=null;   // 当前绑定的可横向滚动表格
-/* 查找第一个可横向滚动的表格并同步底部固定滚动条 */
+var __bsWrap=null;   // 最近一次被操作的横向溢出表格
+var __bsWraps=[];    // 当前页面内所有横向溢出的可见表格（底部滚动条统一驱动）
+var __bsRange=0;     // 这些表格中最大的可滚动距离，作为底部条的滚动范围
+/* 收集页面内所有横向溢出的表格，让底部固定滚动条统一驱动它们（多表并存时均可左右移动） */
 function syncBottomScrollbar(){
   const sb=document.getElementById('bottomScrollbar');
   const inner=document.getElementById('bottomScrollbarInner');
   if(!sb||!inner)return;
   const wraps=Array.prototype.slice.call(document.querySelectorAll('#content .table-wrap'));
-  let target=null;
+  const targets=[];
   for(let i=0;i<wraps.length;i++){
     const w=wraps[i];
     if(w.offsetParent===null)continue;              // 隐藏（如折叠区块）跳过
-    if(w.scrollWidth>w.clientWidth+2){target=w;break;}
+    if(w.scrollWidth>w.clientWidth+2)targets.push(w);
   }
-  if(!target){
-    sb.style.display='none';__bsWrap=null;return;
+  if(!targets.length){
+    sb.style.display='none';__bsWraps=[];__bsRange=0;__bsWrap=null;return;
   }
-  __bsWrap=target;
+  let range=0;
+  targets.forEach(function(w){const r=w.scrollWidth-w.clientWidth;if(r>range)range=r;});
+  __bsWraps=targets;__bsRange=range;
   sb.style.display='block';
-  /* 滚动条可滚动范围 = 表格可滚动范围：
-     inner宽 = 滚动条可视宽度(sb.clientWidth) + 表格可滚动距离(scrollWidth-clientWidth)
-     保证两者 scrollLeft 一一对应；此前直接用 scrollWidth 导致内宽小于视口宽时滚动条不出现 */
-  const range=Math.max(target.scrollWidth-target.clientWidth,0);
+  /* 滚动条可滚动范围 = 各表最大可滚动距离（均以「视口宽 + 最大可滚动距离」铺 inner），
+     保证底部条与所有表格按相同比例一一对应 */
   inner.style.width=(sb.clientWidth+range)+'px';
-  if(sb._sync)return;sb._sync=true;sb.scrollLeft=target.scrollLeft;sb._sync=false;
+  /* 首次绑定底部条拖动事件（只绑一次） */
+  if(!sb._barBound){sb._barBound=true;sb.addEventListener('scroll',function(){
+    if(sb._sync)return;sb._sync=true;
+    const R=__bsRange||1;
+    __bsWraps.forEach(function(w){
+      const wr=w.scrollWidth-w.clientWidth;
+      if(wr>0)w.scrollLeft=Math.round((sb.scrollLeft/R)*wr);
+    });
+    sb._sync=false;
+  });}
+  /* 用最近操作的（或第一个）表格位置来定位底部滚动条 */
+  const active=(__bsWrap&&targets.indexOf(__bsWrap)>=0)?__bsWrap:targets[0];
+  __bsWrap=active;
+  if(sb._sync)return;sb._sync=true;
+  const ar=active.scrollWidth-active.clientWidth;
+  sb.scrollLeft=ar>0?(active.scrollLeft/ar)*range:0;
+  sb._sync=false;
 }
-/* 表格自身横向滚动（capture 捕获不冒泡的 scroll）→ 同步底部滚动条 */
+/* 任一表格自身横向滚动（capture 捕获不冒泡的 scroll）→ 回写底部滚动条 */
 document.addEventListener('scroll',function(e){
   const t=e.target;
   if(!t||!t.classList||!t.classList.contains('table-wrap'))return;
   const sb=document.getElementById('bottomScrollbar');
-  if(sb&&sb.style.display==='block'&&__bsWrap===t){
-    if(sb._sync)return;sb._sync=true;sb.scrollLeft=t.scrollLeft;sb._sync=false;
-  }
-},true);
-/* 底部滚动条滚动 → 同步绑定的表格 */
-document.addEventListener('scroll',function(e){
-  const t=e.target;
-  if(!t||!t.id||t.id!=='bottomScrollbar')return;
-  if(__bsWrap){
-    if(__bsWrap._sync)return;__bsWrap._sync=true;__bsWrap.scrollLeft=t.scrollLeft;__bsWrap._sync=false;
+  if(sb&&sb.style.display==='block'&&__bsWraps&&__bsWraps.indexOf(t)>=0){
+    __bsWrap=t;
+    if(sb._sync)return;sb._sync=true;
+    const wr=t.scrollWidth-t.clientWidth;
+    sb.scrollLeft=(__bsRange>0&&wr>0)?(t.scrollLeft/wr)*__bsRange:0;
+    sb._sync=false;
   }
 },true);
 window.addEventListener('resize',function(){syncBottomScrollbar();});
@@ -4369,6 +4383,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.22</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.23</div>
 </body>
 </html>
