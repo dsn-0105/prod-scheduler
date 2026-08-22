@@ -1129,19 +1129,6 @@ function resetTableLayout(m){
   renderContent();
 }
 
-/* 滚轮横向滚动：页面已滚到顶/底时，在表格上滚动滚轮=左右滚动（页面可滚时优先滚页面） */
-document.addEventListener('wheel',function(e){
-  var wrap=e.target.closest?e.target.closest('.table-wrap'):null;
-  if(!wrap||wrap.scrollWidth<=wrap.clientWidth+2)return;   // 没有横向溢出
-  if(e.deltaX)return;                                       // 触控板横向手势，交给浏览器
-  var doc=document.documentElement;
-  var canPageDown=(window.innerHeight+window.scrollY)<doc.scrollHeight-2;
-  var canPageUp=window.scrollY>2;
-  if((e.deltaY>0&&canPageDown)||(e.deltaY<0&&canPageUp))return;  // 页面还能滚，优先垂直滚动
-  wrap.scrollLeft+=e.deltaY;
-  e.preventDefault();
-},{passive:false});
-
 /* ================================================================
    导航渲染
 ================================================================ */
@@ -3993,6 +3980,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.16</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.17</div>
 </body>
 </html>
