@@ -106,7 +106,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{background:var(--primary-light);color:var(--primary);font-weight:600;text-align:left;padding:8px 10px;white-space:nowrap;border-bottom:2px solid var(--border)}
 td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 /* 页面主区表格单元格：超出行宽不换行，超出部分省略号 */
-#content .table-wrap table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+#content .table-wrap table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #content .table-wrap table td .progress-wrap{max-width:100%}
 tr:hover td{background:#f8fafc}
 .op-col{position:sticky;right:0;z-index:5;background:#ffffff;border-left:2px solid #e5e7eb}
@@ -990,12 +990,24 @@ function applyTableLayout(){
         if(row.cells[slot]!==keyedCells[src])row.replaceChild(keyedCells[src],row.cells[slot]);
       });
     });
-    /* 应用列宽和表格最小宽度（撑开时出横向滚动条）；已存宽度低于表头最小宽时自动提升 */
-    headCells.forEach(function(th){
+    /* 先记录 auto 布局下的内容宽度，作为未拖过列的默认宽度（须在切换 fixed 之前读取） */
+    var curW=headCells.map(function(th){return th.offsetWidth||0;});
+    /* 切换 fixed 布局：列宽完全由表头决定（auto 布局下列宽下限=最宽单元格内容宽，
+       导致表头缩窄但表体被长内容撑住；fixed 后内容超宽自动省略号，列宽可缩至最小） */
+    tbl.style.tableLayout='fixed';
+    headCells.forEach(function(th,i){
       var k=th.getAttribute('data-key');
-      if(k&&lo.widths&&lo.widths[k])th.style.width=Math.max(minThWidth(th),lo.widths[k])+'px';
+      var cur=curW[i]||0;
+      if(k){
+        var saved=lo.widths&&lo.widths[k]?lo.widths[k]:null;
+        var w=saved!=null?Math.max(minThWidth(th),saved):Math.max(minThWidth(th),cur||120);
+        th.style.width=w+'px';
+      }else{
+        /* 无 data-key 的固定列（选择列/操作列）：按内容宽度，保底 36px */
+        th.style.width=Math.max(36,cur)+'px';
+      }
     });
-    if(lo.minW)tbl.style.minWidth=lo.minW+'px';
+    /* fixed 布局下表宽=列宽总和，不再需要 minW 撑开 */
   });
 }
 
@@ -1087,14 +1099,12 @@ function startColResize(e,th){
   var m=th.getAttribute('data-m'),key=th.getAttribute('data-key');
   var tbl=th.closest('table');
   var startX=e.clientX,startW=th.offsetWidth;
-  var baseW=tbl?tbl.scrollWidth:0;   // 拖动前的表格总宽，用于同步撑开表格
   var minW=minThWidth(th);           // 最小宽度：第一个字+“..”+排序+筛选
   document.body.classList.add('col-resizing');
   var move=function(ev){
     var w=Math.max(minW,startW+ev.clientX-startX);
     th.style.width=w+'px';
-    /* 表格加宽超出容器 → .table-wrap 出横向滚动条；收窄则同步收回 */
-    if(tbl)tbl.style.minWidth=Math.max(0,baseW+(w-startW))+'px';
+    /* fixed 布局下表宽=各列宽之和，自动随列宽变化 */
   };
   var up=function(){
     document.removeEventListener('mousemove',move);
@@ -1102,12 +1112,8 @@ function startColResize(e,th){
     document.body.classList.remove('col-resizing');
     window.__colDragTS=Date.now();
     layoutOf(m).widths[key]=Math.round(th.getBoundingClientRect().width);
-    if(tbl){
-      var mw=tbl.style.minWidth;
-      layoutOf(m).minW=Math.round(parseFloat(mw)||0);
-      if(!layoutOf(m).minW)tbl.style.minWidth='';
-    }
     saveLayout();
+    if(tbl&&tbl.style.tableLayout==='fixed')syncBottomScrollbar();
   };
   document.addEventListener('mousemove',move);
   document.addEventListener('mouseup',up);
@@ -3882,6 +3888,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.4</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.5</div>
 </body>
 </html>
