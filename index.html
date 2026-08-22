@@ -1354,7 +1354,7 @@ function renderDashboard(){
       d.batches.forEach(b=>{
         if(b.status==='待交付'){
           const days=Math.ceil((new Date(b.date)-new Date(todayStr()))/86400000);
-          if(days>=0&&days<=3)upcomingDeliveries.push({...b,orderId:d.orderId,customer:d.customer,productName:d.productName});
+          if(days>=0&&days<=3)upcomingDeliveries.push({...b,orderId:d.orderId,customer:d.customer,productName:deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、')});
         }
       });
     }
@@ -2620,7 +2620,7 @@ function renderDelivery(){
     TBL_SCHEMAS.delivery=[
       {key:'orderId',label:'订单编号',type:'text'},
       {key:'customer',label:'客户',type:'text'},
-      {key:'productName',label:'产品',type:'text'},
+      {key:'productName',label:'产品',type:'text',get:r=>deliveryItems(r).map(i=>i.productName||i.productId).filter(Boolean).join('、')},
       {key:'orderTotal',label:'订单总量',type:'number'},
       {key:'delivered',label:'已交付',type:'number'},
       {key:'undelivered',label:'未交付',type:'number'},
@@ -2628,7 +2628,9 @@ function renderDelivery(){
       {key:'finalDate',label:'最终交付期',type:'date'},
       {key:'firstDate',label:'首次交付日',type:'date'},
       {key:'batchCount',label:'批次',type:'number'},
-      {key:'perBatch',label:'每批量',type:'text'}
+      {key:'perBatch',label:'每批量',type:'text'},
+      {key:'specModel',label:'规格/型号',type:'text',get:r=>deliveryItems(r).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、')},
+      {key:'lineNotes',label:'商品行备注',type:'text',get:r=>deliveryItems(r).map(i=>i.lineNotes||'').filter(Boolean).join('、')}
     ];
     TBL_ROWS.delivery=deliveries;
     const shownDl=applyTable('delivery',deliveries);
@@ -2636,11 +2638,11 @@ function renderDelivery(){
     html+=bulkBar('delivery');
     html+=filterBar('delivery');
     html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'</tr></thead><tbody>';
-    if(shownDl.length===0){html+=noMatchRow('delivery',12);}
+    if(shownDl.length===0){html+=noMatchRow('delivery',14);}
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
       const selChecked=selSet('delivery').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td data-key="orderId" style="font-weight:600">'+esc(d.orderId)+'</td><td data-key="customer">'+esc(d.customer)+'</td><td data-key="productName">'+esc(d.productName)+'</td>'+
+      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td data-key="orderId" style="font-weight:600">'+esc(d.orderId)+'</td><td data-key="customer">'+esc(d.customer)+'</td><td data-key="productName">'+esc(deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、'))+'</td>'+
         '<td data-key="orderTotal" style="text-align:right">'+money(d.orderTotal)+'</td>'+
         '<td data-key="delivered" style="text-align:right">'+money(d.delivered)+'</td>'+
         '<td data-key="undelivered" style="text-align:right">'+money(d.undelivered)+'</td>'+
@@ -2648,7 +2650,9 @@ function renderDelivery(){
         '<td data-key="finalDate">'+fmtDate(d.finalDate)+'</td>'+
         '<td data-key="firstDate">'+fmtDate(d.firstDate)+'</td>'+
         '<td data-key="batchCount" style="text-align:center">'+(d.batchCount||'')+'</td>'+
-        '<td data-key="perBatch" style="text-align:center">'+esc(d.perBatch)+'</td></tr>';
+        '<td data-key="perBatch" style="text-align:center">'+esc(d.perBatch)+'</td>'+
+        '<td data-key="specModel">'+esc(deliveryItems(d).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、'))+'</td>'+
+        '<td data-key="lineNotes">'+esc(deliveryItems(d).map(i=>i.lineNotes||'').filter(Boolean).join('、'))+'</td></tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -2661,7 +2665,7 @@ function renderDelivery(){
   }else{
     deliveries.forEach(d=>{
       if(!d.batches||d.batches.length===0)return;
-      html+='<h4 style="font-size:13px;margin:10px 0 4px;color:var(--blue)">'+esc(d.orderId)+' - '+esc(d.customer)+' - '+esc(d.productName)+'</h4>';
+      html+='<h4 style="font-size:13px;margin:10px 0 4px;color:var(--blue)">'+esc(d.orderId)+' - '+esc(d.customer)+' - '+esc(deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、'))+'</h4>';
       html+='<div class="table-wrap"><table><thead><tr><th>序号</th><th>计划交付日期</th><th>星期</th><th>计划交付量</th><th>累计计划</th><th>剩余未交付</th><th>实际交付量</th><th>状态</th><th>差异</th></tr></thead><tbody>';
       d.batches.forEach(b=>{
         const statusCls=b.status==='已交付'?'tag-green':(b.status==='逾期'?'tag-red':'tag-gray');
@@ -2685,19 +2689,76 @@ function renderDelivery(){
   return html;
 }
 
+/* 交付计划明细行：新结构 items[]（含规格/型号/商品行备注）；旧数据（单产品平铺）自动构造单行 */
+function deliveryItems(d){
+  if(Array.isArray(d.items)&&d.items.length)return d.items;
+  return [{productId:d.productId||'',productName:d.productName||'',spec:d.spec||'',model:d.model||'',orderQty:num(d.orderTotal),deliveredQty:num(d.delivered),lineNotes:(d.lineNotes!=null?d.lineNotes:(d.notes||''))}];
+}
+/* 交付明细行渲染：产品/规格/型号/数量由订单带出（只读），商品行备注可编辑 */
+function deliveryItemRow(it){
+  return '<tr>'+
+    '<td><input type="text" class="di_field" data-key="productId" value="'+esc(it.productId||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="text" class="di_field" data-key="productName" value="'+esc(it.productName||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="text" class="di_field" data-key="spec" value="'+esc(it.spec||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="text" class="di_field" data-key="model" value="'+esc(it.model||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="number" class="di_field" data-key="orderQty" value="'+num(it.orderQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="number" class="di_field" data-key="deliveredQty" value="'+num(it.deliveredQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="text" class="di_field" data-key="lineNotes" value="'+esc(it.lineNotes||'')+'" style="width:100%"></td>'+
+    '<td style="text-align:center"><button class="btn btn-sm btn-danger" onclick="removeDeliveryItemRow(this)" title="删除此行">✕</button></td></tr>';
+}
+function removeDeliveryItemRow(btn){
+  const tb=btn.closest('tbody');
+  btn.closest('tr').remove();
+  recalcDeliveryTotals();
+}
+/* 订单下拉（按订单列出，明细在表体带出） */
+function deliveryOrderOptions(selOrderId){
+  return orders.map(o=>'<option value="'+esc(o.id)+'" data-customer="'+esc(o.customer)+'" '+(o.id===selOrderId?'selected':'')+'>'+esc(o.id)+' - '+esc(o.customer)+'</option>').join('');
+}
+/* 选择订单 → 带出客户 + 明细行（规格/型号/商品行备注由订单明细带出） */
+function deliveryOrderChange(){
+  const sel=document.getElementById('dl_orderId');
+  const opt=sel.options[sel.selectedIndex];
+  const tb=document.querySelector('#dlItemsTbl tbody');
+  if(opt&&opt.dataset.customer){
+    document.getElementById('dl_customer').value=opt.dataset.customer;
+    const o=orders.find(x=>x.id===opt.value);
+    if(o&&tb){
+      tb.innerHTML='';
+      orderItems(o).forEach(it=>{
+        tb.insertAdjacentHTML('beforeend',deliveryItemRow({
+          productId:it.productId,productName:it.productName||'',
+          spec:it.spec||'',model:it.model||'',
+          orderQty:it.orderQty,deliveredQty:it.deliveredQty,
+          lineNotes:(it.lineNotes!=null?it.lineNotes:(it.notes||''))
+        }));
+      });
+    }
+  }
+  recalcDeliveryTotals();
+}
+/* 明细汇总：订单总量 / 已交付 / 未交付 实时计算 */
+function recalcDeliveryTotals(){
+  let total=0,delivered=0;
+  document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
+    const q=tr.querySelector('[data-key="orderQty"]');
+    const dd=tr.querySelector('[data-key="deliveredQty"]');
+    total+=num(q?q.value:0);
+    delivered+=num(dd?dd.value:0);
+  });
+  const st=document.getElementById('dl_sumTotal');if(st)st.textContent=total;
+  const sd=document.getElementById('dl_sumDelivered');if(sd)sd.textContent=delivered;
+  const su=document.getElementById('dl_sumUndel');if(su)su.textContent=total-delivered;
+}
+
 function deliveryModal(idx,prefill){
   if(!ensureWrite('delivery'))return;
   const d=prefill!=null?{...prefill}:(idx!=null?{...deliveries[idx]}:{});
+  const items=deliveryItems(d);
+  /* 表头区：订单/客户/交付参数 */
   let body='<div class="form-row">'+
-    '<div><label>订单编号 *</label><select id="dl_orderId" onchange="autoFillDelivery()"><option value="">请选择</option>'+orderItemOptions(d.orderId,d.productId)+'</select></div>'+
+    '<div><label>订单编号 *</label><select id="dl_orderId" onchange="deliveryOrderChange()"><option value="">请选择订单</option>'+deliveryOrderOptions(d.orderId)+'</select></div>'+
     '<div><label>客户名称 *</label><input type="text" id="dl_customer" value="'+esc(d.customer)+'"></div>'+
-    '</div><div class="form-row">'+
-    '<div><label>产品编码 *</label><input type="text" id="dl_productId" value="'+esc(d.productId)+'"></div>'+
-    '<div><label>产品名称 *</label><input type="text" id="dl_productName" value="'+esc(d.productName)+'"></div>'+
-    '</div><div class="form-row">'+
-    '<div><label>订单总量 *</label><input type="number" id="dl_orderTotal" value="'+d.orderTotal+'"></div>'+
-    '<div><label>已交付 *</label><input type="number" id="dl_delivered" value="'+d.delivered+'"></div>'+
-    '<div><label>未交付 *</label><input type="number" id="dl_undelivered" value="'+d.undelivered+'"></div>'+
     '</div><div class="form-row">'+
     '<div><label>交付频率 *</label><select id="dl_freq">'+DELIVERY_FREQ.map(f=>'<option '+(f===d.freq?'selected':'')+'>'+f+'</option>').join('')+'</select></div>'+
     '<div><label>最终交付期 *</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
@@ -2707,42 +2768,41 @@ function deliveryModal(idx,prefill){
     '<div><label>每批交付量</label><input type="text" id="dl_perBatch" value="'+esc(d.perBatch)+'"></div>'+
     '<div><label>备注</label><input type="text" id="dl_notes" value="'+esc(d.notes)+'"></div>'+
     '</div>';
+  /* 表体区：交付明细（由订单带出） */
+  body+='<div style="display:flex;align-items:center;gap:12px;margin:18px 0 8px;flex-wrap:wrap"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">选择订单后自动带出产品规格 / 型号 / 商品行备注</span>'+
+    '<span style="margin-left:auto;font-size:12px;color:var(--muted)">订单总量: <b id="dl_sumTotal">0</b>　已交付: <b id="dl_sumDelivered">0</b>　未交付: <b id="dl_sumUndel">0</b></span></div>'+
+    '<div class="table-wrap"><table id="dlItemsTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>订单数量</th><th>已交付数量</th><th>商品行备注</th><th style="width:56px">操作</th></tr></thead><tbody>';
+  items.forEach(it=>body+=deliveryItemRow(it));
+  body+='</tbody></table></div>';
   showModal(idx!=null?'编辑交付计划':'新增交付计划',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveDelivery('+(idx!=null?idx:-1)+')">保存</button>'
   );
-}
-
-function autoFillDelivery(){
-  const sel=document.getElementById('dl_orderId');
-  const opt=sel.options[sel.selectedIndex];
-  if(opt){
-    document.getElementById('dl_customer').value=opt.dataset.customer||'';
-    document.getElementById('dl_productId').value=opt.dataset.product||'';
-    document.getElementById('dl_productName').value=opt.dataset.pname||'';
-    document.getElementById('dl_orderTotal').value=opt.dataset.total||'';
-    document.getElementById('dl_delivered').value=opt.dataset.delivered||'';
-    const undel=num(opt.dataset.total)-num(opt.dataset.delivered);
-    document.getElementById('dl_undelivered').value=undel;
-  }
+  recalcDeliveryTotals();
 }
 
 function saveDelivery(idx){
   const d={
     orderId:document.getElementById('dl_orderId').value,
     customer:document.getElementById('dl_customer').value,
-    productId:document.getElementById('dl_productId').value,
-    productName:document.getElementById('dl_productName').value,
-    orderTotal:num(document.getElementById('dl_orderTotal').value),
-    delivered:num(document.getElementById('dl_delivered').value),
-    undelivered:num(document.getElementById('dl_undelivered').value),
     freq:document.getElementById('dl_freq').value,
     finalDate:document.getElementById('dl_finalDate').value,
     firstDate:document.getElementById('dl_firstDate').value,
     batchCount:num(document.getElementById('dl_batchCount').value),
     perBatch:document.getElementById('dl_perBatch').value,
-    notes:document.getElementById('dl_notes').value
+    notes:document.getElementById('dl_notes').value,
+    items:[]
   };
+  let total=0,delivered=0;
+  document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
+    const it={};
+    tr.querySelectorAll('.di_field').forEach(el=>{it[el.dataset.key]=el.value||'';});
+    it.orderQty=num(it.orderQty);it.deliveredQty=num(it.deliveredQty);
+    total+=it.orderQty;delivered+=it.deliveredQty;
+    d.items.push(it);
+  });
+  d.orderTotal=total;d.delivered=delivered;d.undelivered=total-delivered;
   if(!d.orderId){alert('请选择订单');return;}
+  if(d.items.length===0){alert('请选择订单以带出交付明细');return;}
   if(idx>=0){const oldD=deliveries[idx];d.batches=oldD.batches;deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');}
   else{deliveries.push(d);logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+')');}
   save('deliveries',deliveries);
@@ -3909,6 +3969,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.9</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.10</div>
 </body>
 </html>
