@@ -77,7 +77,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
 .card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .card-title .desc{font-size:12px;color:var(--muted);font-weight:400}
-/* 订单管理：框架订单 / 库存订单 可收起区块 */
+/* 订单管理：销售订单 / 库存订单 可收起区块 */
 .order-sec{border:1px solid var(--border);border-radius:10px;margin-top:12px;overflow:clip;background:var(--card)}
 .order-sec-head{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;user-select:none;background:linear-gradient(0deg,var(--card),var(--card))}
 .order-sec-head:hover{background:#f5f7ff}
@@ -450,7 +450,7 @@ const PKG_STEPS=['packaging','finishedInbound'];
 const PKG_LABELS={packaging:'包装',finishedInbound:'成品入库'};
 const STOCK_STATUS={normal:{label:'正常',cls:'tag-green'},low:{label:'低于下限',cls:'tag-red'},high:{label:'高于上限',cls:'tag-amber'}};
 const ORDER_STATUS=['待排产','执行中','已完成','已取消'];
-const ORDER_TYPES=['框架订单','库存订单'];
+const ORDER_TYPES=['销售订单','库存订单'];
 const DELIVERY_FREQ=['每周一次(周一)','每周一次(周五)','每三天一次','每日'];
 const LOCK='<svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 
@@ -621,7 +621,7 @@ const defaultFields={
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
-    {key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'框架订单',level:'head'},
+    {key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'销售订单',level:'head'},
     {key:'contractNo',label:'合同号',type:'text',required:true,locked:true,level:'head'},
     {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
   ],
@@ -668,7 +668,7 @@ const defaultFields={
 
 const FORM_META={
   product:{title:'产品主数据',sub:'产品基础信息 · 日产能 · 库存',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
-  order:{title:'订单管理',sub:'框架订单 · 交付进度 · 状态',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
+  order:{title:'订单管理',sub:'销售订单 · 交付进度 · 状态',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
   dailyPlan:{title:'日排产计划',sub:'备货排产(装配→内包→调试老化) + 包装排产(按订单)',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2M8 18h2M14 18h2"/></svg>'},
   delivery:{title:'交付计划',sub:'分批交付 · 倒排排期 · 实际填报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7M5.5 19a2.5 2.5 0 0 0 5 0"/></svg>'}
 };
@@ -703,10 +703,10 @@ let fieldsDraft=null;
 let planDate=todayStr();
 let reportDate=todayStr();
 let deliveryOrderId='';
-/* 订单管理：框架订单 / 库存订单 两类区块的收起状态（true=收起） */
+/* 订单管理：销售订单 / 库存订单 两类区块的收起状态（true=收起） */
 let orderCollapse={frame:false,inv:false};
 function toggleOrderSection(k){orderCollapse[k]=!orderCollapse[k];renderContent();}
-function orderTypeOf(o){return o&&o.orderType?o.orderType:'框架订单';}
+function orderTypeOf(o){return o&&o.orderType?o.orderType:'销售订单';}
 /* 新增订单时记录"意图分类"，保存时强制写入，杜绝串类 */
 let pendingOrderType=null;
 
@@ -727,9 +727,9 @@ function seed(){
     {id:'P004',name:'漏电断路器',spec:'RCBO',model:'100',unit:'台',dailyCap:500,stock:250,status:'启用'}
   ];
   orders=[
-    {id:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderQty:500,deliveredQty:180,startDate:'2026-07-01',deadline:'2026-12-31',status:'执行中',orderType:'框架订单',notes:'Q3-Q4框架订单'},
-    {id:'O2026002',customer:'智慧楼宇工程',productId:'P002',productName:'塑壳断路器',orderQty:3000,deliveredQty:900,startDate:'2026-07-15',deadline:'2026-11-30',status:'执行中',orderType:'框架订单',notes:'半年框架订单'},
-    {id:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderQty:10000,deliveredQty:2500,startDate:'2026-08-01',deadline:'2026-12-31',status:'执行中',orderType:'框架订单',notes:'季度框架订单'}
+    {id:'O2026001',customer:'华东盘厂',productId:'P001',productName:'智能框架断路器',orderQty:500,deliveredQty:180,startDate:'2026-07-01',deadline:'2026-12-31',status:'执行中',orderType:'销售订单',notes:'Q3-Q4销售订单'},
+    {id:'O2026002',customer:'智慧楼宇工程',productId:'P002',productName:'塑壳断路器',orderQty:3000,deliveredQty:900,startDate:'2026-07-15',deadline:'2026-11-30',status:'执行中',orderType:'销售订单',notes:'半年销售订单'},
+    {id:'O2026003',customer:'安保机电',productId:'P003',productName:'微型断路器',orderQty:10000,deliveredQty:2500,startDate:'2026-08-01',deadline:'2026-12-31',status:'执行中',orderType:'销售订单',notes:'季度销售订单'}
   ];
   const d1='2026-08-13',d2='2026-08-14';
   dailyPlans=[
@@ -1755,13 +1755,13 @@ function migrateOrderItemLineNotes(){
   }
 }
 /* 迁移：确保订单字段配置含「订单类型」系统字段并锁定（防止字段设置误删后订单分类丢失，
-   编辑保存时被默认归为框架订单） */
+   编辑保存时被默认归为销售订单） */
 function migrateOrderTypeField(){
   if(!Array.isArray(fields.order))return;
   let changed=false;
   const f=fields.order.find(x=>x.key==='orderType');
   if(!f){
-    fields.order.push({key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'框架订单',level:'head'});
+    fields.order.push({key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'销售订单',level:'head'});
     changed=true;
     logOp('系统','订单管理','系统迁移：字段配置补回「订单类型」系统字段');
   }else if(!f.locked){
@@ -1770,7 +1770,7 @@ function migrateOrderTypeField(){
   }
   if(changed)save('fields',fields);
 }
-/* 迁移：确保订单字段配置含「合同号」系统字段并锁定（框架订单必填） */
+/* 迁移：确保订单字段配置含「合同号」系统字段并锁定（销售订单必填） */
 function migrateOrderContractNo(){
   if(!Array.isArray(fields.order))return;
   let changed=false;
@@ -1807,11 +1807,11 @@ function migrateOrders(){
       o.items=[{productId:o.productId||'',productName:o.productName||'',orderQty:num(o.orderQty),deliveredQty:num(o.deliveredQty)}];
       changed=true;
     }
-    if(!o.orderType){o.orderType='框架订单';changed=true;}
+    if(!o.orderType){o.orderType='销售订单';changed=true;}
   });
   if(changed)save('orders',orders);
 }
-/* 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与框架订单单号冲突（已为 KCDD- 的跳过；自定义单号按 startDate 重排） */
+/* 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突（已为 KCDD- 的跳过；自定义单号按 startDate 重排） */
 function migrateInventoryOrderIds(){
   var changed=false;
   // 第一遍：XSDD- 前缀直接替换为 KCDD-（保留日期与序号，确保唯一）
@@ -1846,6 +1846,15 @@ function migrateInventoryOrderIds(){
   });
   if(changed){save('orders',orders);logOp('迁移','订单管理','存量库存订单单号前缀 XSDD- 统一改为 KCDD-');}
 }
+/* 订单类型改名（一次性迁移）：原「框架订单」统一改名为「销售订单」（含存量数据）。
+   仅对 orderType 仍为旧值的订单执行；新数据/已改名的不动（幂等）。 */
+function migrateFrameworkToSales(){
+  let changed=false;
+  orders.forEach(o=>{
+    if(o.orderType==='框架订单'){ o.orderType='销售订单'; changed=true; }
+  });
+  if(changed){ save('orders',orders); logOp('迁移','订单管理','订单类型「框架订单」统一改名为「销售订单」'); }
+}
 function orderItemOptions(selOrderId,selProductId){
   let out='';
   orders.forEach(o=>{
@@ -1858,9 +1867,9 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">框架订单 · 库存订单 · 交付进度 · 状态跟踪</span> '+(canWriteForm('order')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'框架订单\')">新增订单</button>':'')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">销售订单 · 库存订单 · 交付进度 · 状态跟踪</span> '+(canWriteForm('order')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'销售订单\')">新增订单</button>':'')+'</div>';
   const prodMap={};products.forEach(p=>prodMap[p.id]=p);
-  html+=orderSection('frame','order_frame','框架订单','客户框架订单 · 交付进度 · 状态跟踪',prodMap);
+  html+=orderSection('frame','order_frame','销售订单','客户销售订单 · 交付进度 · 状态跟踪',prodMap);
   html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
   html+='</div>';
   return html;
@@ -1868,7 +1877,7 @@ function renderOrders(){
 
 /* 单个分类区块（可收起/展开）：头部点击切换 orderCollapse[k]，并带该分类独立的新增入口 */
 function orderSection(k,formKey,title,sub,prodMap){
-  const type=k==='inv'?'库存订单':'框架订单';
+  const type=k==='inv'?'库存订单':'销售订单';
   const typeOrders=orders.map((o,i)=>({o,i})).filter(x=>orderTypeOf(x.o)===type);
   const collapsed=!!orderCollapse[k];
   let h='<div class="order-sec'+(collapsed?' collapsed':'')+'">';
@@ -1987,7 +1996,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
 function addOrderOfType(type){if(!ensureWrite('order'))return;pendingOrderType=type;orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
 
 /* 销售订单编号：XSDD-YYYYMMDD-XXXXX（销售订单大写-日期-5位序号，每日从 00001 刷新） */
-/* 订单编号生成：框架订单 XSDD-YYYYMMDD-XXXXX，库存订单 KCDD-YYYYMMDD-XXXXX（前缀区分，防止两类单号冲突） */
+/* 订单编号生成：销售订单 XSDD-YYYYMMDD-XXXXX，库存订单 KCDD-YYYYMMDD-XXXXX（前缀区分，防止两类单号冲突） */
 function nextOrderNo(dateStr,type){
   const d=String(dateStr||todayStr()).replace(/-/g,'');
   const prefix=(type==='库存订单'?'KCDD-':'XSDD-')+d+'-';
@@ -2026,8 +2035,8 @@ function bulkGenOrder(){
 
 function orderModal(idx,prefill){
   const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
-  const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'框架订单',startDate:todayStr(),items:[]};
-  // 新增订单：按订单类型自动预填单号（库存订单 KCDD- / 框架订单 XSDD-），用户可手动修改
+  const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'销售订单',startDate:todayStr(),items:[]};
+  // 新增订单：按订单类型自动预填单号（库存订单 KCDD- / 销售订单 XSDD-），用户可手动修改
   if(idx==null && !o.id){o.id=nextOrderNo(todayStr(),o.orderType);}
   const headCols=fields.order.filter(f=>!isLineField(f));
   let body='<div class="form-row">';
@@ -2334,7 +2343,7 @@ function saveOrder(idx){
   });
   if(!o.id){alert('请填写订单编号');return;}
   if(!o.customer){alert('请填写客户名称');return;}
-  if(o.orderType==='框架订单'&&(!o.contractNo||!String(o.contractNo).trim())){alert('框架订单请填写合同号');return;}
+  if(o.orderType==='销售订单'&&(!o.contractNo||!String(o.contractNo).trim())){alert('销售订单请填写合同号');return;}
   const items=[];
   document.querySelectorAll('#orderItemsTbl tbody tr').forEach(tr=>{
     const it={};
@@ -2354,10 +2363,10 @@ function saveOrder(idx){
   // 新增订单时，强制使用打开弹窗时记录的意图分类，避免串到其它分类
   if(idx<0&&pendingOrderType){o.orderType=pendingOrderType;}
   /* orderType 兜底：若字段配置缺失（被字段设置删除）导致收集不到，
-     编辑时保留原订单类型，避免「库存订单」被默认归为「框架订单」 */
+     编辑时保留原订单类型，避免「库存订单」被默认归为「销售订单」 */
   if(!o.orderType){
     if(idx>=0&&orders[idx]&&orders[idx].orderType)o.orderType=orders[idx].orderType;
-    else o.orderType='框架订单';
+    else o.orderType='销售订单';
   }
   pendingOrderType=null;
   if(idx>=0){
@@ -2426,7 +2435,7 @@ function backfillInvDeliveredFromStock(){
 /* 库存同步：产品「库存/已交付数量」= 全部「库存订单」明细已交付数量之和。
    业务口径：库存订单=生产入库，交付多少就是多少库存；
    仅同步「有库存订单」的产品；无库存订单的产品保留手动/期初库存；
-   后续「框架订单调用库存」功能将在此基础上扣减。 */
+   后续「销售订单调用库存」功能将在此基础上扣减。 */
 function syncStockFromInvOrders(){
   const map={};
   orders.forEach(o=>{
@@ -3186,7 +3195,7 @@ function discardAudit(){
 function renderFields(){
   const formMeta=[
     {key:'product',label:'产品主数据',sub:'产品基础信息'},
-    {key:'order',label:'订单管理',sub:'框架订单'},
+    {key:'order',label:'订单管理',sub:'销售订单'},
     {key:'dailyPlan',label:'日排产-备货',sub:'装配→内包→调试'},
     {key:'dailyPkg',label:'日排产-包装',sub:'包装→成品入库'},
     {key:'delivery',label:'交付计划',sub:'分批交付排期'}
@@ -3837,7 +3846,7 @@ function importXLSX(e){
 }
 
 /* ================================================================
-   金蝶 ERP 销售订单 → 框架订单 批量导入
+   金蝶 ERP 销售订单 → 销售订单 批量导入
    流程：解析(含合并单元格展开+日期序列转YYYY-MM-DD) → 按单据编号聚合
         → 只读预检 → 预检报告(批量决策) → 确认写入
 ================================================================ */
@@ -4038,7 +4047,7 @@ function kdShowReport(){
   if(R.conflict.length){
     var rows2=R.conflict.map(function(c){
       var ex=orders.find(function(x){return x.id===c.id;});
-      var warn=(ex&&orderTypeOf(ex)!=='框架订单')?' <span style="color:#b00;font-size:11px">（将改为框架订单）</span>':'';
+      var warn=(ex&&orderTypeOf(ex)!=='销售订单')?' <span style="color:#b00;font-size:11px">（将改为销售订单）</span>':'';
       return '<div style="display:flex;gap:8px;align-items:center;margin:4px 0;font-size:12px"><span style="min-width:160px;color:var(--text)">'+esc(c.id)+warn+'</span>'+
         '<select id="kd_conflict_'+c.idx+'" onchange="kdState.conflict['+c.idx+']=this.value" style="flex:1">'+
         '<option value="overwrite">覆盖（整单替换）</option>'+
@@ -4101,7 +4110,7 @@ function kdDoImport(){
     });
     if(items.length===0){skipCount++;return;}
     totalLines+=items.length;
-    var no={orderType:'框架订单',status:'执行中',src:'kingdee',srcFile:R.filename,id:finalId,customer:String(o.customer||'空'),startDate:o.startDate,deadline:o.deadline,contractNo:String(o.contractNo||'空'),items:items};
+    var no={orderType:'销售订单',status:'执行中',src:'kingdee',srcFile:R.filename,id:finalId,customer:String(o.customer||'空'),startDate:o.startDate,deadline:o.deadline,contractNo:String(o.contractNo||'空'),items:items};
     if(decision==='overwrite'){
       var exIdx=orders.findIndex(function(x){return x.id===o.id;});
       if(exIdx>=0){overwriteLog.push(o.id);orders.splice(exIdx,1);}
@@ -4117,7 +4126,7 @@ function kdDoImport(){
   if(skipCount)detail+='，跳过 '+skipCount+' 单';
   logOp('导入','订单管理',detail+'（来源文件：'+R.filename+'）');
   closeModal();renderContent();
-  alert('导入完成：'+detail+'\n\n框架订单已生成，审核状态默认「执行中」。');
+  alert('导入完成：'+detail+'\n\n销售订单已生成，审核状态默认「执行中」。');
   kdReport=null;kdState=null;
 }
 
@@ -4179,7 +4188,7 @@ function bulkBar(m){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
-    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入框架订单">导入金蝶订单</button>');
+    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
@@ -4467,12 +4476,14 @@ async function initApp(){
   migrateOrderItemLineNotes();
   // 订单管理：字段配置补齐并锁定「订单类型」系统字段（防删除后订单分类丢失）
   migrateOrderTypeField();
-  // 订单管理：字段配置补齐并锁定「合同号」系统字段（框架订单必填）
+  // 订单管理：字段配置补齐并锁定「合同号」系统字段（销售订单必填）
   migrateOrderContractNo();
   // 交付计划：字段配置清理（删废弃字段、加本批计划交付数量）
   migrateDeliveryFields();
-  // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与框架订单单号冲突
+  // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突
   migrateInventoryOrderIds();
+  // 订单类型改名：存量「框架订单」→「销售订单」（含历史数据一次性对齐）
+  migrateFrameworkToSales();
   // 库存打通：先把产品现有库存反填到库存订单的已交付数量，再同步 库存=Σ(已交付)（含历史数据一次性对齐）
   backfillInvDeliveredFromStock();
   syncStockFromInvOrders();
