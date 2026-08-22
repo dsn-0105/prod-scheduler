@@ -2405,7 +2405,7 @@ function delOrder(idx){
    退回库存：反向
    冲销：生成一条反向补偿记录，不删原记录
 ================================================================ */
-let __csCands=[],__csLines=[],__csMode='call';
+let __csCands=[],__csLines=[],__csMode='call',__csOrder=null;
 function csAttach(){
   document.querySelectorAll('.cs-inv').forEach(function(sel){
     sel.addEventListener('change',function(){csWarn(Number(sel.dataset.li));});
@@ -2417,7 +2417,7 @@ function csWarn(li){
   const warn=document.querySelector('.cs-warn[data-li="'+li+'"]');
   const qinp=document.querySelector('.cs-qty[data-li="'+li+'"]');
   if(!sel)return;
-  const ci=Number(sel.value);
+  const ci=sel.value==='' ? -1 : Number(sel.value);
   if(ci<0){if(warn)warn.textContent='';return;}
   const c=__csCands[ci];
   const line=__csLines.find(function(l){return l.i===li;});
@@ -2428,6 +2428,25 @@ function csWarn(li){
     const max=__csMode==='call'?Math.min(c.available,line.orderQty-line.deliveredQty):line.deliveredQty;
     qinp.max=max;
   }
+}
+/* 自动填充：将每行调用/退回数量填为该行所选库存订单的可用最大值（按已分配量扣减，避免超额）。未选择库存订单的行填 0。 */
+function csAutoFill(){
+  if(!__csLines||!__csCands)return;
+  const used={};
+  document.querySelectorAll('.cs-qty').forEach(function(inp){
+    const li=Number(inp.dataset.li);
+    const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
+    if(!sel||sel.value===''){inp.value=0;return;}
+    const ci=Number(sel.value);
+    const c=__csCands[ci];if(!c){inp.value=0;return;}
+    const line=__csLines.find(function(l){return l.i===li;});if(!line){inp.value=0;return;}
+    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
+    const curAvail=c.available-(used[ci]||0);
+    const q=Math.max(0,Math.min(curAvail,cap));
+    used[ci]=(used[ci]||0)+q;
+    inp.value=q;
+  });
+  document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
 }
 function openCallStock(){
   const s=selSet('order_frame');
@@ -2466,10 +2485,11 @@ function openCallStock(){
   });
   const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过库存可用量，也不可超过销售未交付量。</p>'
     +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>调用库存订单</th><th>调用数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-  showModal('调用库存 - '+esc(o.id),body,[
-    {label:'确认调用',cls:'btn-primary',onclick:function(){doCallStock(o);}},
-    {label:'取消',onclick:closeModal}
-  ]);
+  __csOrder=o;
+  showModal('调用库存 - '+esc(o.id),body,
+    '<button class="btn" onclick="csAutoFill()">自动填充</button>'+
+    '<button class="btn btn-primary" onclick="doCallStock(__csOrder)">确认调用</button>'+
+    '<button class="btn" onclick="closeModal()">取消</button>');
   csAttach();
 }
 function doCallStock(o){
@@ -2479,7 +2499,7 @@ function doCallStock(o){
     const q=num(inp.value);
     if(q<=0)return;
     const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
-    const ci=sel?Number(sel.value):-1;
+    const ci=sel?(sel.value===''?-1:Number(sel.value)):-1;
     if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
     const c=__csCands[ci];
     const line=__csLines.find(function(l){return l.i===li;});
@@ -2531,10 +2551,11 @@ function openReturnStock(){
   });
   const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条已交付明细选择退回目标库存订单（默认同料号，跨料号将提示）。退回数量不可超过销售已交付量。</p>'
     +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>退回目标库存订单</th><th>退回数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-  showModal('退回库存 - '+esc(o.id),body,[
-    {label:'确认退回',cls:'btn-primary',onclick:function(){doReturnStock(o);}},
-    {label:'取消',onclick:closeModal}
-  ]);
+  __csOrder=o;
+  showModal('退回库存 - '+esc(o.id),body,
+    '<button class="btn" onclick="csAutoFill()">自动填充</button>'+
+    '<button class="btn btn-primary" onclick="doReturnStock(__csOrder)">确认退回</button>'+
+    '<button class="btn" onclick="closeModal()">取消</button>');
   csAttach();
 }
 function doReturnStock(o){
@@ -2544,7 +2565,7 @@ function doReturnStock(o){
     const q=num(inp.value);
     if(q<=0)return;
     const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
-    const ci=sel?Number(sel.value):-1;
+    const ci=sel?(sel.value===''?-1:Number(sel.value)):-1;
     if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
     const line=__csLines.find(function(l){return l.i===li;});
     if(q>line.deliveredQty){alert('退回数量 '+q+' 超过销售已交付 '+line.deliveredQty);return;}
@@ -4770,6 +4791,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.28</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.29</div>
 </body>
 </html>
