@@ -2750,7 +2750,8 @@ function recalcDeliveryTotals(){
 function deliveryModal(idx,prefill){
   if(!ensureWrite('delivery'))return;
   const d=prefill!=null?{...prefill}:(idx!=null?{...deliveries[idx]}:{});
-  const items=deliveryItems(d);
+  /* 新增且已带订单（如「生成交付计划」）：明细稍后由 deliveryOrderChange 从订单带出，先不渲染 */
+  const items=(idx<0&&d.orderId)?[]:deliveryItems(d);
   /* 表头区：订单/客户/交付参数 */
   let body='<div class="form-row">'+
     '<div><label>订单编号 *</label><select id="dl_orderId" onchange="deliveryOrderChange()"><option value="">请选择订单</option>'+deliveryOrderOptions(d.orderId)+'</select></div>'+
@@ -2772,6 +2773,8 @@ function deliveryModal(idx,prefill){
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveDelivery('+(idx!=null?idx:-1)+')">保存</button>'
   );
   recalcDeliveryTotals();
+  /* 新增且预填了订单：自动带出客户与明细（规格/型号/商品行备注） */
+  if(idx<0&&d.orderId)deliveryOrderChange();
 }
 
 function saveDelivery(idx){
@@ -3718,6 +3721,7 @@ function bulkBar(m){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
+    if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
     if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
@@ -3739,6 +3743,18 @@ function bulkSingle(m,act){
   if(act==='edit')a.edit(i);
   else if(act==='copy')a.copy(i);
   else if(act==='gen'&&a.gen)a.gen(i);
+}
+
+/* 订单管理：为选中的订单生成交付计划（仅限 1 条）→ 跳转交付计划页并打开预填的新增交付计划弹窗 */
+function genDeliveryPlan(m){
+  const s=selSet(m);
+  if(s.size===0){alert('请先勾选 1 条订单');return;}
+  if(s.size>1){alert('「生成交付计划」一次只能选择 1 条订单，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
+  const oi=Number([...s][0]);
+  const o=orders[oi];
+  if(!o){alert('未找到该订单');return;}
+  switchTab('delivery');
+  deliveryModal(-1,{orderId:o.id,customer:o.customer});
 }
 
 /* 多选删除（一次确认） */
@@ -3999,6 +4015,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.12</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.13</div>
 </body>
 </html>
