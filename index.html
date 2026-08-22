@@ -603,7 +603,7 @@ const defaultFields={
     {key:'model',label:'型号',type:'text',required:false,locked:false},
     {key:'unit',label:'单位',type:'text',required:false,locked:false},
     {key:'dailyCap',label:'日产能',type:'number',required:false,locked:true},
-    {key:'stock',label:'库存',type:'number',required:false,locked:true},
+    {key:'stock',label:'库存/已交付数量',type:'number',required:false,locked:true},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:['启用','停用']}
   ],
   order:[
@@ -616,7 +616,7 @@ const defaultFields={
     {key:'orderQty',label:'订单数量',type:'number',required:true,locked:true,level:'line'},
     {key:'stockMax',label:'最大库存量',type:'number',required:false,locked:false,level:'line'},
     {key:'stockMin',label:'最小库存量',type:'number',required:false,locked:false,level:'line'},
-    {key:'deliveredQty',label:'已交付数量',type:'number',required:true,locked:true,level:'line'},
+    {key:'deliveredQty',label:'已交付数量',type:'number',required:true,locked:false,level:'line'},
     {key:'lineNotes',label:'商品行备注',type:'text',required:false,locked:false,level:'line'},
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
@@ -1624,7 +1624,7 @@ function migrateProductDailyCap(){
     }
     if(!cfg.product.some(f=>f.key==='stock')){
       const idx=cfg.product.findIndex(f=>f.key==='dailyCap');
-      const stockDef={key:'stock',label:'库存',type:'number',required:false,locked:true};
+      const stockDef={key:'stock',label:'库存/已交付数量',type:'number',required:false,locked:true};
       if(idx>=0)cfg.product.splice(idx+1,0,stockDef); else cfg.product.push(stockDef);
     }
     if(cfg.product.length!==beforeLen||!cfg.product.some(f=>f.key==='dailyCap')||!cfg.product.some(f=>f.key==='stock'))cfgChanged=true;
@@ -2141,7 +2141,7 @@ var PP_SCHEMA=[
   {key:'model',label:'型号',type:'text',get:function(p){return p.model||'';}},
   {key:'unit',label:'单位',type:'text',get:function(p){return p.unit||'';}},
   {key:'dailyCap',label:'日产能',type:'number',get:function(p){return p.dailyCap==null?'':p.dailyCap;}},
-  {key:'stock',label:'库存',type:'number',get:function(p){return p.stock==null?'':p.stock;}},
+  {key:'stock',label:'库存/已交付数量',type:'number',get:function(p){return p.stock==null?'':p.stock;}},
   {key:'status',label:'状态',type:'select',get:function(p){return p.status||'';}}
 ];
 function productPickerModal(opts){
@@ -2387,23 +2387,58 @@ function delOrder(idx){
   renderContent();
 }
 
-/* 库存同步：产品主数据库存 = 全部「库存订单」明细已交付数量之和。
-   业务口径（用户确认）：库存订单=生产入库到成品库，交付多少就是多少库存；
-   仅同步涉及的产品，其他产品（期初/手动库存）不受影响；
+/* 库存打通（一次性迁移）：把产品主数据现有「库存/已交付数量」反填到对应库存订单的
+   「已交付数量」，使 库存 = Σ(库存订单已交付) 在存量数据上立即成立，避免同步后库存被清零。
+   仅对「当前已交付合计为 0 且库存>0」的产品执行；已有交付或库存≤0 的跳过（幂等）。 */
+function backfillInvDeliveredFromStock(){
+  let changed=false;
+  products.forEach(p=>{
+    if(p.stock==null||num(p.stock)<=0)return;
+    const pid=p.id;
+    const lines=[];
+    orders.forEach(o=>{
+      if(orderTypeOf(o)!=='库存订单')return;
+      orderItems(o).forEach(it=>{ if(it.productId===pid) lines.push(it); });
+    });
+    if(!lines.length)return;
+    const totalDel=lines.reduce((s,it)=>s+num(it.deliveredQty),0);
+    if(totalDel>0)return;                // 已有交付记录，不覆盖（幂等）
+    const target=num(p.stock);
+    const sumQty=lines.reduce((s,it)=>s+num(it.orderQty),0);
+    if(sumQty>0){
+      let assigned=0;
+      lines.forEach((it,i)=>{
+        const d=(i===lines.length-1)?(target-assigned):Math.round(target*num(it.orderQty)/sumQty);
+        it.deliveredQty=Math.max(0,d); assigned+=it.deliveredQty;
+      });
+    }else{
+      const base=Math.floor(target/lines.length);
+      lines.forEach((it,i)=>{ it.deliveredQty=base+(i===0?(target-base*lines.length):0); });
+    }
+    changed=true;
+  });
+  if(changed){
+    save('orders',orders);
+    logOp('系统','库存打通','将产品现有库存按订单量比例反填到库存订单「已交付数量」（一次性对齐）');
+  }
+}
+
+/* 库存同步：产品「库存/已交付数量」= 全部「库存订单」明细已交付数量之和。
+   业务口径：库存订单=生产入库，交付多少就是多少库存；
+   仅同步「有库存订单」的产品；无库存订单的产品保留手动/期初库存；
    后续「框架订单调用库存」功能将在此基础上扣减。 */
 function syncStockFromInvOrders(){
   const map={};
   orders.forEach(o=>{
     if(orderTypeOf(o)!=='库存订单')return;
     orderItems(o).forEach(it=>{
-      const q=num(it.deliveredQty);
-      if(q>0&&it.productId)map[it.productId]=(map[it.productId]||0)+q;
+      if(it.productId)map[it.productId]=(map[it.productId]||0)+num(it.deliveredQty);
     });
   });
   let changed=false;
   products.forEach(p=>{
-    if(!(p.id in map))return;
-    const v=map[p.id];
+    if(!(p.id in map))return;            // 无库存订单的产品：保留手动/期初库存
+    const v=map[p.id]||0;
     if(num(p.stock)!==v){p.stock=v;changed=true;}
   });
   if(changed)save('products',products);
@@ -4438,7 +4473,8 @@ async function initApp(){
   migrateDeliveryFields();
   // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与框架订单单号冲突
   migrateInventoryOrderIds();
-  // 库存同步：存量库存订单的已交付数量 → 产品库存（含历史数据一次性对齐）
+  // 库存打通：先把产品现有库存反填到库存订单的已交付数量，再同步 库存=Σ(已交付)（含历史数据一次性对齐）
+  backfillInvDeliveredFromStock();
   syncStockFromInvOrders();
 
   bootDone=true;
