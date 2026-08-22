@@ -619,7 +619,7 @@ const defaultFields={
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
-    {key:'orderType',label:'订单类型',type:'select',required:true,locked:false,options:ORDER_TYPES,default:'框架订单',level:'head'},
+    {key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'框架订单',level:'head'},
     {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
   ],
   dailyPlan:[
@@ -1713,6 +1713,22 @@ function migrateOrderItemLineNotes(){
     logOp('系统','订单管理','系统迁移：为存量订单每条明细行补齐「商品行备注」字段位');
   }
 }
+/* 迁移：确保订单字段配置含「订单类型」系统字段并锁定（防止字段设置误删后订单分类丢失，
+   编辑保存时被默认归为框架订单） */
+function migrateOrderTypeField(){
+  if(!Array.isArray(fields.order))return;
+  let changed=false;
+  const f=fields.order.find(x=>x.key==='orderType');
+  if(!f){
+    fields.order.push({key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'框架订单',level:'head'});
+    changed=true;
+    logOp('系统','订单管理','系统迁移：字段配置补回「订单类型」系统字段');
+  }else if(!f.locked){
+    f.locked=true;changed=true;
+    logOp('系统','订单管理','系统迁移：锁定「订单类型」系统字段');
+  }
+  if(changed)save('fields',fields);
+}
 /* 旧数据迁移：平铺字段 → items[] */
 function migrateOrders(){
   let changed=false;
@@ -2224,6 +2240,12 @@ function saveOrder(idx){
   o.items=items;
   // 新增订单时，强制使用打开弹窗时记录的意图分类，避免串到其它分类
   if(idx<0&&pendingOrderType){o.orderType=pendingOrderType;}
+  /* orderType 兜底：若字段配置缺失（被字段设置删除）导致收集不到，
+     编辑时保留原订单类型，避免「库存订单」被默认归为「框架订单」 */
+  if(!o.orderType){
+    if(idx>=0&&orders[idx]&&orders[idx].orderType)o.orderType=orders[idx].orderType;
+    else o.orderType='框架订单';
+  }
   pendingOrderType=null;
   if(idx>=0){
     const oldO=orders[idx];
@@ -4003,6 +4025,8 @@ async function initApp(){
   migrateOrderItemProductAttrs();
   // 订单管理：明细行补齐「商品行备注」字段（配置 + 存量数据）
   migrateOrderItemLineNotes();
+  // 订单管理：字段配置补齐并锁定「订单类型」系统字段（防删除后订单分类丢失）
+  migrateOrderTypeField();
 
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
@@ -4015,6 +4039,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.13</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.14</div>
 </body>
 </html>
