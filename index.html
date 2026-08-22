@@ -1797,7 +1797,41 @@ function migrateOrders(){
   });
   if(changed)save('orders',orders);
 }
-/* 订单×明细行 展开的下拉选项（包装排产/交付计划选单用） */
+/* 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与框架订单单号冲突（已为 KCDD- 的跳过；自定义单号按 startDate 重排） */
+function migrateInventoryOrderIds(){
+  var changed=false;
+  // 第一遍：XSDD- 前缀直接替换为 KCDD-（保留日期与序号，确保唯一）
+  orders.forEach(function(o){
+    if(orderTypeOf(o)!=='库存订单')return;
+    var id=o.id||'';
+    if(id.indexOf('XSDD-')===0){o.id='KCDD-'+id.slice(5);changed=true;}
+  });
+  // 第二遍：非 KCDD- 的库存订单（自定义单号），按 startDate 重新生成 KCDD-YYYYMMDD-XXXXX，序号递增防重
+  var invMax={};
+  function kcSeq(dateStr){
+    if(invMax[dateStr]==null){
+      var max=0;
+      orders.forEach(function(o){
+        if(orderTypeOf(o)==='库存订单'&&o.id&&typeof o.id==='string'&&o.id.indexOf('KCDD-'+dateStr+'-')===0){
+          var n=parseInt(o.id.slice(('KCDD-'+dateStr+'-').length),10);
+          if(!isNaN(n)&&n>max)max=n;
+        }
+      });
+      invMax[dateStr]=max;
+    }
+    invMax[dateStr]++;
+    return String(invMax[dateStr]).padStart(5,'0');
+  }
+  orders.forEach(function(o){
+    if(orderTypeOf(o)!=='库存订单')return;
+    var id=o.id||'';
+    if(id.indexOf('KCDD-')===0)return;
+    var d=String(o.startDate||todayStr()).replace(/-/g,'');
+    o.id='KCDD-'+d+'-'+kcSeq(d);
+    changed=true;
+  });
+  if(changed){save('orders',orders);logOp('迁移','订单管理','存量库存订单单号前缀 XSDD- 统一改为 KCDD-');}
+}
 function orderItemOptions(selOrderId,selProductId){
   let out='';
   orders.forEach(o=>{
@@ -1939,9 +1973,10 @@ function renderOrderTable(formKey,typeOrders,prodMap){
 function addOrderOfType(type){if(!ensureWrite('order'))return;pendingOrderType=type;orderModal(null,{status:'执行中',orderType:type,startDate:todayStr(),items:[]});}
 
 /* 销售订单编号：XSDD-YYYYMMDD-XXXXX（销售订单大写-日期-5位序号，每日从 00001 刷新） */
-function nextOrderNo(dateStr){
+/* 订单编号生成：框架订单 XSDD-YYYYMMDD-XXXXX，库存订单 KCDD-YYYYMMDD-XXXXX（前缀区分，防止两类单号冲突） */
+function nextOrderNo(dateStr,type){
   const d=String(dateStr||todayStr()).replace(/-/g,'');
-  const prefix='XSDD-'+d+'-';
+  const prefix=(type==='库存订单'?'KCDD-':'XSDD-')+d+'-';
   let max=0;
   (orders||[]).forEach(o=>{
     if(o.id&&typeof o.id==='string'&&o.id.indexOf(prefix)===0){
@@ -1964,7 +1999,7 @@ function bulkGenOrder(){
   switchTab('order');
   pendingOrderType='库存订单';
   orderModal(null,{
-    id:nextOrderNo(todayStr()),
+    id:nextOrderNo(todayStr(),'库存订单'),
     customer:'库存',
     status:'执行中',
     orderType:'库存订单',
@@ -1978,6 +2013,8 @@ function bulkGenOrder(){
 function orderModal(idx,prefill){
   const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
   const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'框架订单',startDate:todayStr(),items:[]};
+  // 新增订单：按订单类型自动预填单号（库存订单 KCDD- / 框架订单 XSDD-），用户可手动修改
+  if(idx==null && !o.id){o.id=nextOrderNo(todayStr(),o.orderType);}
   const headCols=fields.order.filter(f=>!isLineField(f));
   let body='<div class="form-row">';
   headCols.forEach((f,i)=>{
@@ -4315,6 +4352,8 @@ async function initApp(){
   migrateOrderContractNo();
   // 交付计划：字段配置清理（删废弃字段、加本批计划交付数量）
   migrateDeliveryFields();
+  // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与框架订单单号冲突
+  migrateInventoryOrderIds();
   // 库存同步：存量库存订单的已交付数量 → 产品库存（含历史数据一次性对齐）
   syncStockFromInvOrders();
 
@@ -4330,6 +4369,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.21</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.22</div>
 </body>
 </html>
