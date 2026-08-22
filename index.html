@@ -1164,6 +1164,7 @@ function renderNav(){
 
 function switchTab(id){
   activeTab=id;
+  window.__skipScrollRestore=true;   // 切换页面：不恢复上一页的表格滚动位置
   for(const k in selRows)selRows[k].clear();
   renderNav();
   const item=NAV.find(n=>n.id===id);
@@ -1187,6 +1188,17 @@ function closeSidebar(){
 ================================================================ */
 function renderContent(){
   const c=document.getElementById('content');
+  /* 渲染会重建 DOM → 表格横向滚动位置将复位为 0。
+     这里在渲染前记录各表格滚动位置、渲染后按索引恢复（仅同一页面内的重渲染；
+     switchTab 切换页面会置 __skipScrollRestore=true 跳过恢复） */
+  var restoreScroll=!window.__skipScrollRestore;
+  window.__skipScrollRestore=false;
+  var savedScroll=[];
+  if(restoreScroll){
+    Array.prototype.forEach.call(c.querySelectorAll('.table-wrap'),function(w){
+      savedScroll.push([w.scrollLeft,w.scrollTop]);
+    });
+  }
   switch(activeTab){
     case 'dashboard':c.innerHTML=renderDashboard();break;
     case 'product':c.innerHTML=renderProducts();break;
@@ -1198,6 +1210,12 @@ function renderContent(){
     case 'logs':c.innerHTML=renderLogs();break;
     case 'users':c.innerHTML=renderUsers();break;
     default:c.innerHTML='<div class="empty">未知模块</div>';
+  }
+  if(restoreScroll){
+    var wraps=Array.prototype.slice.call(c.querySelectorAll('.table-wrap'));
+    savedScroll.forEach(function(r,i){
+      if(wraps[i]){wraps[i].scrollLeft=r[0];wraps[i].scrollTop=r[1];}
+    });
   }
   if(products.length+orders.length>=30){
     showBackupWarn();
@@ -3890,6 +3908,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.6</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.7</div>
 </body>
 </html>
