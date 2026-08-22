@@ -413,7 +413,7 @@ function logout(){
 /* ---- 权限：按表单控制写权限（管理员全放行；员工按 perms 逐表单） ---- */
 let currentUser=null;
 function formToKey(formKey){
-  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',fields:'fields',report:'report',logs:'logs'};
+  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};
   return m[formKey]||formKey;
 }
 function canWriteKey(k){
@@ -685,6 +685,7 @@ const NAV=[
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
   {id:'fields',label:'字段设置',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>'},
   {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'},
+  {id:'transfers',label:'调拨台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4M7 4L3 8M7 4l4 4M17 8v12M17 20l4-4M17 20l-4-4"/></svg>'},
   {id:'users',label:'员工管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>'}
 ];
 
@@ -693,6 +694,7 @@ const NAV=[
 ================================================================ */
 let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[];
 let logs=[];
+let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
 let meta={seq:0};
 let activeTab='dashboard';
@@ -1261,6 +1263,7 @@ function renderContent(){
     case 'delivery':c.innerHTML=renderDelivery();break;
     case 'fields':c.innerHTML=renderFields();break;
     case 'logs':c.innerHTML=renderLogs();break;
+    case 'transfers':c.innerHTML=renderTransfers();break;
     case 'users':c.innerHTML=renderUsers();break;
     default:c.innerHTML='<div class="empty">未知模块</div>';
   }
@@ -2396,6 +2399,227 @@ function delOrder(idx){
   renderContent();
 }
 
+/* ================================================================
+   调拨：调用库存 / 退回库存 / 冲销（写入调拨台账 transfers）
+   调用库存：库存订单已交付数量↓、销售订单已交付数量↑（库存随之回落）
+   退回库存：反向
+   冲销：生成一条反向补偿记录，不删原记录
+================================================================ */
+let __csCands=[],__csLines=[],__csMode='call';
+function csAttach(){
+  document.querySelectorAll('.cs-inv').forEach(function(sel){
+    sel.addEventListener('change',function(){csWarn(Number(sel.dataset.li));});
+    csWarn(Number(sel.dataset.li));
+  });
+}
+function csWarn(li){
+  const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
+  const warn=document.querySelector('.cs-warn[data-li="'+li+'"]');
+  const qinp=document.querySelector('.cs-qty[data-li="'+li+'"]');
+  if(!sel)return;
+  const ci=Number(sel.value);
+  if(ci<0){if(warn)warn.textContent='';return;}
+  const c=__csCands[ci];
+  const line=__csLines.find(function(l){return l.i===li;});
+  if(!c||!line)return;
+  if(c.productId!==line.productId){if(warn)warn.textContent='⚠ 跨料号替代：将用【'+esc(c.productId)+'】库存履行【'+esc(line.productId)+'】';}
+  else if(warn)warn.textContent='';
+  if(qinp){
+    const max=__csMode==='call'?Math.min(c.available,line.orderQty-line.deliveredQty):line.deliveredQty;
+    qinp.max=max;
+  }
+}
+function openCallStock(){
+  const s=selSet('order_frame');
+  if(s.size===0){alert('请先勾选 1 张销售订单');return;}
+  if(s.size>1){alert('「调用库存」只能选择 1 张销售订单，当前已选 '+s.size+' 张。');return;}
+  const o=orders[Number([...s][0])];
+  if(!o){alert('未找到订单');return;}
+  if(orderTypeOf(o)!=='销售订单'){alert('「调用库存」仅适用于销售订单');return;}
+  const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
+    .filter(function(l){return (l.orderQty-l.deliveredQty)>0;});
+  if(!lines.length){alert('该销售订单所有明细均已交付，无可调用库存');return;}
+  const cands=[];
+  orders.forEach(function(inv){
+    if(orderTypeOf(inv)!=='库存订单')return;
+    (inv.items||[]).forEach(function(it,ii){
+      const av=num(it.deliveredQty);
+      if(av>0)cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av});
+    });
+  });
+  __csCands=cands;__csLines=lines;__csMode='call';
+  let rows='';
+  lines.forEach(function(l){
+    const undel=l.orderQty-l.deliveredQty;
+    let def=cands.filter(function(c){return c.productId===l.productId;}).sort(function(a,b){return b.available-a.available;})[0];
+    let opts='<option value="">（不调用）</option>';
+    cands.forEach(function(c,ci){
+      const sel=(def&&c.invOrderId===def.invOrderId&&c.invLineIdx===def.invLineIdx)?' selected':'';
+      const tag=c.productId===l.productId?'':' ⚠替代料';
+      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+' 可用'+c.available+tag+'</option>';
+    });
+    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+' 未交付 '+undel+'</span></td>'
+      +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
+      +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" value="0" style="width:90px"></td></tr>';
+  });
+  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过库存可用量，也不可超过销售未交付量。</p>'
+    +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>调用库存订单</th><th>调用数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  showModal('调用库存 - '+esc(o.id),body,[
+    {label:'确认调用',cls:'btn-primary',onclick:function(){doCallStock(o);}},
+    {label:'取消',onclick:closeModal}
+  ]);
+  csAttach();
+}
+function doCallStock(o){
+  const used={};const invUpdates=[];const salesUpdates=[];let any=false;
+  document.querySelectorAll('.cs-qty').forEach(function(inp){
+    const li=Number(inp.dataset.li);
+    const q=num(inp.value);
+    if(q<=0)return;
+    const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
+    const ci=sel?Number(sel.value):-1;
+    if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
+    const c=__csCands[ci];
+    const line=__csLines.find(function(l){return l.i===li;});
+    const undel=line.orderQty-line.deliveredQty;
+    const curAvail=c.available-(used[ci]||0);
+    if(q>curAvail){alert('调用数量 '+q+' 超过库存可用量 '+curAvail);return;}
+    if(q>undel){alert('调用数量 '+q+' 超过销售未交付 '+undel);return;}
+    used[ci]=(used[ci]||0)+q;
+    invUpdates.push({invOrderId:c.invOrderId,invLineIdx:c.invLineIdx,qty:q});
+    salesUpdates.push({lineIdx:li,qty:q});
+    any=true;
+  });
+  if(!any){alert('未填写任何调用数量');return;}
+  applyStockMove(o,salesUpdates,invUpdates,'call');
+  closeModal();
+}
+function openReturnStock(){
+  const s=selSet('order_frame');
+  if(s.size===0){alert('请先勾选 1 张销售订单');return;}
+  if(s.size>1){alert('「退回库存」只能选择 1 张销售订单，当前已选 '+s.size+' 张。');return;}
+  const o=orders[Number([...s][0])];
+  if(!o){alert('未找到订单');return;}
+  if(orderTypeOf(o)!=='销售订单'){alert('「退回库存」仅适用于销售订单');return;}
+  const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
+    .filter(function(l){return l.deliveredQty>0;});
+  if(!lines.length){alert('该销售订单所有明细已交付量为 0，无可供退回的库存');return;}
+  const cands=[];
+  orders.forEach(function(inv){
+    if(orderTypeOf(inv)!=='库存订单')return;
+    (inv.items||[]).forEach(function(it,ii){
+      cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:num(it.deliveredQty)});
+    });
+  });
+  __csCands=cands;__csLines=lines;__csMode='return';
+  let rows='';
+  lines.forEach(function(l){
+    let def=cands.filter(function(c){return c.productId===l.productId;})[0];
+    let opts='<option value="">（不退回）</option>';
+    cands.forEach(function(c,ci){
+      const sel=(def&&c.invOrderId===def.invOrderId&&c.invLineIdx===def.invLineIdx)?' selected':'';
+      const tag=c.productId===l.productId?'':' ⚠替代料';
+      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+tag+'</option>';
+    });
+    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+' 已交付 '+l.deliveredQty+'</span></td>'
+      +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
+      +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" max="'+l.deliveredQty+'" value="0" style="width:90px"></td></tr>';
+  });
+  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条已交付明细选择退回目标库存订单（默认同料号，跨料号将提示）。退回数量不可超过销售已交付量。</p>'
+    +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>退回目标库存订单</th><th>退回数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  showModal('退回库存 - '+esc(o.id),body,[
+    {label:'确认退回',cls:'btn-primary',onclick:function(){doReturnStock(o);}},
+    {label:'取消',onclick:closeModal}
+  ]);
+  csAttach();
+}
+function doReturnStock(o){
+  const invUpdates=[];const salesUpdates=[];let any=false;
+  document.querySelectorAll('.cs-qty').forEach(function(inp){
+    const li=Number(inp.dataset.li);
+    const q=num(inp.value);
+    if(q<=0)return;
+    const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
+    const ci=sel?Number(sel.value):-1;
+    if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
+    const line=__csLines.find(function(l){return l.i===li;});
+    if(q>line.deliveredQty){alert('退回数量 '+q+' 超过销售已交付 '+line.deliveredQty);return;}
+    const c=__csCands[ci];
+    invUpdates.push({invOrderId:c.invOrderId,invLineIdx:c.invLineIdx,qty:q});
+    salesUpdates.push({lineIdx:li,qty:q});
+    any=true;
+  });
+  if(!any){alert('未填写任何退回数量');return;}
+  applyStockMove(o,salesUpdates,invUpdates,'return');
+  closeModal();
+}
+function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
+  invUpdates.forEach(function(u){
+    const inv=orders.find(function(x){return x.id===u.invOrderId;});
+    if(!inv)return;
+    const it=(inv.items||[])[u.invLineIdx];
+    if(!it)return;
+    const delta=type==='call'?-u.qty:u.qty;
+    it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);
+  });
+  salesUpdates.forEach(function(u){
+    const it=(salesOrder.items||[])[u.lineIdx];
+    if(!it)return;
+    const delta=type==='call'?u.qty:-u.qty;
+    it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);
+  });
+  save('orders',orders);
+  syncStockFromInvOrders();
+  const ts=new Date().toLocaleString('zh-CN',{hour12:false});
+  const user=(currentUser&&currentUser.name)||(currentUser&&currentUser.username)||'未知';
+  salesUpdates.forEach(function(su,idx){
+    const iu=invUpdates[idx];
+    const inv=orders.find(function(x){return x.id===iu.invOrderId;});
+    const invIt=(inv.items||[])[iu.invLineIdx];
+    const salesIt=(salesOrder.items||[])[su.lineIdx];
+    transfers.unshift({
+      id:'TR'+Date.now()+'-'+idx, type:type,
+      salesOrderId:salesOrder.id, salesLineIdx:su.lineIdx,
+      invOrderId:iu.invOrderId, invLineIdx:iu.invLineIdx,
+      productId:salesIt?salesIt.productId:null, invProductId:invIt?invIt.productId:null,
+      qty:su.qty, ts:ts, user:user, reversed:false, reverseOf:null
+    });
+  });
+  save('transfers',transfers);
+  logOp(type==='call'?'调用库存':'退回库存','订单管理','销售订单 '+salesOrder.id+(type==='call'?' 调用库存':' 退回库存'));
+  renderContent();
+}
+function reverseTransfer(id){
+  if(!canWriteKey('transfers')){alert('当前账号无调拨台账编辑权限');return;}
+  const t=transfers.find(function(x){return x.id===id;});
+  if(!t){alert('未找到记录');return;}
+  if(t.reversed){alert('该记录已冲销');return;}
+  if(!confirm('确认冲销该调拨记录？将生成一条反向记录。'))return;
+  const sales=orders.find(function(x){return x.id===t.salesOrderId;});
+  const inv=orders.find(function(x){return x.id===t.invOrderId;});
+  if(!sales||!inv){alert('关联订单已不存在，无法冲销');return;}
+  const salesIt=(sales.items||[])[t.salesLineIdx];
+  const invIt=(inv.items||[])[t.invLineIdx];
+  if(!salesIt||!invIt){alert('关联明细已不存在，无法冲销');return;}
+  const revType=t.type==='call'?'return':'call';
+  invIt.deliveredQty=Math.max(0,num(invIt.deliveredQty)+(t.type==='call'?t.qty:-t.qty));
+  salesIt.deliveredQty=Math.max(0,num(salesIt.deliveredQty)+(t.type==='call'?-t.qty:+t.qty));
+  save('orders',orders);
+  syncStockFromInvOrders();
+  t.reversed=true;
+  transfers.unshift({
+    id:'TR'+Date.now(), type:revType,
+    salesOrderId:t.salesOrderId, salesLineIdx:t.salesLineIdx,
+    invOrderId:t.invOrderId, invLineIdx:t.invLineIdx,
+    productId:t.productId, invProductId:t.invProductId,
+    qty:t.qty, ts:new Date().toLocaleString('zh-CN',{hour12:false}),
+    user:(currentUser&&currentUser.name)||'未知', reversed:false, reverseOf:t.id
+  });
+  save('transfers',transfers);
+  logOp('冲销','调拨台账','冲销调拨记录 '+t.id);
+  renderContent();
+}
+
 /* 库存打通（一次性迁移）：把产品主数据现有「库存/已交付数量」反填到对应库存订单的
    「已交付数量」，使 库存 = Σ(库存订单已交付) 在存量数据上立即成立，避免同步后库存被清零。
    仅对「当前已交付合计为 0 且库存>0」的产品执行；已有交付或库存≤0 的跳过（幂等）。 */
@@ -3052,10 +3276,49 @@ function clearLogs(){
   renderContent();
 }
 
+/* 调拨台账：只读流水，逐条可冲销 */
+function renderTransfers(){
+  let html='<div class="page">';
+  html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录每次「调用库存 / 退回库存」及冲销。记录不可修改，仅可逐条冲销。</span></div>';
+  html+='<div class="table-wrap"><table><thead><tr>'
+    +'<th style="min-width:140px">时间</th>'
+    +'<th style="width:70px">类型</th>'
+    +'<th style="width:140px">销售订单</th>'
+    +'<th style="width:140px">库存订单</th>'
+    +'<th>产品/料号</th>'
+    +'<th style="width:70px">数量</th>'
+    +'<th style="width:90px">操作人</th>'
+    +'<th style="width:80px">操作</th>'
+    +'</tr></thead><tbody>';
+  if(!transfers||transfers.length===0){html+='<tr><td colspan="8" class="empty">暂无调拨记录</td></tr>';}
+  else{
+    transfers.forEach(function(t){
+      const isCall=t.type==='call';
+      const typeCls=isCall?'tag-green':'tag-amber';
+      const typeLabel=isCall?'调用':'退回';
+      const cross=t.invProductId&&t.productId&&t.invProductId!==t.productId;
+      const prodHtml=esc(t.productId||'')+(cross?' <span style="color:var(--red)">←替代 '+esc(t.invProductId||'')+'</span>':'');
+      const btn=t.reversed?'<span style="color:var(--muted)">已冲销</span>'
+        :'<button class="btn btn-sm" onclick="reverseTransfer(\''+esc(t.id)+'\')">冲销</button>';
+      html+='<tr><td style="font-size:12px;color:var(--muted);white-space:nowrap">'+esc(t.ts)+'</td>'
+        +'<td><span class="tag '+typeCls+'">'+typeLabel+'</span></td>'
+        +'<td>'+esc(t.salesOrderId||'')+'</td>'
+        +'<td>'+esc(t.invOrderId||'')+'</td>'
+        +'<td>'+prodHtml+'</td>'
+        +'<td>'+num(t.qty)+'</td>'
+        +'<td style="font-size:12px">'+esc(t.user||'')+'</td>'
+        +'<td>'+btn+'</td></tr>';
+    });
+  }
+  html+='</tbody></table></div>';
+  html+='</div>';
+  return html;
+}
+
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'备货排产',dailyPkgs:'包装排产',deliveries:'交付计划',fields:'字段设置'};
+const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'备货排产',dailyPkgs:'包装排产',deliveries:'交付计划',fields:'字段设置',transfers:'调拨台账'};
 async function loadUsers(){
   try{
     const r=await apiReq('/users?token='+authToken);
@@ -4189,6 +4452,8 @@ function bulkBar(m){
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
+    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
+    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
@@ -4437,6 +4702,7 @@ async function initApp(){
   dailyPkgs=await DB.get('dailyPkgs',[]);
   deliveries=await DB.get('deliveries',[]);
   logs=await DB.get('logs',[]);
+  transfers=await DB.get('transfers',[]);
   fields=await DB.get('fields',JSON.parse(JSON.stringify(defaultFields)));
   fieldsAudit=await DB.get('fieldsAudit','audited');
   fieldsDraft=await DB.get('fieldsDraft',null);
@@ -4500,6 +4766,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.26</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.27</div>
 </body>
 </html>
