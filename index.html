@@ -552,8 +552,8 @@ const HARD_FIELDS={
   delivery:[
     {key:'orderId',label:'订单编号'},{key:'customer',label:'客户'},{key:'productId',label:'产品编码'},
     {key:'productName',label:'产品名称'},{key:'orderTotal',label:'订单总量'},{key:'delivered',label:'已交付'},
-    {key:'undelivered',label:'未交付'},{key:'freq',label:'交付频率'},{key:'finalDate',label:'最终交付期'},
-    {key:'firstDate',label:'首次交付日'},{key:'batchCount',label:'批次数量'},{key:'perBatch',label:'每批交付'},{key:'notes',label:'备注'}
+    {key:'undelivered',label:'未交付'},{key:'planQty',label:'本批计划交付数量'},{key:'finalDate',label:'最终交付期'},
+    {key:'firstDate',label:'首次交付日'},{key:'notes',label:'备注'}
   ]
 };
 function fmtLogVal(v){ if(v===undefined||v===null||v==='')return '空'; return String(v); }
@@ -2624,11 +2624,9 @@ function renderDelivery(){
       {key:'orderTotal',label:'订单总量',type:'number'},
       {key:'delivered',label:'已交付',type:'number'},
       {key:'undelivered',label:'未交付',type:'number'},
-      {key:'freq',label:'交付频率',type:'text',select:true},
+      {key:'planQty',label:'本批计划交付数量',type:'number'},
       {key:'finalDate',label:'最终交付期',type:'date'},
       {key:'firstDate',label:'首次交付日',type:'date'},
-      {key:'batchCount',label:'批次',type:'number'},
-      {key:'perBatch',label:'每批量',type:'text'},
       {key:'specModel',label:'规格/型号',type:'text',get:r=>deliveryItems(r).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、')},
       {key:'lineNotes',label:'商品行备注',type:'text',get:r=>deliveryItems(r).map(i=>i.lineNotes||'').filter(Boolean).join('、')}
     ];
@@ -2638,7 +2636,7 @@ function renderDelivery(){
     html+=bulkBar('delivery');
     html+=filterBar('delivery');
     html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'</tr></thead><tbody>';
-    if(shownDl.length===0){html+=noMatchRow('delivery',14);}
+    if(shownDl.length===0){html+=noMatchRow('delivery',12);}
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
       const selChecked=selSet('delivery').has(String(idx))?'checked':'';
@@ -2646,11 +2644,9 @@ function renderDelivery(){
         '<td data-key="orderTotal" style="text-align:right">'+money(d.orderTotal)+'</td>'+
         '<td data-key="delivered" style="text-align:right">'+money(d.delivered)+'</td>'+
         '<td data-key="undelivered" style="text-align:right">'+money(d.undelivered)+'</td>'+
-        '<td data-key="freq">'+esc(d.freq)+'</td>'+
+        '<td data-key="planQty" style="text-align:right">'+(d.planQty!=null?money(d.planQty):'')+'</td>'+
         '<td data-key="finalDate">'+fmtDate(d.finalDate)+'</td>'+
         '<td data-key="firstDate">'+fmtDate(d.firstDate)+'</td>'+
-        '<td data-key="batchCount" style="text-align:center">'+(d.batchCount||'')+'</td>'+
-        '<td data-key="perBatch" style="text-align:center">'+esc(d.perBatch)+'</td>'+
         '<td data-key="specModel">'+esc(deliveryItems(d).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、'))+'</td>'+
         '<td data-key="lineNotes">'+esc(deliveryItems(d).map(i=>i.lineNotes||'').filter(Boolean).join('、'))+'</td></tr>';
     });
@@ -2760,12 +2756,10 @@ function deliveryModal(idx,prefill){
     '<div><label>订单编号 *</label><select id="dl_orderId" onchange="deliveryOrderChange()"><option value="">请选择订单</option>'+deliveryOrderOptions(d.orderId)+'</select></div>'+
     '<div><label>客户名称 *</label><input type="text" id="dl_customer" value="'+esc(d.customer)+'"></div>'+
     '</div><div class="form-row">'+
-    '<div><label>交付频率 *</label><select id="dl_freq">'+DELIVERY_FREQ.map(f=>'<option '+(f===d.freq?'selected':'')+'>'+f+'</option>').join('')+'</select></div>'+
-    '<div><label>最终交付期 *</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
+    '<div><label>最终交付期</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
     '<div><label>首次交付日</label><input type="date" id="dl_firstDate" value="'+fmtDate(d.firstDate)+'"></div>'+
     '</div><div class="form-row">'+
-    '<div><label>交付批次</label><input type="number" id="dl_batchCount" value="'+(d.batchCount||'')+'"></div>'+
-    '<div><label>每批交付量</label><input type="text" id="dl_perBatch" value="'+esc(d.perBatch)+'"></div>'+
+    '<div><label>本批计划交付数量 *</label><input type="number" id="dl_planQty" value="'+(d.planQty!=null?d.planQty:'')+'" placeholder="本次计划交付的总数量"></div>'+
     '<div><label>备注</label><input type="text" id="dl_notes" value="'+esc(d.notes)+'"></div>'+
     '</div>';
   /* 表体区：交付明细（由订单带出） */
@@ -2784,11 +2778,9 @@ function saveDelivery(idx){
   const d={
     orderId:document.getElementById('dl_orderId').value,
     customer:document.getElementById('dl_customer').value,
-    freq:document.getElementById('dl_freq').value,
     finalDate:document.getElementById('dl_finalDate').value,
     firstDate:document.getElementById('dl_firstDate').value,
-    batchCount:num(document.getElementById('dl_batchCount').value),
-    perBatch:document.getElementById('dl_perBatch').value,
+    planQty:num(document.getElementById('dl_planQty').value),
     notes:document.getElementById('dl_notes').value,
     items:[]
   };
@@ -2803,8 +2795,22 @@ function saveDelivery(idx){
   d.orderTotal=total;d.delivered=delivered;d.undelivered=total-delivered;
   if(!d.orderId){alert('请选择订单');return;}
   if(d.items.length===0){alert('请选择订单以带出交付明细');return;}
+  if(d.planQty==null||d.planQty<=0){alert('请填写本批计划交付数量');return;}
+  /* 本批计划交付数量 > 未交付数量 → 确认浮层：取消退回表单，确认保存继续 */
+  if(d.planQty>d.undelivered){
+    showConfirmOverlay(
+      '本批计划交付数量 <b>'+d.planQty+'</b> 大于未交付数量 <b>'+d.undelivered+'</b>，是否确认保存？',
+      null,
+      function(){doSaveDelivery(d,idx);},
+      '取消','确认保存'
+    );
+    return;
+  }
+  doSaveDelivery(d,idx);
+}
+function doSaveDelivery(d,idx){
   if(idx>=0){const oldD=deliveries[idx];d.batches=oldD.batches;deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');}
-  else{deliveries.push(d);logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+')');}
+  else{deliveries.push(d);logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+')，本批计划交付'+d.planQty);}
   save('deliveries',deliveries);
   closeModal();
   renderContent();
@@ -2824,12 +2830,12 @@ function genBatches(idx){
   if(!d.finalDate||!d.firstDate){alert('请先填写最终交付期和首次交付日');return;}
   if(d.undelivered<=0){alert('未交付量为0，无需生成排期');return;}
 
-  // 计算间隔天数
+  // 计算间隔天数（新数据已无「交付频率」，默认每周 7 天；兼容旧数据带 freq）
   let interval=7;
-  if(d.freq.includes('三天'))interval=3;
-  else if(d.freq.includes('每日'))interval=1;
-  else if(d.freq.includes('周一'))interval=7;
-  else if(d.freq.includes('周五'))interval=7;
+  if(d.freq){
+    if(d.freq.includes('三天'))interval=3;
+    else if(d.freq.includes('每日'))interval=1;
+  }
 
   // 计算批次
   const batchCount=Math.max(1,Math.ceil(d.undelivered/Math.ceil(d.undelivered/(d.batchCount||Math.ceil(d.undelivered/50)))));
@@ -3247,6 +3253,32 @@ function showModal(title,body,foot){
 }
 function closeModal(){
   document.getElementById('modalBg').classList.remove('show');
+}
+/* 二级确认浮层：浮在弹窗之上（z-index 300），不替换底层弹窗 DOM。
+   点「取消」/遮罩 → onCancel（退回原弹窗）；点「确认」→ onOk */
+function showConfirmOverlay(msg,onCancel,onOk,cancelText,okText){
+  closeConfirmOverlay();
+  var ov=document.createElement('div');
+  ov.className='modal-bg show';
+  ov.id='confirmOverlay';
+  ov.style.zIndex=300;
+  ov.innerHTML='<div class="modal" style="max-width:440px;width:90%;min-width:0">'+
+    '<div class="modal-head"><h3>提示</h3></div>'+
+    '<div class="modal-body" style="font-size:14px;line-height:1.8">'+msg+'</div>'+
+    '<div class="modal-foot">'+
+    '<button class="btn" id="co_cancel">'+esc(cancelText||'取消')+'</button>'+
+    '<button class="btn btn-primary" id="co_ok">'+esc(okText||'确认')+'</button>'+
+    '</div></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click',function(e){
+    if(e.target===ov){closeConfirmOverlay();if(onCancel)onCancel();}
+  });
+  ov.querySelector('#co_cancel').onclick=function(){closeConfirmOverlay();if(onCancel)onCancel();};
+  ov.querySelector('#co_ok').onclick=function(){closeConfirmOverlay();if(onOk)onOk();};
+}
+function closeConfirmOverlay(){
+  var ov=document.getElementById('confirmOverlay');
+  if(ov)ov.remove();
 }
 
 /* ================================================================
@@ -3969,6 +4001,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.10</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.11</div>
 </body>
 </html>
