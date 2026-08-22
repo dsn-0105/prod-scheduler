@@ -621,6 +621,7 @@ const defaultFields={
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
     {key:'status',label:'状态',type:'select',required:false,locked:false,options:ORDER_STATUS,level:'head'},
     {key:'orderType',label:'订单类型',type:'select',required:true,locked:true,options:ORDER_TYPES,default:'框架订单',level:'head'},
+    {key:'contractNo',label:'合同号',type:'text',required:true,locked:true,level:'head'},
     {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
   ],
   dailyPlan:[
@@ -1753,6 +1754,21 @@ function migrateOrderTypeField(){
   }
   if(changed)save('fields',fields);
 }
+/* 迁移：确保订单字段配置含「合同号」系统字段并锁定（框架订单必填） */
+function migrateOrderContractNo(){
+  if(!Array.isArray(fields.order))return;
+  let changed=false;
+  const f=fields.order.find(x=>x.key==='contractNo');
+  if(!f){
+    fields.order.splice(fields.order.findIndex(x=>x.key==='notes'),0,{key:'contractNo',label:'合同号',type:'text',required:true,locked:true,level:'head'});
+    changed=true;
+    logOp('系统','订单管理','系统迁移：字段配置补回「合同号」系统字段');
+  }else if(!f.locked||!f.required){
+    f.locked=true;f.required=true;changed=true;
+    logOp('系统','订单管理','系统迁移：锁定「合同号」系统字段');
+  }
+  if(changed)save('fields',fields);
+}
 /* 迁移：交付计划字段配置清理（删除交付频率/批次/每批量，新增本批计划交付数量，最终交付期改非必填） */
 function migrateDeliveryFields(){
   if(!Array.isArray(fields.delivery))return;
@@ -1834,6 +1850,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
     {key:'customer',label:'客户',type:'text',get:r=>r.order.customer},
     {key:'status',label:'审核状态',type:'text',select:true,get:r=>r.order.status},
+    {key:'contractNo',label:'合同号',type:'text',get:r=>r.order.contractNo},
     {key:'productId',label:'商品编码',type:'text',get:r=>r.item.productId},
     {key:'productName',label:'商品名称',type:'text',get:r=>r.item.productName||(r.item.productId&&prodMap[r.item.productId]?prodMap[r.item.productId].name:'')},
     {key:'model',label:'型号',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.model:'';}},
@@ -1884,7 +1901,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
           '<td data-key="startDate" rowspan="'+rs+'">'+fmtDate(o.startDate)+'</td>'+
           '<td data-key="id" rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
           '<td data-key="customer" rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
-          '<td data-key="status" rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+          '<td data-key="status" rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
+          '<td data-key="contractNo" rowspan="'+rs+'">'+esc(o.contractNo||'')+'</td>';
       }
     }else{
       headCells=
@@ -1892,7 +1910,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="startDate">'+fmtDate(o.startDate)+'</td>'+
         '<td data-key="id" style="font-weight:600">'+esc(o.id)+'</td>'+
         '<td data-key="customer">'+esc(o.customer)+'</td>'+
-        '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>';
+        '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
+        '<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>';
     }
     html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+' onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
       '<td data-key="productId">'+esc(it.productId)+'</td>'+
@@ -2260,6 +2279,7 @@ function saveOrder(idx){
   });
   if(!o.id){alert('请填写订单编号');return;}
   if(!o.customer){alert('请填写客户名称');return;}
+  if(o.orderType==='框架订单'&&(!o.contractNo||!String(o.contractNo).trim())){alert('框架订单请填写合同号');return;}
   const items=[];
   document.querySelectorAll('#orderItemsTbl tbody tr').forEach(tr=>{
     const it={};
@@ -3965,6 +3985,8 @@ async function initApp(){
   migrateOrderItemLineNotes();
   // 订单管理：字段配置补齐并锁定「订单类型」系统字段（防删除后订单分类丢失）
   migrateOrderTypeField();
+  // 订单管理：字段配置补齐并锁定「合同号」系统字段（框架订单必填）
+  migrateOrderContractNo();
   // 交付计划：字段配置清理（删废弃字段、加本批计划交付数量）
   migrateDeliveryFields();
 
@@ -3980,6 +4002,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.17</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.18</div>
 </body>
 </html>
