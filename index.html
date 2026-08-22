@@ -657,11 +657,9 @@ const defaultFields={
     {key:'orderTotal',label:'订单总量',type:'number',required:true,locked:true},
     {key:'delivered',label:'已交付',type:'number',required:true,locked:true},
     {key:'undelivered',label:'未交付',type:'number',required:true,locked:true},
-    {key:'freq',label:'交付频率',type:'select',required:true,locked:false,options:DELIVERY_FREQ},
-    {key:'finalDate',label:'最终交付期',type:'date',required:true,locked:true},
-    {key:'firstDate',label:'首次交付日',type:'date',required:true,locked:false},
-    {key:'batchCount',label:'交付批次',type:'number',required:false,locked:false},
-    {key:'perBatch',label:'每批交付量',type:'text',required:false,locked:false},
+    {key:'planQty',label:'本批计划交付数量',type:'number',required:true,locked:false},
+    {key:'finalDate',label:'最终交付期',type:'date',required:false,locked:true},
+    {key:'firstDate',label:'首次交付日',type:'date',required:false,locked:false},
     {key:'notes',label:'备注',type:'text',required:false,locked:false}
   ]
 };
@@ -1366,14 +1364,6 @@ function countAlerts(){
   products.forEach(p=>{ if(p.stock!=null && num(p.stock)<=0) n++; });
   // 订单逾期
   orders.forEach(o=>{if(o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr())n++;});
-  // 交付计划近期
-  deliveries.forEach(d=>{
-    if(d.batches){
-      d.batches.forEach(b=>{
-        if(b.status==='待交付'&&fmtDate(b.date)<=todayStr())n++;
-      });
-    }
-  });
   return n;
 }
 
@@ -1409,23 +1399,6 @@ function renderDashboard(){
 
   overdueOrders.forEach(o=>{
     html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div>订单 <b>'+esc(o.id)+'</b>（'+esc(o.customer)+'）截止日期 '+fmtDate(o.deadline)+' 已逾期，未交付 '+money(orderQtyOf(o)-orderDeliveredOf(o))+' 台。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'delivery\')">查看交付</button></div></div>';
-  });
-
-  // 近期交付
-  const upcomingDeliveries=[];
-  deliveries.forEach(d=>{
-    if(d.batches){
-      d.batches.forEach(b=>{
-        if(b.status==='待交付'){
-          const days=Math.ceil((new Date(b.date)-new Date(todayStr()))/86400000);
-          if(days>=0&&days<=3)upcomingDeliveries.push({...b,orderId:d.orderId,customer:d.customer,productName:deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、')});
-        }
-      });
-    }
-  });
-  upcomingDeliveries.sort((a,b)=>fmtDate(a.date)-fmtDate(b.date));
-  upcomingDeliveries.slice(0,5).forEach(b=>{
-    html+='<div class="alert alert-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><div>'+fmtDate(b.date)+' 交付 <b>'+esc(b.productName)+'</b> '+b.planQty+' 台给 '+esc(b.customer)+'（订单 '+esc(b.orderId)+'） <button class="btn btn-sm" style="margin-left:8px" onclick="switchTab(\'delivery\')">查看</button></div></div>';
   });
 
   html+='</div>';
@@ -1792,6 +1765,20 @@ function migrateOrderTypeField(){
     logOp('系统','订单管理','系统迁移：锁定「订单类型」系统字段');
   }
   if(changed)save('fields',fields);
+}
+/* 迁移：交付计划字段配置清理（删除交付频率/批次/每批量，新增本批计划交付数量，最终交付期改非必填） */
+function migrateDeliveryFields(){
+  if(!Array.isArray(fields.delivery))return;
+  let changed=false;
+  const keep=fields.delivery.filter(f=>!['freq','batchCount','perBatch'].includes(f.key));
+  if(keep.length!==fields.delivery.length){fields.delivery=keep;changed=true;}
+  if(!fields.delivery.some(f=>f.key==='planQty')){
+    fields.delivery.push({key:'planQty',label:'本批计划交付数量',type:'number',required:true,locked:false});
+    changed=true;
+  }
+  const fd=fields.delivery.find(f=>f.key==='finalDate');
+  if(fd&&fd.required){fd.required=false;changed=true;}
+  if(changed){save('fields',fields);logOp('系统','交付计划','系统迁移：清理交付计划废弃字段配置');}
 }
 /* 旧数据迁移：平铺字段 → items[] */
 function migrateOrders(){
@@ -2696,7 +2683,7 @@ function shiftReportDate(delta){
    交付计划
 ================================================================ */
 function renderDelivery(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">分批交付 · 倒排排期 · 实际交付填报</span> '+(canWriteForm('delivery')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button>':'')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">按订单分批交付 · 本批数量确认</span> '+(canWriteForm('delivery')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button>':'')+'</div>';
 
   // 交付计划汇总
   html+='<h3 style="font-size:14px;margin:6px 0 8px">一、交付计划汇总</h3>';
@@ -2737,33 +2724,6 @@ function renderDelivery(){
         '<td data-key="lineNotes">'+esc(deliveryItems(d).map(i=>i.lineNotes||'').filter(Boolean).join('、'))+'</td></tr>';
     });
     html+='</tbody></table></div>';
-  }
-  // 交付排期明细
-  html+='<h3 style="font-size:14px;margin:18px 0 8px">二、交付排期明细</h3>';
-  const hasBatches=deliveries.some(d=>d.batches&&d.batches.length>0);
-  if(!hasBatches){
-    html+='<div class="empty">暂无排期明细，点击「生成排期」按交付频率自动倒排</div>';
-  }else{
-    deliveries.forEach(d=>{
-      if(!d.batches||d.batches.length===0)return;
-      html+='<h4 style="font-size:13px;margin:10px 0 4px;color:var(--blue)">'+esc(d.orderId)+' - '+esc(d.customer)+' - '+esc(deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、'))+'</h4>';
-      html+='<div class="table-wrap"><table><thead><tr><th>序号</th><th>计划交付日期</th><th>星期</th><th>计划交付量</th><th>累计计划</th><th>剩余未交付</th><th>实际交付量</th><th>状态</th><th>差异</th></tr></thead><tbody>';
-      d.batches.forEach(b=>{
-        const statusCls=b.status==='已交付'?'tag-green':(b.status==='逾期'?'tag-red':'tag-gray');
-        const diff=b.actualQty!=null&&b.actualQty!==''?num(b.actualQty)-num(b.planQty):'';
-        html+='<tr><td>'+b.seq+'</td><td>'+fmtDate(b.date)+'</td><td>'+esc(b.weekday)+'</td>'+
-          '<td style="text-align:right">'+b.planQty+'</td>'+
-          '<td style="text-align:right">'+b.cumulative+'</td>'+
-          '<td style="text-align:right">'+b.remaining+'</td>'+
-          '<td style="text-align:right">'+(b.actualQty!=null&&b.actualQty!==''?b.actualQty:'<input type="number" style="width:70px;padding:3px 6px" placeholder="填报" onchange="updateActual(\''+d.orderId+'\','+b.seq+',this.value)">')+'</td>'+
-          '<td><span class="tag '+statusCls+'">'+esc(b.status)+'</span></td>'+
-          '<td style="text-align:right">'+(diff!==''?(diff>0?'+':'')+diff:'')+'</td></tr>';
-      });
-      // 小计
-      const sumPlan=d.batches.reduce((s,b)=>s+num(b.planQty),0);
-      html+='<tr style="font-weight:600;background:var(--primary-light)"><td colspan="3">小计</td><td style="text-align:right">'+sumPlan+'</td><td></td><td></td><td></td><td></td><td></td></tr>';
-      html+='</tbody></table></div>';
-    });
   }
 
   html+='</div>';
@@ -2897,7 +2857,7 @@ function saveDelivery(idx){
   doSaveDelivery(d,idx);
 }
 function doSaveDelivery(d,idx){
-  if(idx>=0){const oldD=deliveries[idx];d.batches=oldD.batches;deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');}
+  if(idx>=0){const oldD=deliveries[idx];deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');}
   else{deliveries.push(d);logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+')，本批计划交付'+d.planQty);}
   save('deliveries',deliveries);
   closeModal();
@@ -2912,81 +2872,11 @@ function delDelivery(idx){
   renderContent();
 }
 
-function genBatches(idx){
-  const d=deliveries[idx];
-  if(!d){return;}
-  if(!d.finalDate||!d.firstDate){alert('请先填写最终交付期和首次交付日');return;}
-  if(d.undelivered<=0){alert('未交付量为0，无需生成排期');return;}
-
-  // 计算间隔天数（新数据已无「交付频率」，默认每周 7 天；兼容旧数据带 freq）
-  let interval=7;
-  if(d.freq){
-    if(d.freq.includes('三天'))interval=3;
-    else if(d.freq.includes('每日'))interval=1;
-  }
-
-  // 计算批次
-  const batchCount=Math.max(1,Math.ceil(d.undelivered/Math.ceil(d.undelivered/(d.batchCount||Math.ceil(d.undelivered/50)))));
-  const perBatch=Math.floor(d.undelivered/batchCount);
-  const remainder=d.undelivered%batchCount;
-
-  const batches=[];
-  let cumulative=0;
-  let currentDate=new Date(d.firstDate);
-  const finalDate=new Date(d.finalDate);
-  const weekdays=['周日','周一','周二','周三','周四','周五','周六'];
-
-  for(let i=0;i<batchCount;i++){
-    const qty=i===batchCount-1?perBatch+remainder:perBatch;
-    cumulative+=qty;
-    const wd=weekdays[currentDate.getDay()];
-    const dateStr=currentDate.getFullYear()+'-'+String(currentDate.getMonth()+1).padStart(2,'0')+'-'+String(currentDate.getDate()).padStart(2,'0');
-    batches.push({
-      seq:i+1,
-      date:dateStr,
-      weekday:wd,
-      planQty:qty,
-      cumulative:cumulative,
-      remaining:d.undelivered-cumulative,
-      actualQty:'',
-      status:'待交付',
-      diff:'',
-      notes:''
-    });
-    currentDate.setDate(currentDate.getDate()+interval);
-    if(currentDate>finalDate&&i<batchCount-1){
-      // 如果超过最终交付期，缩短间隔
-      currentDate=new Date(d.finalDate);
-      currentDate.setDate(currentDate.getDate()-interval*(batchCount-i-1));
-    }
-  }
-
-  d.batches=batches;
-  d.batchCount=batchCount;
-  d.perBatch=perBatch+(remainder>0?'(末批'+(perBatch+remainder)+')':'');
-  save('deliveries',deliveries);
-  logOp('生成排期','交付计划','订单「'+d.orderId+'」生成'+batchCount+'批交付排期');
-  renderContent();
-}
-
-function updateActual(orderId,seq,val){
-  const d=deliveries.find(x=>x.orderId===orderId);
-  if(!d||!d.batches)return;
-  const b=d.batches.find(x=>x.seq===seq);
-  if(!b)return;
-  b.actualQty=val;
-  b.status=val!==''?'已交付':'待交付';
-  b.diff=val!==''?num(val)-num(b.planQty):'';
-  save('deliveries',deliveries);
-  logOp('填报','交付计划','订单「'+orderId+'」第'+seq+'批实际交付'+val);
-  renderContent();
-}
-
 /* ================================================================
    操作日志
 ================================================================ */
 function renderLogs(){
-  const ACTION_CLS={'新增':'tag-green','编辑':'tag-blue','删除':'tag-red','导入':'tag-amber','导出':'','清空':'tag-red','生成排期':'tag-blue','填报':'tag-blue','字段设置':''};
+  const ACTION_CLS={'新增':'tag-green','编辑':'tag-blue','删除':'tag-red','导入':'tag-amber','导出':'','清空':'tag-red','字段设置':''};
   let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>操作日志 <span class="desc">记录关键操作 · 最多保留 500 条</span> <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="clearLogs()">清空日志</button></div>';
   if(logs.length===0){
     html+='<div class="empty">暂无操作记录</div>';
@@ -3759,7 +3649,7 @@ function formIOBtns(formKey){
 /* ================================================================
    批量操作：行选择 + 上方工具栏（编辑/复制/删除/导出选中/导入/全选）
    说明：可编辑表单的"操作"改为「先勾选行 → 点上方按钮」；
-   编辑/复制/生成排期等仅支持单条的操作，多选时自动拒绝。
+   编辑/复制等仅支持单条的操作，多选时自动拒绝。
 ================================================================ */
 var selRows={};        // selRows[模块] = Set(行标识字符串)
 var lastRowIds={};     // lastRowIds[模块] = 本次渲染的所有行标识（用于全选去重）
@@ -3791,7 +3681,7 @@ var FORM_ACTIONS={
   order_inv:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
   dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
-  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);},gen:function(i){genBatches(i);}}
+  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);}}
 };
 
 /* 表单上方批量操作工具栏 */
@@ -3807,7 +3697,6 @@ function bulkBar(m){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
-    if(a.gen)btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'gen\')">生成排期</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
@@ -3817,17 +3706,16 @@ function bulkBar(m){
   return '<div class="bulk-bar">'+btns.join('')+cnt+'</div>';
 }
 
-/* 单选操作（编辑/复制/生成排期）：多选或空选时拒绝 */
+/* 单选操作（编辑/复制）：多选或空选时拒绝 */
 function bulkSingle(m,act){
   const s=selSet(m);
-  const label={edit:'编辑',copy:'复制',gen:'生成排期'}[act];
+  const label={edit:'编辑',copy:'复制'}[act];
   if(s.size===0){alert('请先在左侧勾选要'+label+'的记录');return;}
   if(s.size>1){alert('「'+label+'」仅支持选中单条记录，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
   const i=Number([...s][0]);
   const a=FORM_ACTIONS[m];
   if(act==='edit')a.edit(i);
   else if(act==='copy')a.copy(i);
-  else if(act==='gen'&&a.gen)a.gen(i);
 }
 
 /* 订单管理：为选中的订单生成交付计划（仅限 1 条）→ 跳转交付计划页并打开预填的新增交付计划弹窗 */
@@ -4090,6 +3978,8 @@ async function initApp(){
   migrateOrderItemLineNotes();
   // 订单管理：字段配置补齐并锁定「订单类型」系统字段（防删除后订单分类丢失）
   migrateOrderTypeField();
+  // 交付计划：字段配置清理（删废弃字段、加本批计划交付数量）
+  migrateDeliveryFields();
 
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
@@ -4103,6 +3993,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.15</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.16</div>
 </body>
 </html>
