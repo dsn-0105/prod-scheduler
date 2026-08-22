@@ -4084,8 +4084,14 @@ function bulkBar(m){
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
-  btns.push('<button class="btn btn-sm" onclick="downloadTemplate(\''+a.formKey+'\')" title="下载导入模板（必填字段标红）">模板</button>');
-  if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
+  if(m==='order_frame'||m==='order_inv'){
+    /* 订单管理：模板/导入按钮暂禁用，避免误导入空文件清空本表单数据 */
+    btns.push('<button class="btn btn-sm" disabled style="margin-left:4px;opacity:.45;cursor:not-allowed" title="已暂禁用：误导入空文件会清空本表单数据">模板</button>');
+    if(writable)btns.push('<button class="btn btn-sm" disabled style="opacity:.45;cursor:not-allowed" title="已暂禁用：误导入空文件会清空本表单数据">导入</button>');
+  }else{
+    btns.push('<button class="btn btn-sm" onclick="downloadTemplate(\''+a.formKey+'\')" title="下载导入模板（必填字段标红）">模板</button>');
+    if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
+  }
   const cnt=selCount(m)>0?(' <span class="sel-count">已选 '+selCount(m)+' 项</span>'):'';
   return '<div class="bulk-bar">'+btns.join('')+cnt+'</div>';
 }
@@ -4383,6 +4389,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.24</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.25</div>
 </body>
 </html>
