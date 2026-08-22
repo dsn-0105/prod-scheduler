@@ -2317,16 +2317,41 @@ function saveOrder(idx){
     logOp('新增','订单管理','新增订单「'+o.id+'」('+esc(o.customer)+')，'+items.length+' 行明细');
   }
   save('orders',orders);
+  if(o.orderType==='库存订单')syncStockFromInvOrders();   // 库存订单已交付数量 → 产品库存
   closeModal();
   renderContent();
 }
 
 function delOrder(idx){
   if(!confirm('确认删除订单「'+orders[idx].id+'」？'))return;
+  const del=orders[idx];
   logOp('删除','订单管理','删除订单「'+orders[idx].id+'」('+orders[idx].customer+')');
   orders.splice(idx,1);
   save('orders',orders);
+  if(del&&orderTypeOf(del)==='库存订单')syncStockFromInvOrders();   // 删除库存订单后重算产品库存
   renderContent();
+}
+
+/* 库存同步：产品主数据库存 = 全部「库存订单」明细已交付数量之和。
+   业务口径（用户确认）：库存订单=生产入库到成品库，交付多少就是多少库存；
+   仅同步涉及的产品，其他产品（期初/手动库存）不受影响；
+   后续「框架订单调用库存」功能将在此基础上扣减。 */
+function syncStockFromInvOrders(){
+  const map={};
+  orders.forEach(o=>{
+    if(orderTypeOf(o)!=='库存订单')return;
+    orderItems(o).forEach(it=>{
+      const q=num(it.deliveredQty);
+      if(q>0&&it.productId)map[it.productId]=(map[it.productId]||0)+q;
+    });
+  });
+  let changed=false;
+  products.forEach(p=>{
+    if(!(p.id in map))return;
+    const v=map[p.id];
+    if(num(p.stock)!==v){p.stock=v;changed=true;}
+  });
+  if(changed)save('products',products);
 }
 
 /* ================================================================
@@ -3989,6 +4014,8 @@ async function initApp(){
   migrateOrderContractNo();
   // 交付计划：字段配置清理（删废弃字段、加本批计划交付数量）
   migrateDeliveryFields();
+  // 库存同步：存量库存订单的已交付数量 → 产品库存（含历史数据一次性对齐）
+  syncStockFromInvOrders();
 
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
@@ -4002,6 +4029,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.18</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.19</div>
 </body>
 </html>
