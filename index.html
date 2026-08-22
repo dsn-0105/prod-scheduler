@@ -3659,6 +3659,42 @@ function triggerImport(formKey){
   document.getElementById('importFile').click();
 }
 
+/* 导入前自动备份：将当前全部数据导出为可恢复的 .json（仅在有数据时调用） */
+function importPreBackup(){
+  var data={
+    version:2,exportDate:new Date().toISOString(),
+    products:products,orders:orders,
+    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,
+    logs:logs,fields:fields,meta:meta
+  };
+  var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download='生产排单系统_导入前备份_'+todayStr()+'_'+new Date().toISOString().slice(11,16).replace(':','')+'.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+/* 取某表单当前记录数（用于覆盖确认提示） */
+function currentDataCount(varName){
+  switch(varName){
+    case 'products':return (products||[]).length;
+    case 'orders':return (orders||[]).length;
+    case 'dailyPlans':return (dailyPlans||[]).length;
+    case 'dailyPkgs':return (dailyPkgs||[]).length;
+    case 'deliveries':return (deliveries||[]).length;
+  }
+  return 0;
+}
+/* 判断一行是否为有效数据（至少一个已映射字段非空） */
+function rowHasData(obj,keys){
+  for(var i=0;i<keys.length;i++){
+    var v=obj[keys[i]];
+    if(v!==''&&v!=null&&v!==undefined)return true;
+  }
+  return false;
+}
+
 function importXLSX(e){
   var file=e.target.files[0];
   if(!file){importFormKey='';return;}
@@ -3671,11 +3707,16 @@ function importXLSX(e){
         var cfg=XLSX_SHEETS.find(function(c){return c.formKey===importFormKey;});
         if(!cfg){alert('未找到对应表单配置');importFormKey='';e.target.value='';return;}
         var sh=sheets[0];
-        if(!sh||!sh.headers.length){alert('未识别到有效数据');importFormKey='';e.target.value='';return;}
+        if(!sh||!sh.headers.length){alert('未识别到有效数据：文件中没有表头行。');importFormKey='';e.target.value='';return;}
         var farr=fields[cfg.formKey]||[];
         var labelToKey={};
         farr.forEach(function(f){labelToKey[f.label]=f.key;});
         var colKeys=sh.headers.map(function(label){return labelToKey[label]||null;});
+        if(colKeys.filter(Boolean).length===0){
+          alert('未识别到任何匹配的表头字段，导入已取消。\n\n请使用本系统导出的模板，或确认文件表头与「'+cfg.sheet+'」字段一致。');
+          importFormKey='';e.target.value='';return;
+        }
+        var mappedKeys=farr.map(function(f){return f.key;});
         var newData=sh.rows.map(function(row){
           var obj={};
           colKeys.forEach(function(key,c){
@@ -3687,48 +3728,71 @@ function importXLSX(e){
             }
           });
           return obj;
-        });
-        if(newData.length===0){alert('未识别到有效数据。请确认表头与导出时一致。');}
-        else{
-          if(cfg.formKey==='order')newData=groupOrderRows(newData);
-          setDataByVar(cfg.varName,newData);
-          save(cfg.varName,newData);
-          logOp('导入',cfg.sheet,'导入 '+newData.length+' 条记录到「'+cfg.sheet+'」');
-          renderAll();
-          alert('导入成功！共导入 '+newData.length+' 条记录到「'+cfg.sheet+'」。');
+        }).filter(function(obj){return rowHasData(obj,mappedKeys);});
+        if(newData.length===0){
+          alert('未识别到有效数据（所有数据行均为空或不匹配）。\n\n请确认：文件表头与导出时一致、且数据行不为空。');
+          importFormKey='';e.target.value='';return;
         }
+        var exist=currentDataCount(cfg.varName);
+        if(exist>0){
+          if(!confirm('即将导入 '+newData.length+' 条记录到「'+cfg.sheet+'」，\n并覆盖其中现有的 '+exist+' 条记录。\n\n（已自动备份当前数据，可用顶部「恢复」还原）\n此操作不可撤销，确定继续？')){
+            importFormKey='';e.target.value='';return;
+          }
+          importPreBackup();
+        }
+        if(cfg.formKey==='order')newData=groupOrderRows(newData);
+        setDataByVar(cfg.varName,newData);
+        save(cfg.varName,newData);
+        logOp('导入',cfg.sheet,'导入 '+newData.length+' 条记录到「'+cfg.sheet+'」（覆盖前 '+exist+' 条）');
+        renderAll();
+        alert('导入成功！共导入 '+newData.length+' 条记录到「'+cfg.sheet+'」。\n\n原有数据已自动备份，可在顶部「恢复」中还原。');
       }else{
         /* 全量导入 */
-        var imported=0;
-        sheets.forEach(function(sh){
-          var cfg=XLSX_SHEETS.find(function(c){return c.sheet===sh.name;});
-          if(!cfg||!sh.headers.length)return;
-          var farr=fields[cfg.formKey]||[];
-          var labelToKey={};
-          farr.forEach(function(f){labelToKey[f.label]=f.key;});
-          var colKeys=sh.headers.map(function(label){return labelToKey[label]||null;});
-          var newData=sh.rows.map(function(row){
+        var plan=[],totalNew=0;
+        for(var si=0;si<sheets.length;si++){
+          var sh2=sheets[si];
+          var cfg2=XLSX_SHEETS.find(function(c){return c.sheet===sh2.name;});
+          if(!cfg2||!sh2.headers.length)continue;
+          var farr2=fields[cfg2.formKey]||[];
+          var labelToKey2={};
+          farr2.forEach(function(f){labelToKey2[f.label]=f.key;});
+          var colKeys2=sh2.headers.map(function(label){return labelToKey2[label]||null;});
+          if(colKeys2.filter(Boolean).length===0)continue;
+          var mappedKeys2=farr2.map(function(f){return f.key;});
+          var nd=sh2.rows.map(function(row){
             var obj={};
-            colKeys.forEach(function(key,c){
+            colKeys2.forEach(function(key,c){
               if(key){
-                var fdef=farr.find(function(f){return f.key===key;});
+                var fdef=farr2.find(function(f){return f.key===key;});
                 var val=row[c];
                 if(fdef&&fdef.type==='number')val=num(val);
                 obj[key]=val;
               }
             });
             return obj;
-          });
-          if(newData.length>0){
-            if(cfg.formKey==='order')newData=groupOrderRows(newData);
-            setDataByVar(cfg.varName,newData);
-            save(cfg.varName,newData);
-            logOp('导入',cfg.sheet,'全量导入 '+newData.length+' 条记录');
-            imported++;
+          }).filter(function(obj){return rowHasData(obj,mappedKeys2);});
+          if(nd.length>0){
+            if(cfg2.formKey==='order')nd=groupOrderRows(nd);
+            plan.push({cfg:cfg2,data:nd});
+            totalNew+=nd.length;
           }
+        }
+        if(plan.length===0){alert('未识别到任何有效数据。请确认文件包含正确的 Sheet 名称和表头。');importFormKey='';e.target.value='';return;}
+        var existTotal=currentDataCount('products')+currentDataCount('orders')+currentDataCount('dailyPlans')+currentDataCount('dailyPkgs')+currentDataCount('deliveries');
+        if(existTotal>0){
+          var detail=plan.map(function(p){return '「'+p.cfg.sheet+'」'+p.data.length+' 条';}).join('、');
+          if(!confirm('即将全量导入，覆盖以下表单数据：\n'+detail+'\n\n当前共有 '+existTotal+' 条记录将被覆盖。\n\n（已自动备份当前数据，可用顶部「恢复」还原）\n此操作不可撤销，确定继续？')){
+            importFormKey='';e.target.value='';return;
+          }
+          importPreBackup();
+        }
+        plan.forEach(function(p){
+          setDataByVar(p.cfg.varName,p.data);
+          save(p.cfg.varName,p.data);
+          logOp('导入',p.cfg.sheet,'全量导入 '+p.data.length+' 条记录');
         });
-        if(imported===0){alert('未识别到有效数据。请确认文件包含正确的 Sheet 名称和表头。');}
-        else{renderAll();alert('导入成功！共导入 '+imported+' 个表单的数据。');}
+        renderAll();
+        alert('导入成功！共导入 '+plan.length+' 个表单的数据。\n\n原有数据已自动备份，可在顶部「恢复」中还原。');
       }
     }catch(err){alert('导入失败：'+err.message+'\n\n请确认文件为 .xlsx 格式。');}
     importFormKey='';
@@ -4389,6 +4453,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.25</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.26</div>
 </body>
 </html>
