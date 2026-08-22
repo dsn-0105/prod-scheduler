@@ -186,7 +186,10 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .empty{text-align:center;padding:30px;color:var(--muted);font-size:13px}
 .empty svg{width:40px;height:40px;margin-bottom:8px;opacity:.4}
 /* 表格筛选/排序 */
-.th-sort{cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.th-sort{cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden}
+.th-sort .th-flex{display:inline-flex;align-items:center;max-width:100%}
+.th-sort .th-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;min-width:0}
+.th-sort .sort-ico,.th-sort .filt-ico{flex:0 0 auto}
 .th-sort:hover{filter:brightness(.96)}
 .sort-ico{font-size:9px;margin-left:3px;color:#c7d2fe;display:inline-block}
 .sort-ico.on{color:var(--primary)}
@@ -837,10 +840,10 @@ function thCol(m,col,style){
   const dir=sorted?(s.sort.dir===1?'▲':'▼'):'⇅';
   const f=s.filters[col.key];
   const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));
-  return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')" title="点击排序，按住左右拖动调整列顺序，右缘拖动调宽">'+esc(col.label)+
-    (col.locked?' '+LOCK:'')+
+  return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')" title="点击排序，按住左右拖动调整列顺序，右缘拖动调宽"><span class="th-flex"><span class="th-label">'+esc(col.label)+
+    (col.locked?' '+LOCK:'')+'</span>'+
     '<span class="sort-ico'+(sorted?' on':'')+'">'+dir+'</span>'+
-    '<span class="filt-ico'+(act?' on':'')+'" onclick="event.stopPropagation();openFilter(this,\''+m+'\',\''+col.key+'\')" title="筛选">'+FILT_SVG+'</span>'+
+    '<span class="filt-ico'+(act?' on':'')+'" onclick="event.stopPropagation();openFilter(this,\''+m+'\',\''+col.key+'\')" title="筛选">'+FILT_SVG+'</span></span>'+
     '<span class="th-rs" title="拖动调整列宽"></span></th>';
 }
 
@@ -1078,10 +1081,8 @@ function startColDrag(e,th){
 /* 表头可拖至的最小宽度：字段名第一个字 + “..”(省略号) + 排序符号 + 筛选符号（含 padding 与余量） */
 function minThWidth(th){
   try{
-    var label='';
-    for(var i=0;i<th.childNodes.length;i++){
-      if(th.childNodes[i].nodeType===3){label=(th.childNodes[i].textContent||'').trim();break;}
-    }
+    var lb=th.querySelector('.th-label');
+    var label=lb?(lb.textContent||'').trim():'';
     var cs=getComputedStyle(th);
     var ctx=document.createElement('canvas').getContext('2d');
     ctx.font=cs.fontSize+' '+cs.fontFamily;
@@ -1090,6 +1091,7 @@ function minThWidth(th){
     ctx.font='9px '+cs.fontFamily;                       // 排序符号字号 9px
     var sortW=ctx.measureText('⇅').width;                // 最宽排序符号
     if(sortW<6)sortW=9;
+    sortW+=3;                                            // sort-ico 左间距
     var extra=th.querySelector('.lock')?18:0;            // 锁定字段多留锁图标宽
     return Math.ceil(firstW+dotsW+sortW+19+20+extra+4);  // 19=筛选图标12+左距5+padding2; 20=th左右padding; 4=余量
   }catch(e){return 60;}
@@ -3888,6 +3890,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.5</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.6</div>
 </body>
 </html>
