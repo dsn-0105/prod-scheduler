@@ -2439,12 +2439,13 @@ function openCallStock(){
   const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
     .filter(function(l){return (l.orderQty-l.deliveredQty)>0;});
   if(!lines.length){alert('该销售订单所有明细均已交付，无可调用库存');return;}
+  const prodMap={};products.forEach(function(p){prodMap[p.id]=p;});
   const cands=[];
   orders.forEach(function(inv){
     if(orderTypeOf(inv)!=='库存订单')return;
     (inv.items||[]).forEach(function(it,ii){
       const av=num(it.deliveredQty);
-      if(av>0)cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av});
+      if(av>0){const prod=prodMap[it.productId]||{};cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});}
     });
   });
   __csCands=cands;__csLines=lines;__csMode='call';
@@ -2456,7 +2457,8 @@ function openCallStock(){
     cands.forEach(function(c,ci){
       const sel=(def&&c.invOrderId===def.invOrderId&&c.invLineIdx===def.invLineIdx)?' selected':'';
       const tag=c.productId===l.productId?'':' ⚠替代料';
-      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+' 可用'+c.available+tag+'</option>';
+      const pm=[c.model,c.spec].filter(Boolean).join(' / ');
+      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+(pm?' ['+esc(pm)+']':'')+' 可用'+c.available+tag+'</option>';
     });
     rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+' 未交付 '+undel+'</span></td>'
       +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
@@ -2504,11 +2506,12 @@ function openReturnStock(){
   const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
     .filter(function(l){return l.deliveredQty>0;});
   if(!lines.length){alert('该销售订单所有明细已交付量为 0，无可供退回的库存');return;}
+  const prodMap={};products.forEach(function(p){prodMap[p.id]=p;});
   const cands=[];
   orders.forEach(function(inv){
     if(orderTypeOf(inv)!=='库存订单')return;
     (inv.items||[]).forEach(function(it,ii){
-      cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:num(it.deliveredQty)});
+      const prod=prodMap[it.productId]||{};cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:num(it.deliveredQty),spec:it.spec||prod.spec||'',model:it.model||prod.model||''});
     });
   });
   __csCands=cands;__csLines=lines;__csMode='return';
@@ -2519,7 +2522,8 @@ function openReturnStock(){
     cands.forEach(function(c,ci){
       const sel=(def&&c.invOrderId===def.invOrderId&&c.invLineIdx===def.invLineIdx)?' selected':'';
       const tag=c.productId===l.productId?'':' ⚠替代料';
-      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+tag+'</option>';
+      const pm=[c.model,c.spec].filter(Boolean).join(' / ');
+      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+(pm?' ['+esc(pm)+']':'')+tag+'</option>';
     });
     rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+' 已交付 '+l.deliveredQty+'</span></td>'
       +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
@@ -4766,6 +4770,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.27</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.28</div>
 </body>
 </html>
