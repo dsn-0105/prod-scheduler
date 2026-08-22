@@ -70,6 +70,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
   .main{margin-left:0}
   .mobile-header{display:flex}
   .content{padding:12px 12px 60px}
+  .bulk-bar{top:48px}   /* 移动端顶栏(mobile-header)更矮，吸附位置上移 */
 }
 /* components */
 .card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
@@ -116,7 +117,7 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .sel-col input{cursor:pointer;width:16px;height:16px}
 .table-wrap tbody tr{cursor:pointer}
 .table-wrap tbody tr:hover{background:#f5f7ff}
-.bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px}
+.bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px;position:sticky;top:58px;z-index:40;background:var(--primary-light);border-radius:8px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
 .bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
 .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);scrollbar-width:none}
 .table-wrap::-webkit-scrollbar{display:none;height:0}
@@ -3908,6 +3909,6 @@ async function initApp(){
 bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.7</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-21.8</div>
 </body>
 </html>
