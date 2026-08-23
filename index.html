@@ -4815,21 +4815,30 @@ async function initApp(){
 bootstrap();
 </script>
 <script>
-/* 单元格（被 ellipsis 省略）悬停显示完整内容：事件委托，覆盖所有 .table-wrap 表格（含弹窗内） */
+/* 单元格/表头字段（被 ellipsis 省略）悬停显示完整内容：事件委托，覆盖所有 .table-wrap 表格（含弹窗内）；判定改用临时 span 测量，规避 ellipsis 下 scrollWidth/Range 不可靠 */
 (function(){
   var tip=document.createElement('div');tip.className='cell-tip';document.body.appendChild(tip);
   function truncated(el){
+    var txt=(el.innerText||el.textContent||'').trim();
+    if(!txt)return false;
     var cs=getComputedStyle(el);
-    var padL=parseFloat(cs.paddingLeft)||0, padR=parseFloat(cs.paddingRight)||0;
-    var avail=el.clientWidth-padL-padR;          // 单元格文本可用宽度
-    if(avail<=0)return false;
-    var range=document.createRange();
-    range.selectNodeContents(el);
-    var full=range.getBoundingClientRect().width; // 完整文本宽度（不受 ellipsis 影响）
-    return full>avail+0.5;
+    var probe=document.createElement('span');
+    // 临时节点：脱离文档流 + nowrap，测量的必是完整文本宽度，不受 ellipsis / scrollWidth 怪异行为影响
+    probe.style.cssText='position:absolute;left:-99999px;top:0;visibility:hidden;white-space:nowrap;display:inline-block;';
+    probe.style.font=cs.font;
+    probe.style.fontFamily=cs.fontFamily;probe.style.fontSize=cs.fontSize;
+    probe.style.fontWeight=cs.fontWeight;probe.style.fontStyle=cs.fontStyle;
+    probe.style.letterSpacing=cs.letterSpacing;probe.style.textTransform=cs.textTransform;
+    probe.textContent=txt;
+    document.body.appendChild(probe);
+    var full=probe.offsetWidth;                      // 完整文本宽度（整数，稳定）
+    document.body.removeChild(probe);
+    var padL=parseFloat(cs.paddingLeft)||0,padR=parseFloat(cs.paddingRight)||0;
+    var avail=el.clientWidth-padL-padR;              // 单元格文本可用宽度
+    return avail>0 && full>avail+0.5;
   }
   document.addEventListener('mouseover',function(e){
-    var td=e.target.closest('.table-wrap table td');
+    var td=e.target.closest('.table-wrap table td, .table-wrap table .th-label');
     if(!td){tip.style.display='none';return;}
     var txt=(td.innerText||td.textContent||'').replace(/\s+/g,' ').trim();
     if(!txt||!truncated(td)){tip.style.display='none';return;}
@@ -4843,12 +4852,12 @@ bootstrap();
     tip.style.left=x+'px';tip.style.top=y+'px';
   });
   document.addEventListener('mouseout',function(e){
-    var from=e.target.closest('.table-wrap table td');
+    var from=e.target.closest('.table-wrap table td, .table-wrap table .th-label');
     if(from&&(!e.relatedTarget||!from.contains(e.relatedTarget)))tip.style.display='none';
   });
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.31</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.32</div>
 </body>
 </html>
