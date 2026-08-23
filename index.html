@@ -3217,9 +3217,13 @@ function deliveryOrderChange(){
     if(o&&tb){
       tb.innerHTML='';
       orderItems(o).forEach(it=>{
+        /* 产品名称/规格/型号为空时按产品主数据回填（金蝶导入的订单仅存 productId） */
+        const p=products.find(x=>String(x.id)===String(it.productId));
         tb.insertAdjacentHTML('beforeend',deliveryItemRow({
-          productId:it.productId,productName:it.productName||'',
-          spec:it.spec||'',model:it.model||'',
+          productId:it.productId,
+          productName:it.productName||(p?p.name:'')||'',
+          spec:it.spec||(p?p.spec:'')||'',
+          model:it.model||(p?p.model:'')||'',
           orderQty:it.orderQty,deliveredQty:it.deliveredQty,
           lineNotes:(it.lineNotes!=null?it.lineNotes:(it.notes||''))
         }));
@@ -4523,7 +4527,9 @@ function kdDoImport(){
         var np={id:pid,name:String(it.productName||pid),spec:String(it.spec||''),model:String(it.model||''),unit:String(it.unit||''),stock:0,dailyCap:0,stockMin:0,status:'启用'};
         newProducts.push(np);pm[pid]=np;
       }
-      items.push({productId:pid,productName:'',spec:'',model:'',orderQty:num(it.orderQty)||0,deliveredQty:num(it.deliveredQty)||0,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''});
+      /* 落库时回填产品名称/规格/型号（以产品主数据为准，非 Excel 原值） */
+      var pp=pm[pid]||{};
+      items.push({productId:pid,productName:pp.name||'',spec:pp.spec||'',model:pp.model||'',orderQty:num(it.orderQty)||0,deliveredQty:num(it.deliveredQty)||0,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''});
     });
     if(items.length===0){skipCount++;return;}
     totalLines+=items.length;
@@ -5000,6 +5006,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.39</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.40</div>
 </body>
 </html>
