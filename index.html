@@ -1469,7 +1469,7 @@ function renderProducts(){
     shown.forEach((p)=>{
       const idx=products.indexOf(p);
       const checked=selSet('product').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'product\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' onclick="event.stopPropagation();selRowClick(\'product\','+idx+')"></td>';
+      html+='<tr onclick="selRowClick(\'product\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' data-sel-id="'+idx+'" data-sel-form="product" onclick="event.stopPropagation();selRowClick(\'product\','+idx+')"></td>';
       cols.forEach(f=>{
         let val=p[f.key];
         if(f.key==='status'){
@@ -1958,7 +1958,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const isFirst=grp.start===i;
     const rs=grp.count;
     const selChecked=selSet(formKey).has(String(oi))?'checked':'';
-    const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\''+formKey+'\','+oi+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\''+formKey+'\','+oi+')"></td>';
+    const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' data-sel-id="'+oi+'" data-sel-form="'+formKey+'" onclick="event.stopPropagation();selRowClick(\''+formKey+'\','+oi+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+oi+'" data-sel-form="'+formKey+'" onclick="event.stopPropagation();selRowClick(\''+formKey+'\','+oi+')"></td>';
     let headCells='';
     if(shouldMerge){
       if(isFirst){
@@ -2746,7 +2746,7 @@ function renderDailyPlan(){
     shownPlans.forEach((p)=>{
       const idx=dailyPlans.indexOf(p);
       const selChecked=selSet('dp_stockup').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'dp_stockup\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_stockup\','+idx+')"></td><td data-key="productId">'+esc(p.productId)+'</td><td data-key="productName">'+esc(p.productName)+'</td>'+
+      html+='<tr onclick="selRowClick(\'dp_stockup\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+idx+'" data-sel-form="dp_stockup" onclick="event.stopPropagation();selRowClick(\'dp_stockup\','+idx+')"></td><td data-key="productId">'+esc(p.productId)+'</td><td data-key="productName">'+esc(p.productName)+'</td>'+
         '<td data-key="assemblyDone" style="text-align:center;font-size:12px">'+(p.assemblyPlan||0)+' / <b>'+(p.assemblyDone||0)+'</b></td>'+
         '<td data-key="innerPackDone" style="text-align:center;font-size:12px">'+(p.innerPackPlan||0)+' / <b>'+(p.innerPackDone||0)+'</b></td>'+
         '<td data-key="testAgingDone" style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
@@ -2785,7 +2785,7 @@ function renderDailyPlan(){
     shownPkgs.forEach(p=>{
       const idx=dailyPkgs.indexOf(p);
       const selChecked=selSet('dp_pkg').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'dp_pkg\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'dp_pkg\','+idx+')"></td><td data-key="productId">'+esc(p.productId)+'</td><td data-key="productName">'+esc(p.productName)+'</td><td data-key="orderId">'+esc(p.orderId)+'</td>'+
+      html+='<tr onclick="selRowClick(\'dp_pkg\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+idx+'" data-sel-form="dp_pkg" onclick="event.stopPropagation();selRowClick(\'dp_pkg\','+idx+')"></td><td data-key="productId">'+esc(p.productId)+'</td><td data-key="productName">'+esc(p.productName)+'</td><td data-key="orderId">'+esc(p.orderId)+'</td>'+
         '<td data-key="pkgDone" style="text-align:center;font-size:12px">'+(p.pkgPlan||0)+' / <b>'+(p.pkgDone||0)+'</b></td>'+
         '<td data-key="finInbound" style="text-align:center;font-weight:600">'+(p.finInbound||0)+'</td>'+
         '<td data-key="orderTotal" style="text-align:right">'+money(p.orderTotal)+'</td>'+
@@ -3095,7 +3095,7 @@ function renderDelivery(){
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
       const selChecked=selSet('delivery').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td data-key="orderId" style="font-weight:600">'+esc(d.orderId)+'</td><td data-key="customer">'+esc(d.customer)+'</td><td data-key="productName">'+esc(deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、'))+'</td>'+
+      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+idx+'" data-sel-form="delivery" onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td data-key="orderId" style="font-weight:600">'+esc(d.orderId)+'</td><td data-key="customer">'+esc(d.customer)+'</td><td data-key="productName">'+esc(deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、'))+'</td>'+
         '<td data-key="orderTotal" style="text-align:right">'+money(d.orderTotal)+'</td>'+
         '<td data-key="delivered" style="text-align:right">'+money(d.delivered)+'</td>'+
         '<td data-key="undelivered" style="text-align:right">'+money(d.undelivered)+'</td>'+
@@ -4442,16 +4442,38 @@ function selRowClick(m,id){
   id=String(id);
   const s=selSet(m);
   if(s.has(id))s.delete(id);else s.add(id);
-  renderContent();
+  updateSelUI(m);
 }
 /* 全选复选框：点击切换——若当前已全选则清空，否则全选 */
 function toggleSelAll(m){
   const s=selSet(m);
-  const ids=lastRowIds[m]||[];
-  const allSelected=ids.length>0 && ids.every(id=>s.has(String(id)));
+  const cbs=Array.prototype.slice.call(document.querySelectorAll('#content input[data-sel-id][data-sel-form="'+m+'"]'));
+  const ids=cbs.map(function(cb){return cb.getAttribute('data-sel-id');});
+  const allSelected=ids.length>0 && ids.every(function(id){return s.has(id);});
   if(allSelected)s.clear();
-  else ids.forEach(id=>s.add(String(id)));
-  renderContent();
+  else ids.forEach(function(id){s.add(id);});
+  updateSelUI(m);
+}
+/* 局部刷新选中标：仅更新复选框勾选态与「已选 N 项」计数，不重建整页 DOM，
+   避免选中/取消选中行时因 innerHTML 重渲染导致焦点丢失与页面滚动跳动。
+   所有表单（产品/订单/备货/包装/交付）共用此逻辑，彻底消除同类 bug。 */
+function updateSelUI(m){
+  const s=selSet(m);
+  const cbs=Array.prototype.slice.call(document.querySelectorAll('#content input[data-sel-id][data-sel-form="'+m+'"]'));
+  cbs.forEach(function(cb){
+    const id=cb.getAttribute('data-sel-id');
+    cb.checked=s.has(id);
+  });
+  const all=document.querySelector('#content input[data-sel-all="'+m+'"]');
+  if(all){
+    const ids=cbs.map(function(cb){return cb.getAttribute('data-sel-id');});
+    all.checked = ids.length>0 && ids.every(function(id){return s.has(id);});
+  }
+  const cnt=document.getElementById('selCount_'+m);
+  if(cnt){
+    const n=selCount(m);
+    cnt.textContent = n>0?('已选 '+n+' 项'):'';
+  }
 }
 
 /* 各模块动作映射：edit/del 复用现有函数；copy 为新增；gen 仅交付计划有 */
@@ -4472,7 +4494,7 @@ function bulkBar(m){
   const writable=canWriteForm(m);
   const ids=lastRowIds[m]||[];
   const allChecked=ids.length>0 && ids.every(id=>selSet(m).has(String(id)));
-  btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
+  btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' data-sel-all="'+m+'" onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   if(writable){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
@@ -4492,7 +4514,7 @@ function bulkBar(m){
     btns.push('<button class="btn btn-sm" onclick="downloadTemplate(\''+a.formKey+'\')" title="下载导入模板（必填字段标红）">模板</button>');
     if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
   }
-  const cnt=selCount(m)>0?(' <span class="sel-count">已选 '+selCount(m)+' 项</span>'):'';
+  const cnt=' <span class="sel-count" id="selCount_'+m+'">'+(selCount(m)>0?('已选 '+selCount(m)+' 项'):'')+'</span>';
   return '<div class="bulk-bar">'+btns.join('')+cnt+'</div>';
 }
 
@@ -4796,7 +4818,16 @@ bootstrap();
 /* 单元格（被 ellipsis 省略）悬停显示完整内容：事件委托，覆盖所有 .table-wrap 表格（含弹窗内） */
 (function(){
   var tip=document.createElement('div');tip.className='cell-tip';document.body.appendChild(tip);
-  function truncated(el){return el.scrollWidth>el.clientWidth+1;}
+  function truncated(el){
+    var cs=getComputedStyle(el);
+    var padL=parseFloat(cs.paddingLeft)||0, padR=parseFloat(cs.paddingRight)||0;
+    var avail=el.clientWidth-padL-padR;          // 单元格文本可用宽度
+    if(avail<=0)return false;
+    var range=document.createRange();
+    range.selectNodeContents(el);
+    var full=range.getBoundingClientRect().width; // 完整文本宽度（不受 ellipsis 影响）
+    return full>avail+0.5;
+  }
   document.addEventListener('mouseover',function(e){
     var td=e.target.closest('.table-wrap table td');
     if(!td){tip.style.display='none';return;}
@@ -4818,6 +4849,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.30</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.31</div>
 </body>
 </html>
