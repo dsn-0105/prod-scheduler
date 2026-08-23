@@ -2006,7 +2006,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
         '<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>';
     }
-    html+='<tr'+(overdue?' style="background:var(--red-bg)"':'')+' onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
+    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
       '<td data-key="productId">'+esc(it.productId)+'</td>'+
       '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
       '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -5008,6 +5008,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.42</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.43</div>
 </body>
 </html>
