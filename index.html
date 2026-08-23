@@ -2751,8 +2751,9 @@ function backfillInvDeliveredFromStock(){
 }
 
 /* 库存同步：产品「库存/已交付数量」= 全部「库存订单」明细已交付数量之和。
-   业务口径：库存订单=生产入库，交付多少就是多少库存；
-   仅同步「有库存订单」的产品；无库存订单的产品保留手动/期初库存；
+   业务口径（2026-08-23 用户确认）：库存完全由库存订单驱动——所有库存必须由库存订单支撑；
+   无库存订单的产品库存一律归零（期初库存经 backfillInvDeliveredFromStock 反填进订单后走本口径）；
+   删除/恢复回滚库存订单后，产品库存自动对齐，杜绝残留孤儿库存。
    后续「销售订单调用库存」功能将在此基础上扣减。 */
 function syncStockFromInvOrders(){
   const map={};
@@ -2764,8 +2765,7 @@ function syncStockFromInvOrders(){
   });
   let changed=false;
   products.forEach(p=>{
-    if(!(p.id in map))return;            // 无库存订单的产品：保留手动/期初库存
-    const v=map[p.id]||0;
+    const v=map[p.id]||0;            // 全量对齐：无库存订单的产品 → 0
     if(num(p.stock)!==v){p.stock=v;changed=true;}
   });
   if(changed)save('products',products);
@@ -5006,6 +5006,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.40</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.41</div>
 </body>
 </html>
