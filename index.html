@@ -140,6 +140,8 @@ thead .sel-col{background:#eef2ff;z-index:6}
 /* modal */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center;padding:16px}
 .modal-bg.show{display:flex}
+/* 编辑保存后行被筛选/排序隐藏的顶部提示浮条（非阻塞，可一键清除筛选恢复显示） */
+.save-notice{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;display:flex;gap:10px;align-items:center;background:#fff7ed;border:1px solid #fdba74;color:#9a3412;padding:9px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px;max-width:82vw}
 .modal{background:var(--card);border-radius:12px;width:66.6667vw;max-width:66.6667vw;min-width:320px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
 .modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--card);z-index:1}
 .modal-head h3{font-size:16px;font-weight:700}
@@ -2396,6 +2398,46 @@ function saveOrder(idx){
   if(o.orderType==='库存订单')syncStockFromInvOrders();   // 库存订单已交付数量 → 产品库存
   closeModal();
   renderContent();
+  /* 编辑场景：若该订单被当前筛选/排序条件隐藏（如改了审核状态/日期/数量），
+     顶部浮条提示数据已保存，并提供一键清除筛选/排序恢复显示 */
+  if(idx>=0){
+    const fk=orderTypeOf(o)==='库存订单'?'order_inv':'order_frame';
+    maybeWarnHiddenOrder(fk,o.id);
+  }
+}
+
+/* ===== 编辑后行被筛选/排序隐藏的提示与恢复 ===== */
+function orderRowVisibleInDom(id){
+  const tds=document.querySelectorAll('#content .order-sec-body td[data-key="id"]');
+  for(let i=0;i<tds.length;i++){if(String(tds[i].textContent).trim()===String(id))return true;}
+  return false;
+}
+function maybeWarnHiddenOrder(formKey,id){
+  if(orderRowVisibleInDom(id))return;   // 仍在列表（含跨区块移动）→ 无需提示
+  const s=tState(formKey);
+  const hasFilt=Object.keys(s.filters).some(k=>{const f=s.filters[k];return f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));});
+  const hasSort=!!s.sort;
+  if(!hasFilt&&!hasSort)return;
+  showSaveNotice('订单「'+esc(id)+'」已保存，但因当前'+(hasFilt&&hasSort?'筛选/排序':hasFilt?'筛选':'排序')+'条件未显示在列表中（数据未丢失，刷新后会重置视图）。',
+    '<button class="btn btn-sm" onclick="clearOrderFilters(\''+formKey+'\')">清除筛选/排序</button>');
+}
+function clearOrderFilters(formKey){
+  tState(formKey).filters={};tState(formKey).sort=null;
+  hideSaveNotice();renderContent();
+}
+var __noticeTimer=null;
+function showSaveNotice(msg,btns){
+  hideSaveNotice();
+  const d=document.createElement('div');
+  d.className='save-notice';d.id='saveNotice';
+  d.innerHTML='<span>'+msg+'</span>'+btns+'<button class="btn btn-sm" onclick="hideSaveNotice()" style="margin-left:2px" title="关闭">✕</button>';
+  document.body.appendChild(d);
+  __noticeTimer=setTimeout(hideSaveNotice,10000);
+}
+function hideSaveNotice(){
+  const d=document.getElementById('saveNotice');
+  if(d)d.remove();
+  if(__noticeTimer){clearTimeout(__noticeTimer);__noticeTimer=null;}
 }
 
 function delOrder(idx){
@@ -4928,6 +4970,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.35</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.36</div>
 </body>
 </html>
