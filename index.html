@@ -4170,6 +4170,7 @@ function kdMapHeader(h){
     [/金额|价税合计|价税金额|含税金额|金额合计/, 'amount'],
     [/税额|税金/, 'tax'],
     [/备注|摘要|行备注|商品行备注/, 'lineNotes'],
+    [/商品描述|描述|说明/, 'desc'],
     [/业务员|销售员/, 'salesman'],
     [/部门/, 'dept']
   ];
@@ -4256,7 +4257,7 @@ function importKingdeeXLSX(e){
         }
         if(!pid)return; // 该明细行无商品编码，稍后在预检中标记跳过
         var it={};
-        ['productId','productName','spec','model','unit','orderQty','deliveredQty','lineNotes'].forEach(function(k){it[k]=colMap[k]!=null?row[colMap[k]]:'';});
+        ['productId','productName','spec','model','unit','orderQty','deliveredQty','lineNotes','desc'].forEach(function(k){it[k]=colMap[k]!=null?row[colMap[k]]:'';});
         it.orderQty=num(it.orderQty);
         it.deliveredQty=num(it.deliveredQty);
         map[head.id].items.push(it);
@@ -4325,13 +4326,27 @@ function kdShowReport(){
       '<div style="font-size:12px;color:#666">以下订单合同号或客户为空，将默认填入占位符「空」后导入：'+R.emptyText.map(function(o){return esc(o.id);}).join('、')+'</div>');
   }
   if(R.unknown.length){
-    var selOpts='<option value="__NEW__">新建（用导入信息初始化主数据）</option>'+products.map(function(p){return '<option value="'+esc(p.id)+'">'+esc(p.id+' '+p.name)+'</option>';}).join('');
     var rows=R.unknown.map(function(u){
-      return '<div style="display:flex;gap:8px;align-items:center;margin:4px 0;font-size:12px"><span style="min-width:160px;color:var(--text)">单 '+esc(u.o.id)+' · 编码 '+esc(u.pid)+'</span>'+
-        '<select id="kd_unknown_'+u.idx+'" onchange="kdState.unknown['+u.idx+']=this.value" style="flex:1">'+selOpts+'</select></div>';
+      var it=u.o.items[u.li]||{};
+      var desc=String(it.desc==null?'':it.desc).trim();
+      var notes=String(it.lineNotes==null?'':it.lineNotes).trim();
+      var mainParts=['单 '+u.o.id,'客户 '+String(u.o.customer==null?'':u.o.customer),'编码 '+u.pid];
+      if(it.productName)mainParts.push('名称 '+it.productName);
+      if(it.model)mainParts.push('型号 '+it.model);
+      if(it.spec)mainParts.push('规格 '+it.spec);
+      var main=mainParts.join(' · ');
+      var subParts=[];
+      if(desc)subParts.push('描述 '+desc);
+      if(notes)subParts.push('行备注 '+notes);
+      var subHtml='';
+      if(subParts.length)subHtml='<div style="font-size:12px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px" title="'+esc(subParts.join(' · '))+'">'+esc(subParts.join(' · '))+'</div>';
+      return '<div style="margin:5px 0;padding:6px 8px;border:1px solid #eee;border-radius:6px;background:#fafafa">'+
+        '<div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text)">'+
+        '<div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(main)+'">'+esc(main)+'</div>'+
+        '<div id="kd_unk_dec_'+u.idx+'" style="flex-shrink:0;white-space:nowrap"></div></div>'+subHtml+'</div>';
     }).join('');
     body+=sec('未知产品编码',R.unknown.length,
-      '<div style="font-size:12px;color:#666;margin-bottom:6px">可为每个未知编码选择「用已有产品代替」或「新建」。</div>'+
+      '<div style="font-size:12px;color:#666;margin-bottom:6px">可为每个未知编码「选已有产品」（弹出产品选择器，含编码/名称/型号/规格）或「新建」。</div>'+
       '<button class="btn btn-sm" onclick="kdBatchUnknown(\'__NEW__\')">全部新建</button>'+rows);
   }
   if(R.conflict.length){
@@ -4359,12 +4374,50 @@ function kdShowReport(){
     (R.blocked?'<button class="btn btn-primary" disabled style="opacity:.5;cursor:not-allowed">问题过多，无法导入</button>':
       '<button class="btn btn-primary" onclick="kdDoImport()">确认导入（'+R.totalOrders+' 单）</button>');
   showModal('金蝶订单导入 · 预检报告',body,foot);
+  if(R.unknown.length)R.unknown.forEach(function(u){kdRenderUnknownDec(u.idx);});
 }
 
 function kdBatchUnknown(v){
   if(!kdState||!kdReport)return;
-  kdReport.unknown.forEach(function(u){kdState.unknown[u.idx]=v;});
-  kdReport.unknown.forEach(function(u){var el=document.getElementById('kd_unknown_'+u.idx);if(el)el.value=v;});
+  kdReport.unknown.forEach(function(u){kdSetUnknown(u.idx,v);});
+}
+/* 未知编码行决策位 HTML：默认 [选已有产品][新建]；已选产品则显示 替换为 xxx + [改选][恢复新建] */
+function kdUnknownDecHtml(idx){
+  var v=kdState.unknown[idx];
+  var pid=(v&&v!=='__NEW__')?v:null;
+  if(!pid){
+    return '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-right:4px">选已有产品</button>'+
+      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')">新建</button>';
+  }
+  var p=products.find(function(x){return x.id===pid;});
+  var label=pid+(p?(p.name?' '+p.name:''):'');
+  return '<span style="color:#1a7a1a;font-size:12px">→ 替换为 '+esc(label)+'</span> '+
+    '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选</button>'+
+    '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')">恢复新建</button>';
+}
+/* 局部刷新单个未知行的决策位（不重渲染整个报告，避免行多时弹窗滚动跳动） */
+function kdRenderUnknownDec(idx){
+  var el=document.getElementById('kd_unk_dec_'+idx);
+  if(el)el.innerHTML=kdUnknownDecHtml(idx);
+}
+/* 弹出产品选择器（单选）：复用订单明细行的 productPickerModal，展示系统 编码/名称/型号/规格 等 */
+function kdPickUnknown(idx){
+  if(!kdState||!kdReport)return;
+  var cur=kdState.unknown[idx];
+  productPickerModal({
+    mode:'single',
+    preselected:(cur&&cur!=='__NEW__')?[cur]:[],
+    onConfirm:function(ids){
+      if(!ids.length)return;
+      kdState.unknown[idx]=ids[0];
+      kdRenderUnknownDec(idx);
+    }
+  });
+}
+function kdSetUnknown(idx,v){
+  if(!kdState)return;
+  kdState.unknown[idx]=v;
+  kdRenderUnknownDec(idx);
 }
 function kdBatchConflict(v){
   if(!kdState||!kdReport)return;
@@ -4858,6 +4911,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.33</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.34</div>
 </body>
 </html>
