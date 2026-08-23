@@ -219,6 +219,8 @@ body.col-dragging{cursor:grabbing;user-select:none}
 .fchip{display:inline-flex;align-items:center;gap:4px;background:var(--primary-light);color:var(--primary);border-radius:12px;padding:3px 10px;font-weight:600}
 .fchip b{cursor:pointer;font-weight:700;margin-left:2px}
 .fchip b:hover{color:var(--red)}
+/* 单元格悬停：显示被省略（ellipsis）的完整内容 */
+.cell-tip{position:fixed;z-index:9999;max-width:440px;background:#1f2937;color:#fff;font-size:12px;line-height:1.55;padding:6px 10px;border-radius:7px;box-shadow:0 6px 20px rgba(0,0,0,.28);pointer-events:none;white-space:pre-wrap;word-break:break-word;display:none}
 </style>
 <script src="https://beacon.cdn.qq.com/sdk/4.5.9/beacon_web.min.js"></script>
 <script>
@@ -4790,7 +4792,32 @@ async function initApp(){
 
 bootstrap();
 </script>
+<script>
+/* 单元格（被 ellipsis 省略）悬停显示完整内容：事件委托，覆盖所有 .table-wrap 表格（含弹窗内） */
+(function(){
+  var tip=document.createElement('div');tip.className='cell-tip';document.body.appendChild(tip);
+  function truncated(el){return el.scrollWidth>el.clientWidth+1;}
+  document.addEventListener('mouseover',function(e){
+    var td=e.target.closest('.table-wrap table td');
+    if(!td){tip.style.display='none';return;}
+    var txt=(td.innerText||td.textContent||'').replace(/\s+/g,' ').trim();
+    if(!txt||!truncated(td)){tip.style.display='none';return;}
+    tip.textContent=txt;tip.style.display='block';
+  });
+  document.addEventListener('mousemove',function(e){
+    if(tip.style.display!=='block')return;
+    var x=e.clientX+12,y=e.clientY+12,w=tip.offsetWidth,h=tip.offsetHeight;
+    if(x+w>window.innerWidth-8)x=e.clientX-w-12;
+    if(y+h>window.innerHeight-8)y=e.clientY-h-12;
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  });
+  document.addEventListener('mouseout',function(e){
+    var from=e.target.closest('.table-wrap table td');
+    if(from&&(!e.relatedTarget||!from.contains(e.relatedTarget)))tip.style.display='none';
+  });
+})();
+</script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.29</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.30</div>
 </body>
 </html>
