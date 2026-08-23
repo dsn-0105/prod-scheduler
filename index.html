@@ -3184,7 +3184,7 @@ function deliveryItems(d){
   if(Array.isArray(d.items)&&d.items.length)return d.items;
   return [{productId:d.productId||'',productName:d.productName||'',spec:d.spec||'',model:d.model||'',orderQty:num(d.orderTotal),deliveredQty:num(d.delivered),lineNotes:(d.lineNotes!=null?d.lineNotes:(d.notes||''))}];
 }
-/* 交付明细行渲染：产品/规格/型号/数量由订单带出（只读），商品行备注可编辑 */
+/* 交付明细行渲染：产品/规格/型号/订单数量/已交付数量由订单带出（只读），本批计划交付数量可编辑（留空=本批不交付），商品行备注可编辑 */
 function deliveryItemRow(it){
   return '<tr>'+
     '<td><input type="text" class="di_field" data-key="productId" value="'+esc(it.productId||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
@@ -3193,6 +3193,7 @@ function deliveryItemRow(it){
     '<td><input type="text" class="di_field" data-key="model" value="'+esc(it.model||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="number" class="di_field" data-key="orderQty" value="'+num(it.orderQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="number" class="di_field" data-key="deliveredQty" value="'+num(it.deliveredQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td><input type="number" class="di_field" data-key="planQty" value="'+(it.planQty!=null&&it.planQty!==''?num(it.planQty):'')+'" min="0" oninput="recalcDeliveryTotals()" placeholder="0" style="width:100%"></td>'+
     '<td><input type="text" class="di_field" data-key="lineNotes" value="'+esc(it.lineNotes||'')+'" style="width:100%"></td>'+
     '<td style="text-align:center"><button class="btn btn-sm btn-danger" onclick="removeDeliveryItemRow(this)" title="删除此行">✕</button></td></tr>';
 }
@@ -3227,18 +3228,21 @@ function deliveryOrderChange(){
   }
   recalcDeliveryTotals();
 }
-/* 明细汇总：订单总量 / 已交付 / 未交付 实时计算 */
+/* 明细汇总：订单总量 / 已交付 / 未交付 / 本批合计 实时计算 */
 function recalcDeliveryTotals(){
-  let total=0,delivered=0;
+  let total=0,delivered=0,plan=0;
   document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
     const q=tr.querySelector('[data-key="orderQty"]');
     const dd=tr.querySelector('[data-key="deliveredQty"]');
+    const pq=tr.querySelector('[data-key="planQty"]');
     total+=num(q?q.value:0);
     delivered+=num(dd?dd.value:0);
+    plan+=num(pq?pq.value:0);
   });
   const st=document.getElementById('dl_sumTotal');if(st)st.textContent=total;
   const sd=document.getElementById('dl_sumDelivered');if(sd)sd.textContent=delivered;
   const su=document.getElementById('dl_sumUndel');if(su)su.textContent=total-delivered;
+  const sp=document.getElementById('dl_sumPlan');if(sp)sp.textContent=plan;
 }
 
 function deliveryModal(idx,prefill){
@@ -3254,13 +3258,12 @@ function deliveryModal(idx,prefill){
     '<div><label>最终交付期</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
     '<div><label>首次交付日</label><input type="date" id="dl_firstDate" value="'+fmtDate(d.firstDate)+'"></div>'+
     '</div><div class="form-row">'+
-    '<div><label>本批计划交付数量 *</label><input type="number" id="dl_planQty" value="'+(d.planQty!=null?d.planQty:'')+'" placeholder="本次计划交付的总数量"></div>'+
     '<div><label>备注</label><input type="text" id="dl_notes" value="'+esc(d.notes)+'"></div>'+
     '</div>';
-  /* 表体区：交付明细（由订单带出） */
-  body+='<div style="display:flex;align-items:center;gap:12px;margin:18px 0 8px;flex-wrap:wrap"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">选择订单后自动带出产品规格 / 型号 / 商品行备注</span>'+
-    '<span style="margin-left:auto;font-size:12px;color:var(--muted)">订单总量: <b id="dl_sumTotal">0</b>　已交付: <b id="dl_sumDelivered">0</b>　未交付: <b id="dl_sumUndel">0</b></span></div>'+
-    '<div class="table-wrap"><table id="dlItemsTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>订单数量</th><th>已交付数量</th><th>商品行备注</th><th style="width:56px">操作</th></tr></thead><tbody>';
+  /* 表体区：交付明细（由订单带出，本批计划交付数量逐行填写） */
+  body+='<div style="display:flex;align-items:center;gap:12px;margin:18px 0 8px;flex-wrap:wrap"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">选择订单后自动带出产品规格 / 型号 / 商品行备注，本批计划交付数量逐行填写（留空 = 本批不交付）</span>'+
+    '<span style="margin-left:auto;font-size:12px;color:var(--muted)">订单总量: <b id="dl_sumTotal">0</b>　已交付: <b id="dl_sumDelivered">0</b>　未交付: <b id="dl_sumUndel">0</b>　本批合计: <b id="dl_sumPlan">0</b></span></div>'+
+    '<div class="table-wrap"><table id="dlItemsTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>订单数量</th><th>已交付数量</th><th>本批计划交付数量</th><th>商品行备注</th><th style="width:56px">操作</th></tr></thead><tbody>';
   items.forEach(it=>body+=deliveryItemRow(it));
   body+='</tbody></table></div>';
   showModal(idx!=null?'编辑交付计划':'新增交付计划',body,
@@ -3277,26 +3280,30 @@ function saveDelivery(idx){
     customer:document.getElementById('dl_customer').value,
     finalDate:document.getElementById('dl_finalDate').value,
     firstDate:document.getElementById('dl_firstDate').value,
-    planQty:num(document.getElementById('dl_planQty').value),
     notes:document.getElementById('dl_notes').value,
     items:[]
   };
-  let total=0,delivered=0;
+  let total=0,delivered=0,plan=0;
+  const overRows=[];
   document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
     const it={};
     tr.querySelectorAll('.di_field').forEach(el=>{it[el.dataset.key]=el.value||'';});
-    it.orderQty=num(it.orderQty);it.deliveredQty=num(it.deliveredQty);
-    total+=it.orderQty;delivered+=it.deliveredQty;
+    it.orderQty=num(it.orderQty);it.deliveredQty=num(it.deliveredQty);it.planQty=num(it.planQty);
+    total+=it.orderQty;delivered+=it.deliveredQty;plan+=it.planQty;
+    if(it.planQty>it.orderQty-it.deliveredQty){
+      overRows.push('「'+(it.productName||it.productId||'未知产品')+'」本批 '+it.planQty+' > 该行未交付 '+(it.orderQty-it.deliveredQty));
+    }
     d.items.push(it);
   });
   d.orderTotal=total;d.delivered=delivered;d.undelivered=total-delivered;
+  d.planQty=plan; /* 表头本批计划交付数量 = 各行汇总（自动计算） */
   if(!d.orderId){alert('请选择订单');return;}
   if(d.items.length===0){alert('请选择订单以带出交付明细');return;}
-  if(d.planQty==null||d.planQty<=0){alert('请填写本批计划交付数量');return;}
-  /* 本批计划交付数量 > 未交付数量 → 确认浮层：取消退回表单，确认保存继续 */
-  if(d.planQty>d.undelivered){
+  if(plan<=0){alert('请至少填写一行的本批计划交付数量');return;}
+  /* 行级超量校验：某行本批计划交付数量 > 该行未交付数量 → 确认浮层：取消退回表单，确认保存继续 */
+  if(overRows.length>0){
     showConfirmOverlay(
-      '本批计划交付数量 <b>'+d.planQty+'</b> 大于未交付数量 <b>'+d.undelivered+'</b>，是否确认保存？',
+      '以下明细本批计划交付数量大于该行未交付数量：<br><b>'+overRows.join('<br>')+'</b><br><br>是否确认保存？',
       null,
       function(){doSaveDelivery(d,idx);},
       '取消','确认保存'
@@ -4993,6 +5000,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.38</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.39</div>
 </body>
 </html>
