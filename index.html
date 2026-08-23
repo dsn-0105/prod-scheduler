@@ -847,7 +847,7 @@ function thCol(m,col,style){
   const dir=sorted?(s.sort.dir===1?'▲':'▼'):'⇅';
   const f=s.filters[col.key];
   const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));
-  return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')" title="点击排序，按住左右拖动调整列顺序，右缘拖动调宽"><span class="th-flex"><span class="th-label">'+esc(col.label)+
+  return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')"><span class="th-flex"><span class="th-label">'+esc(col.label)+
     (col.locked?' '+LOCK:'')+'</span>'+
     '<span class="sort-ico'+(sorted?' on':'')+'">'+dir+'</span>'+
     '<span class="filt-ico'+(act?' on':'')+'" onclick="event.stopPropagation();openFilter(this,\''+m+'\',\''+col.key+'\')" title="筛选">'+FILT_SVG+'</span></span>'+
@@ -4858,6 +4858,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.32</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-22.33</div>
 </body>
 </html>
