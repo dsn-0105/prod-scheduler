@@ -1788,6 +1788,16 @@ function migrateOrderTypeField(){
     f.locked=true;changed=true;
     logOp('系统','订单管理','系统迁移：锁定「订单类型」系统字段');
   }
+  /* 修正旧配置残留：改名后服务器持久化的 options 可能仍是 ['框架订单','库存订单']，
+     缺'销售订单'会导致编辑弹窗无法选中'销售订单'→ 保存时误改回'框架订单'→ 整单从区块消失。
+     对齐 ORDER_TYPES 并重写 default（幂等，任何加载路径都会自愈） */
+  const _opts=(f.options||[]).map(String);
+  if(_opts.indexOf('销售订单')<0||_opts.indexOf('框架订单')>=0){
+    f.options=ORDER_TYPES.slice();
+    f.default='销售订单';
+    changed=true;
+    logOp('系统','订单管理','系统迁移：修正「订单类型」选项为 '+ORDER_TYPES.join('/'));
+  }
   if(changed)save('fields',fields);
 }
 /* 迁移：确保订单字段配置含「合同号」系统字段并锁定（销售订单必填） */
@@ -4983,6 +4993,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.37</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.38</div>
 </body>
 </html>
