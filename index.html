@@ -342,9 +342,15 @@ const DB={
   async set(k,v){
     if(API_BASE){
       try{
-        await apiReq('/save?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v})});
+        const r=await apiReq('/save?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v})});
+        if(!r.ok){
+          let msg='保存失败('+r.status+')';
+          try{const j=await r.json();if(j&&j.error)msg+='：'+j.error;}catch(_e){}
+          alert(msg+'，数据可能未同步到服务器，请刷新后检查。');
+          return v;
+        }
         if(serverData)serverData[k]=v;
-      }catch(e){}
+      }catch(e){if(e&&e.message!=='unauthorized')alert('保存失败（网络异常）：'+e.message);}
       return v;
     }
     localStorage.setItem(KEY+k,JSON.stringify(v));
@@ -2385,6 +2391,8 @@ function saveOrder(idx){
   pendingOrderType=null;
   if(idx>=0){
     const oldO=orders[idx];
+    // 保留字段配置未覆盖的扩展字段（如金蝶导入标记 src/srcFile），编辑时不得丢失
+    ['src','srcFile'].forEach(function(k){if(oldO&&oldO[k]!==undefined&&o[k]===undefined)o[k]=oldO[k];});
     orders[idx]=o;
     const rl=o.id+'('+esc(o.customer)+')';
     logFieldDiffs('订单管理',orderHeadFields(),oldO,o,rl);
@@ -4808,6 +4816,11 @@ function restoreBackup(e){
       save('fieldsAudit','audited');save('fieldsDraft',null);
       normalizeFields();   // 兼容旧版字段：补齐 level 标记
       migrateOrders();   // 兼容旧版平铺订单备份
+      // 恢复的旧备份可能含旧类型「框架订单」等历史残留，立即执行全套迁移并写回，
+      // 避免恢复后、下次刷新前这类订单因类型不在「销售/库存」区块而整单不可见
+      migrateFrameworkToSales();
+      backfillInvDeliveredFromStock();
+      syncStockFromInvOrders();
       save('products',products);save('orders',orders);
       save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
       save('logs',logs);save('fields',fields);save('meta',meta);
@@ -4970,6 +4983,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.36</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-23.37</div>
 </body>
 </html>
