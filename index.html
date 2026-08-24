@@ -3960,7 +3960,7 @@ function reportProdPlan(){
     '<div><label>报工人 *</label><input type="text" id="rp_worker" placeholder="请输入报工人姓名" maxlength="20"></div>'+
     '<div style="flex:1"><span style="font-size:12px;color:var(--muted)">报工人为手动必填，将记录到报工明细中</span></div>'+
     '</div>'+
-    '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，且不能超过本次排产数）</div>'+
+    '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（未填写的工序默认为 0；* 为关键工序提示；本次数量为增量，且不能超过本次排产数）</div>'+
     '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+union.map(x=>'<th style="text-align:center">'+esc(x.label)+(x.mandatory?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal('生产报工（'+esc(p.id)+'）',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
@@ -3982,18 +3982,7 @@ function saveReport(pi){
   });
   if(entries.length===0){alert('请至少填写一个工序的本次完成数');return;}
   if(!entries.some(e=>e.qty>0)){alert('请至少填写一个大于 0 的本次完成数（仅填 0 无法报工）');return;}
-  /* 必填校验：每行按工序模板 mandatory 工序已填写即可（填 0 视为已填写） */
-  for(let li=0;li<items.length;li++){
-    const def=stepsDefOf(p,items[li]).filter(x=>x.mandatory);
-    for(let k=0;k<def.length;k++){
-      const st=def[k].key;
-      if(!entries.some(e=>e.li===li&&e.step===st)){
-        const it=items[li];
-        alert('产品「'+(it.productName||it.productId)+'」必报工序「'+def[k].label+'」未填写本次数量（可填 0）。');
-        return;
-      }
-    }
-  }
+  /* .14 起：未填写的工序默认视为 0（不再强制必报工序填写，避免频繁弹窗；* 仅作关键工序提示） */
   /* 硬性上限（需求 2026-08-24.7）：报工累计不能超过本次排产数。
      入库类工序（plan=false）上限=本批排产数 planQty，其余工序上限=工序计划量 */
   const overRows=[];
@@ -4321,7 +4310,7 @@ function tplModal(idx,prefill){
     '<div style="margin:10px 0 6px;font-size:13px;color:var(--muted)">工序列表（可填预置名 装配/瞬时/延时/内包/老化/入库，或输入任意自定义工序名）：</div>'+
     '<div class="table-wrap" style="max-height:300px;overflow:auto"><div id="tplStepsBox">'+tplStepsBoxHtml()+'</div></div>'+
     '<div style="margin-top:8px"><button class="btn btn-sm btn-primary" onclick="tplAddStep()">+ 添加工序</button>'+
-    '<span style="margin-left:8px;font-size:12px;color:var(--muted)">「计划量」勾选=报工上限按该工序计划量；「必报」勾选=报工必须填写（可填 0）</span></div>';
+    '<span style="margin-left:8px;font-size:12px;color:var(--muted)">「计划量」勾选=报工上限按该工序计划量；「必报」勾选=关键工序标记（仅提示，不强制填写，未填默认为 0）</span></div>';
   showModal(isNew?'新增工序模板':'编辑工序模板',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveTpl('+(idx!=null?idx:-1)+')">保存</button>');
 }
@@ -5863,6 +5852,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.13</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.14</div>
 </body>
 </html>
