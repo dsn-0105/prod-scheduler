@@ -116,6 +116,24 @@ thead .op-col{background:#eef2ff;z-index:6}
 .sel-col{position:sticky;left:0;z-index:5;background:#fff;text-align:center;width:44px;vertical-align:middle;padding:6px 4px}
 thead .sel-col{background:#eef2ff;z-index:6}
 .sel-col input{cursor:pointer;width:16px;height:16px}
+/* 排产计划展开按钮列（build 2026-08-24.8） */
+.exp-col{text-align:center;width:36px;vertical-align:middle;padding:4px 2px;background:#fff}
+thead .exp-col{background:#eef2ff}
+.exp-col .pp-exp-btn{background:none;border:none;cursor:pointer;font-size:12px;color:var(--primary);padding:2px 6px;border-radius:4px;transition:transform .15s;line-height:1}
+.exp-col .pp-exp-btn:hover{background:rgba(59,130,246,.12)}
+.exp-col .pp-exp-btn.on{transform:rotate(90deg)}
+/* 展开行：报工明细（缩进块） */
+.pp-exp-row td{background:#f8fafc;padding:10px 16px 10px 56px}
+.pp-exp{max-width:900px}
+.pp-exp-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.pp-exp-empty{font-size:13px;color:var(--muted);padding:6px 0}
+.pp-rep-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:5px 0;border-bottom:1px dashed #e5e7eb;font-size:13px}
+.pp-rep-line:last-child{border-bottom:none}
+.pp-rep-time{font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px;min-width:104px}
+.pp-rep-worker{font-weight:600;min-width:52px}
+.pp-rep-parts{display:flex;flex-wrap:wrap;gap:4px 10px;flex:1}
+.pp-rep-item{white-space:nowrap}
+.pp-rep-item b{color:var(--primary)}
 .table-wrap tbody tr{cursor:pointer}
 .table-wrap tbody tr:hover{background:#f5f7ff}
 /* 选中行高亮：透明蓝（row-sel 类由 updateSelUI 切换；td 覆盖含左右吸顶列与 rowspan 合并组） */
@@ -710,7 +728,7 @@ const NAV=[
 /* ================================================================
    状态
 ================================================================ */
-let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[],productionPlans=[];
+let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[],productionPlans=[],productionReports=[];
 let logs=[];
 let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
@@ -3219,6 +3237,7 @@ function renderDelivery(){
 ================================================================ */
 let planView='day';           // day / week / month
 let planViewDate=todayStr();  // 当前视图参照日期
+let planExpand={};            // 排产计划展开态（planId->true，纯内存，刷新重置）
 
 /* 6 工序定义：plan=true 表示该工序有计划量字段（入库类工序只报完成） */
 const PP_STEPS=[
@@ -3304,6 +3323,76 @@ function ppTotalOf(deliveryIdx,productId){
   const it=deliveryItems(d).find(x=>(x.productId||'')===(productId||''));
   return it?num(it.planQty):null;
 }
+/* ================================================================
+   报工明细（productionReports，build 2026-08-24.8）：
+   一次报工=一条记录；行内展开（▶）+ 弹窗查看；只读展示
+================================================================ */
+function prNextId(){
+  const today=todayStr().replace(/-/g,'');
+  const re=new RegExp('^REP-'+today+'-(\\d+)$');
+  let max=0;
+  productionReports.forEach(r=>{
+    const m=String(r.id||'').match(re);
+    if(m)max=Math.max(max,parseInt(m[1],10));
+  });
+  return 'REP-'+today+'-'+String(max+1).padStart(3,'0');
+}
+/* 某排产单的报工明细（按时间倒序） */
+function ppReportsOf(planId){
+  return productionReports.filter(r=>r.planId===planId).sort((a,b)=>((a.createdAt||'')<(b.createdAt||'')?1:-1));
+}
+/* 展开/收起某排产单 */
+function togglePlanExpand(id){
+  planExpand[id]=!planExpand[id];
+  renderContent();
+}
+/* 行内展开行：缩进显示报工明细（实时算累计/计划） */
+function ppExpandRow(p){
+  const reps=ppReportsOf(p.id);
+  let inner;
+  if(reps.length===0){
+    let tp=0,td=0;
+    ppItems(p).forEach(it=>{tp+=ppPlanOf(it);td+=ppDoneOf(it);});
+    inner='<div class="pp-exp-empty">暂无报工明细（当前累计完成 '+money(td)+' / 计划 '+money(tp)+'）</div>';
+  }else{
+    inner=reps.map(r=>{
+      const parts=(r.items||[]).map(x=>{
+        const it=ppItems(p).find(z=>(z.productId||'')===(x.productId||''));
+        const cur=it?ppStepDone(it,x.step):0;
+        const plan=(x.step==='semiInbound'||x.step==='finInbound')?(it?ppPlanOf(it):0):(it?ppStepPlan(it,x.step):0);
+        return '<span class="pp-rep-item">'+esc(x.label)+' <b>+'+money(x.qty)+'</b>'+
+          (plan>0?('（累计 '+money(cur)+'/'+money(plan)+'）'):('（累计 '+money(cur)+'）'))+'</span>';
+      }).join(' · ');
+      return '<div class="pp-rep-line"><span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
+        '<span class="pp-rep-worker">'+esc(r.worker||'')+'</span><div class="pp-rep-parts">'+parts+'</div></div>';
+    }).join('');
+  }
+  return '<tr class="pp-exp-row"><td colspan="'+(TBL_SCHEMAS.prodPlan.length+2)+'"><div class="pp-exp">'+
+    '<div class="pp-exp-head"><span>报工明细（'+reps.length+' 条）</span>'+
+    '<button class="btn btn-sm" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">弹窗查看</button></div>'+
+    inner+'</div></td></tr>';
+}
+/* 方案 B：报工明细弹窗（表格形式，按时间倒序） */
+function ppReportsModal(planId){
+  const p=productionPlans.find(x=>x.id===planId);
+  const reps=ppReportsOf(planId);
+  let inner;
+  if(reps.length===0){
+    inner='<div class="empty">暂无报工明细</div>';
+  }else{
+    inner='<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>时间</th><th>报工人</th><th>产品</th><th>工序</th><th style="text-align:right">本次数量</th><th style="text-align:right">累计/计划</th></tr></thead><tbody>'+reps.map(r=>{
+      return (r.items||[]).map(x=>{
+        const it=p?ppItems(p).find(z=>(z.productId||'')===(x.productId||'')):null;
+        const cur=it?ppStepDone(it,x.step):0;
+        const plan=(x.step==='semiInbound'||x.step==='finInbound')?(it?ppPlanOf(it):0):(it?ppStepPlan(it,x.step):0);
+        return '<tr><td>'+esc(r.date||'')+' '+esc(r.time||'')+'</td><td>'+esc(r.worker||'')+'</td><td>'+esc(x.productName||x.productId)+'</td><td>'+esc(x.label)+'</td>'+
+          '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(x.qty)+'</td>'+
+          '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(cur)+' / '+money(plan)+'</td></tr>';
+      }).join('');
+    }).join('')+'</tbody></table></div>';
+  }
+  showModal('报工明细 · '+esc(p?p.id:planId),inner,'<button class="btn" onclick="closeModal()">关闭</button>');
+}
 
 /* 主渲染：视图切换 + 日视图表格 / 周月聚合 */
 function renderProdPlan(){
@@ -3362,34 +3451,45 @@ function renderProdPlanDay(writable){
   lastRowIds.prodPlan=shown.map(r=>r.pi);
   let html=bulkBar('prodPlan');
   html+=filterBar('prodPlan');
-  html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.prodPlan.map(c=>thCol('prodPlan',c)).join('')+'</tr></thead><tbody>';
-  if(shown.length===0){html+=noMatchRow('prodPlan',TBL_SCHEMAS.prodPlan.length+1);}
+  html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th><th class="exp-col" title="展开/收起报工明细"></th>'+TBL_SCHEMAS.prodPlan.map(c=>thCol('prodPlan',c)).join('')+'</tr></thead><tbody>';
+  if(shown.length===0){html+=noMatchRow('prodPlan',TBL_SCHEMAS.prodPlan.length+2);}
   let sumPlan=0,sumDone=0;
-  shown.forEach(r=>{
-    const p=r.p,it=r.it,pi=r.pi;
-    const t=ppPlanOf(it),d=ppDoneOf(it);
-    const pct=t>0?Math.round(d/t*100):0;
-    const selChecked=selSet('prodPlan').has(String(pi))?'checked':'';
-    const allDone=t>0&&d>=t;
-    html+='<tr onclick="selRowClick(\'prodPlan\','+pi+')">'+
-      '<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+pi+'" data-sel-form="prodPlan" onclick="event.stopPropagation();selRowClick(\'prodPlan\','+pi+')"></td>'+
-      '<td data-key="id" style="font-weight:600">'+esc(p.id)+'</td>'+
-      '<td data-key="planDate">'+fmtDate(p.planDate)+'</td>'+
-      '<td data-key="finalDate">'+fmtDate(p.finalDate)+'</td>'+
-      '<td data-key="orderId">'+esc(p.orderId)+'</td>'+
-      '<td data-key="customer">'+esc(p.customer)+'</td>'+
-      '<td data-key="status"><span class="tag '+ppStatusCls(p.status)+'">'+esc(p.status)+'</span></td>'+
-      '<td data-key="productId">'+esc(it.productId)+'</td>'+
-      '<td data-key="productName">'+esc(it.productName)+'</td>'+
-      '<td data-key="model">'+esc(it.model||'')+'</td>'+
-      '<td data-key="spec">'+esc(it.spec||'')+'</td>'+
-      '<td data-key="planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(t)+'</td>'+
-      '<td data-key="doneQty" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(d)+'</td>'+
-      '<td data-key="_pct" style="font-variant-numeric:tabular-nums;text-align:right">'+(allDone?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
-      '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
-    sumPlan+=t;sumDone+=d;
+  /* 按排产单分组渲染：组内每产品一行，组后插展开行（报工明细） */
+  const gmap=new Map();
+  shown.forEach(r=>{ if(!gmap.has(r.p.id))gmap.set(r.p.id,[]); gmap.get(r.p.id).push(r); });
+  gmap.forEach((grows,pid)=>{
+    grows.forEach(r=>{
+      const p=r.p,it=r.it,pi=r.pi;
+      const t=ppPlanOf(it),d=ppDoneOf(it);
+      const pct=t>0?Math.round(d/t*100):0;
+      const selChecked=selSet('prodPlan').has(String(pi))?'checked':'';
+      const allDone=t>0&&d>=t;
+      const expOn=!!planExpand[p.id];
+      html+='<tr onclick="selRowClick(\'prodPlan\','+pi+')">'+
+        '<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+pi+'" data-sel-form="prodPlan" onclick="event.stopPropagation();selRowClick(\'prodPlan\','+pi+')"></td>'+
+        '<td class="exp-col"><button class="pp-exp-btn'+(expOn?' on':'')+'" onclick="event.stopPropagation();togglePlanExpand(\''+esc(p.id)+'\')" title="'+(expOn?'收起':'展开')+'报工明细">▶</button></td>'+
+        '<td data-key="id" style="font-weight:600">'+esc(p.id)+'</td>'+
+        '<td data-key="planDate">'+fmtDate(p.planDate)+'</td>'+
+        '<td data-key="finalDate">'+fmtDate(p.finalDate)+'</td>'+
+        '<td data-key="orderId">'+esc(p.orderId)+'</td>'+
+        '<td data-key="customer">'+esc(p.customer)+'</td>'+
+        '<td data-key="status"><span class="tag '+ppStatusCls(p.status)+'">'+esc(p.status)+'</span></td>'+
+        '<td data-key="productId">'+esc(it.productId)+'</td>'+
+        '<td data-key="productName">'+esc(it.productName)+'</td>'+
+        '<td data-key="model">'+esc(it.model||'')+'</td>'+
+        '<td data-key="spec">'+esc(it.spec||'')+'</td>'+
+        '<td data-key="planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(t)+'</td>'+
+        '<td data-key="doneQty" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(d)+'</td>'+
+        '<td data-key="_pct" style="font-variant-numeric:tabular-nums;text-align:right">'+(allDone?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
+        '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
+      sumPlan+=t;sumDone+=d;
+    });
+    if(planExpand[pid]){
+      const gp=productionPlans.find(x=>x.id===pid);
+      if(gp)html+=ppExpandRow(gp);
+    }
   });
-  html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="10">小计</td><td style="text-align:right">'+money(sumPlan)+'</td><td style="text-align:right">'+money(sumDone)+'</td><td colspan="2"></td></tr>';
+  html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td class="exp-col"></td><td colspan="10">小计</td><td style="text-align:right">'+money(sumPlan)+'</td><td style="text-align:right">'+money(sumDone)+'</td><td colspan="2"></td></tr>';
   html+='</tbody></table></div>';
   return html;
 }
@@ -3663,18 +3763,33 @@ function applyReport(pi,entries,items){
   const p=productionPlans[pi];
   if(!p)return;
   const logParts=[];
+  const repItems=[];
   entries.forEach(e=>{
-    if(e.qty<=0)return;                        // 填 0 的工序无增量、不进日志
+    if(e.qty<=0)return;                        // 填 0 的工序无增量、不进日志/明细
     const it=items[e.li];
     const st=ppSteps(it);
     const v=st[e.step];
     if(typeof v==='object')v.done=num(v.done)+e.qty;else st[e.step]=num(v)+e.qty;
     if(e.step==='finInbound')it.doneQty=num(it.doneQty||0)+e.qty;
     logParts.push((it.productName||it.productId)+'·'+PP_STEPS.find(x=>x.key===e.step).label+'+'+e.qty);
+    repItems.push({productId:it.productId,productName:it.productName,step:e.step,label:PP_STEPS.find(x=>x.key===e.step).label,qty:e.qty});
   });
   if(p.status==='待排产')p.status='生产中';
   const allDone=items.every(x=>ppPlanOf(x)>0&&ppDoneOf(x)>=ppPlanOf(x));
   save('productionPlans',productionPlans);
+  /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序 */
+  if(repItems.length>0){
+    const now=new Date();
+    const rec={
+      id:prNextId(),planId:p.id,
+      date:todayStr(),
+      time:now.getHours()+':'+String(now.getMinutes()).padStart(2,'0'),
+      worker:(currentUser&&(currentUser.name||currentUser.username))||'',
+      items:repItems,createdAt:now.toISOString()
+    };
+    productionReports.push(rec);
+    save('productionReports',productionReports);
+  }
   logOp('报工','排产计划','排产单「'+p.id+'」报工：'+logParts.join('、'));
   closeModal();
   renderContent();
@@ -5302,7 +5417,7 @@ function autoBackupNow(force){
   var data={
     version:2,exportDate:new Date().toISOString(),
     products:products,orders:orders,
-    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,productionPlans:productionPlans,
+    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,productionPlans:productionPlans,productionReports:productionReports,
     logs:logs,fields:fields,meta:meta
   };
   var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
@@ -5344,6 +5459,7 @@ function backupAll(){
     dailyPkgs:dailyPkgs,
     deliveries:deliveries,
     productionPlans:productionPlans,
+    productionReports:productionReports,
     logs:logs,
     fields:fields,
     meta:meta
@@ -5375,6 +5491,7 @@ function restoreBackup(e){
       if(data.dailyPkgs)dailyPkgs=data.dailyPkgs;
       if(data.deliveries)deliveries=data.deliveries;
       if(data.productionPlans)productionPlans=data.productionPlans;
+      if(data.productionReports)productionReports=data.productionReports;
       if(data.logs)logs=data.logs;
       if(data.fields)fields=data.fields;
       if(data.meta)meta=data.meta;
@@ -5389,15 +5506,15 @@ function restoreBackup(e){
       backfillInvDeliveredFromStock();
       syncStockFromInvOrders();
       save('products',products);save('orders',orders);
-      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);
+      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);
       save('logs',logs);save('fields',fields);save('meta',meta);
       renderAll();
       logOp('恢复','全部数据','从备份文件恢复 '+
         ((products.length||0)+(orders.length||0)+
-         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0))+' 条记录');
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0))+' 条记录');
       alert('恢复成功！共恢复 ' +
         ((products.length||0)+(orders.length||0)+
-         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)) + ' 条记录。');
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)) + ' 条记录。');
     }catch(err){
       alert('恢复失败：'+err.message+'\n\n请确认文件为系统导出的 .json 备份文件。');
     }
@@ -5409,9 +5526,9 @@ function restoreBackup(e){
 function confirmClear(){
   if(!confirm('确认清空所有数据？此操作不可恢复，建议先导出备份！'))return;
   if(!confirm('再次确认：所有产品、订单、库存、排产、交付数据将被删除！'))return;
-  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];productionPlans=[];
+  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];productionPlans=[];productionReports=[];
   save('products',products);save('orders',orders);
-  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);
+  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);
   logOp('清空','全部数据','清空所有业务数据');
   renderAll();
 }
@@ -5443,6 +5560,7 @@ async function initApp(){
   dailyPkgs=await DB.get('dailyPkgs',[]);
   deliveries=await DB.get('deliveries',[]);
   productionPlans=await DB.get('productionPlans',[]);
+  productionReports=await DB.get('productionReports',[]);
   logs=await DB.get('logs',[]);
   transfers=await DB.get('transfers',[]);
   fields=await DB.get('fields',JSON.parse(JSON.stringify(defaultFields)));
@@ -5551,6 +5669,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.7</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.8</div>
 </body>
 </html>

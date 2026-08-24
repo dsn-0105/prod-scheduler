@@ -15,14 +15,14 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 
 const DEFAULT_DATA = {
   products: [], orders: [], dailyPlans: [], dailyPkgs: [],
-  deliveries: [], productionPlans: [], logs: [], fields: null, meta: { seq: 0 },
+  deliveries: [], productionPlans: [], productionReports: [], logs: [], fields: null, meta: { seq: 0 },
   fieldsAudit: 'audited', fieldsDraft: null, tblLayout: {},
   transfers: []
 };
 
 /* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写） */
 const BIZ_KEYS = ['products', 'orders', 'dailyPlans', 'dailyPkgs', 'deliveries', 'productionPlans', 'fields'];
-const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers'];
+const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers', 'productionReports'];
 
 function load(file, def) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return def; }
