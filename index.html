@@ -134,6 +134,11 @@ thead .exp-col{background:#eef2ff}
 .pp-rep-parts{display:flex;flex-wrap:wrap;gap:4px 10px;flex:1}
 .pp-rep-item{white-space:nowrap}
 .pp-rep-item b{color:var(--primary)}
+/* 报工明细编辑行（build 2026-08-24.12） */
+.rep-edit-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:#fff}
+.rep-edit-row .pp-rep-time{min-width:96px}
+.rep-edit-row .pp-rep-worker{min-width:118px}
+.rep-edit-row input{border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:13px}
 /* 工序模板卡片（build 2026-08-24.11） */
 .tpl-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
 .tpl-head{display:flex;align-items:center;gap:8px;font-size:14px;flex-wrap:wrap}
@@ -3423,10 +3428,9 @@ function togglePlanExpand(id){
   planExpand[id]=!planExpand[id];
   renderContent();
 }
-/* 行内展开行：缩进显示报工明细（实时算累计/计划）；.9 起每行可删除（回退累计） */
+/* 行内展开行：缩进显示报工明细（实时算累计/计划）；.12 起去掉行内删除、按钮改「编辑」 */
 function ppExpandRow(p){
   const reps=ppReportsOf(p.id);
-  const canDel=canWriteForm('prodPlan');
   let inner;
   if(reps.length===0){
     let tp=0,td=0;
@@ -3442,37 +3446,111 @@ function ppExpandRow(p){
           (plan>0?('（累计 '+money(cur)+'/'+money(plan)+'）'):('（累计 '+money(cur)+'）'))+'</span>';
       }).join(' · ');
       return '<div class="pp-rep-line"><span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
-        '<span class="pp-rep-worker">'+esc(r.worker||'')+'</span><div class="pp-rep-parts">'+parts+'</div>'+
-        (canDel?'<button class="btn btn-sm btn-danger" style="padding:1px 8px;font-size:12px" onclick="event.stopPropagation();ppDelReport(\''+esc(r.id)+'\')" title="删除该条报工（同步回退累计完成数）">删除</button>':'')+'</div>';
+        '<span class="pp-rep-worker">'+esc(r.worker||'')+'</span><div class="pp-rep-parts">'+parts+'</div></div>';
     }).join('');
   }
   return '<tr class="pp-exp-row"><td colspan="'+(TBL_SCHEMAS.prodPlan.length+2)+'"><div class="pp-exp">'+
     '<div class="pp-exp-head"><span>报工明细（'+reps.length+' 条）</span>'+
-    '<button class="btn btn-sm" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">弹窗查看</button></div>'+
+    '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">编辑</button></div>'+
     inner+'</div></td></tr>';
 }
-/* 方案 B：报工明细弹窗（表格形式，按时间倒序；.9 起每行可删除） */
+/* 方案 B：报工明细编辑弹窗（.12 起可改每条报工的报工人与各工序数量；保存后重算排产单累计） */
 function ppReportsModal(planId){
   const p=productionPlans.find(x=>x.id===planId);
   const reps=ppReportsOf(planId);
-  const canDel=canWriteForm('prodPlan');
   let inner;
   if(reps.length===0){
     inner='<div class="empty">暂无报工明细</div>';
   }else{
-    inner='<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>时间</th><th>报工人</th><th>产品</th><th>工序</th><th style="text-align:right">本次数量</th><th style="text-align:right">累计/计划</th>'+(canDel?'<th>操作</th>':'')+'</tr></thead><tbody>'+reps.map(r=>{
-      return (r.items||[]).map(x=>{
-        const it=p?ppItems(p).find(z=>(z.productId||'')===(x.productId||'')):null;
-        const cur=it?ppStepDone(it,x.step):0;
-        const plan=(x.step==='semiInbound'||x.step==='finInbound')?(it?ppPlanOf(it):0):(it?ppStepPlan(it,x.step):0);
-        return '<tr><td>'+esc(r.date||'')+' '+esc(r.time||'')+'</td><td>'+esc(r.worker||'')+'</td><td>'+esc(x.productName||x.productId)+'</td><td>'+esc(x.label)+'</td>'+
-          '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(x.qty)+'</td>'+
-          '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(cur)+' / '+money(plan)+'</td>'+
-          (canDel?'<td><button class="btn btn-sm btn-danger" style="padding:1px 8px;font-size:12px" onclick="ppDelReport(\''+esc(r.id)+'\')">删除</button></td>':'')+'</tr>';
-      }).join('');
-    }).join('')+'</tbody></table></div>';
+    inner='<div style="max-height:420px;overflow:auto">'+reps.map((r,i)=>{
+      const qtyInputs=(r.items||[]).map((x,j)=>
+        '<div style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;margin:2px 8px 2px 0"><span style="font-size:12px;color:var(--muted)">'+esc(x.label)+'</span>'+
+        '<input type="number" id="rp_q_'+i+'_'+j+'" value="'+num(x.qty)+'" min="0" step="1" style="width:70px"></div>').join('');
+      return '<div class="rep-edit-row">'+
+        '<span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
+        '<span class="pp-rep-worker" title="报工人"><input type="text" id="rp_w_'+i+'" value="'+esc(r.worker||'')+'" style="width:110px" placeholder="报工人"></span>'+
+        '<span class="pp-rep-parts">'+qtyInputs+'</span></div>';
+    }).join('')+'</div>';
   }
-  showModal('报工明细 · '+esc(p?p.id:planId),inner,'<button class="btn" onclick="closeModal()">关闭</button>');
+  showModal('编辑报工明细 · '+esc(p?p.id:planId),
+    '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">可修改每条报工的「报工人」与各工序「本次数量」；保存后，排产单累计完成数将按新数量自动重算（修改后不能超过本次排产数）。</div>'+inner,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="ppSaveReportEdits(\''+esc(planId)+'\')">保存修改</button>');
+}
+/* 保存报工明细编辑：更新 worker/qty 并按新数量重算排产单累计（超量拦截；已完成不全完成回退生产中） */
+function ppSaveReportEdits(planId){
+  if(!ensureWrite('prodPlan'))return;
+  const p=productionPlans.find(x=>x.id===planId);
+  if(!p)return;
+  const reps=ppReportsOf(planId);
+  if(reps.length===0)return;
+  /* 读取每行输入：worker + 各工序新数量 */
+  const updates=reps.map((r,i)=>{
+    const worker=String((document.getElementById('rp_w_'+i)||{}).value||'').trim();
+    const qtyMap={};
+    (r.items||[]).forEach((x,j)=>{
+      const el=document.getElementById('rp_q_'+i+'_'+j);
+      const v=el?parseFloat(el.value):NaN;
+      qtyMap[x.step]=isNaN(v)?num(x.qty):v;
+    });
+    return {idx:productionReports.indexOf(r),worker:worker,qtyMap:qtyMap};
+  });
+  for(let i=0;i<updates.length;i++){
+    if(!updates[i].worker){alert('第 '+(i+1)+' 条报工缺少报工人');return;}
+    for(const step in updates[i].qtyMap){
+      const q=updates[i].qtyMap[step];
+      if(!isFinite(q)||q<0||Math.round(q)!==q){alert('第 '+(i+1)+' 条报工的工序数量无效（须为非负整数）');return;}
+    }
+  }
+  /* 按产品行×工序聚合新累计，并检查是否超过本次排产数 */
+  const itMap={};
+  ppItems(p).forEach(it=>{itMap[it.productId||'']=it;});
+  const agg={};
+  updates.forEach(u=>{
+    const rec=productionReports[u.idx];
+    (rec.items||[]).forEach(x=>{
+      const pid=x.productId||'';
+      if(!agg[pid])agg[pid]={};
+      agg[pid][x.step]=(agg[pid][x.step]||0)+num(u.qtyMap[x.step]);
+    });
+  });
+  const overMsg=[];
+  for(const pid in agg){
+    const it=itMap[pid];
+    if(!it)continue;
+    const def=stepsDefOf(p,it);
+    for(const step in agg[pid]){
+      const stepDef=def.find(s=>s.key===step);
+      const limit=(stepDef&&!stepDef.plan)?ppPlanOf(it):ppStepPlan(it,step);
+      if(limit>0&&agg[pid][step]>limit)overMsg.push('「'+(it.productName||pid)+'」'+(stepDef?stepDef.label:step)+'：修改后累计 '+agg[pid][step]+' / 本次排产 '+limit);
+    }
+  }
+  if(overMsg.length>0){
+    alert('修改后报工累计超过本次排产数：\n'+overMsg.join('\n')+'\n\n请调整后重新保存。');
+    return;
+  }
+  /* 应用：覆盖累计 + 更新记录 */
+  for(const pid in agg){
+    const it=itMap[pid];
+    if(!it)continue;
+    const st=ppSteps(it);
+    for(const step in agg[pid]){
+      if(st[step]===undefined)ppEnsureSteps(it,stepsDefOf(p,it));
+      if(typeof st[step]==='object')st[step].done=agg[pid][step];else st[step]=agg[pid][step];
+      if(step==='inbound'||step==='finInbound')it.doneQty=agg[pid][step];
+    }
+  }
+  updates.forEach(u=>{
+    const rec=productionReports[u.idx];
+    rec.worker=u.worker;
+    (rec.items||[]).forEach(x=>{x.qty=num(u.qtyMap[x.step]);});
+  });
+  const allDone=ppItems(p).every(z=>ppPlanOf(z)>0&&ppDoneOf(z)>=ppPlanOf(z));
+  if(p.status==='已完成'&&!allDone)p.status='生产中';
+  save('productionPlans',productionPlans);
+  save('productionReports',productionReports);
+  logOp('编辑报工','排产计划','编辑排产单「'+p.id+'」报工明细（报工人/数量）');
+  closeModal();
+  renderContent();
 }
 /* 删除一条报工明细：同步回退排产单对应工序累计完成数；已完成后回退则状态回到生产中 */
 function ppDelReport(id){
