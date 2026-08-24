@@ -3454,10 +3454,11 @@ function ppExpandRow(p){
     '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">编辑</button></div>'+
     inner+'</div></td></tr>';
 }
-/* 方案 B：报工明细编辑弹窗（.12 起可改每条报工的报工人与各工序数量；保存后重算排产单累计） */
+/* 方案 B：报工明细编辑弹窗（.13 起可改报工人与各工序数量；.15 起每行恢复删除按钮、数量最小 1 不可改 0） */
 function ppReportsModal(planId){
   const p=productionPlans.find(x=>x.id===planId);
   const reps=ppReportsOf(planId);
+  const canDel=canWriteForm('prodPlan');
   let inner;
   if(reps.length===0){
     inner='<div class="empty">暂无报工明细</div>';
@@ -3465,15 +3466,16 @@ function ppReportsModal(planId){
     inner='<div style="max-height:420px;overflow:auto">'+reps.map((r,i)=>{
       const qtyInputs=(r.items||[]).map((x,j)=>
         '<div style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;margin:2px 8px 2px 0"><span style="font-size:12px;color:var(--muted)">'+esc(x.label)+'</span>'+
-        '<input type="number" id="rp_q_'+i+'_'+j+'" value="'+num(x.qty)+'" min="0" step="1" style="width:70px"></div>').join('');
+        '<input type="number" id="rp_q_'+i+'_'+j+'" value="'+num(x.qty)+'" min="1" step="1" style="width:70px"></div>').join('');
       return '<div class="rep-edit-row">'+
         '<span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
         '<span class="pp-rep-worker" title="报工人"><input type="text" id="rp_w_'+i+'" value="'+esc(r.worker||'')+'" style="width:110px" placeholder="报工人"></span>'+
-        '<span class="pp-rep-parts">'+qtyInputs+'</span></div>';
+        '<span class="pp-rep-parts">'+qtyInputs+'</span>'+
+        (canDel?'<button class="btn btn-sm btn-danger" style="padding:1px 8px;font-size:12px" onclick="ppDelReport(\''+esc(r.id)+'\')" title="删除该条报工（同步回退累计完成数）">删除</button>':'')+'</div>';
     }).join('')+'</div>';
   }
   showModal('编辑报工明细 · '+esc(p?p.id:planId),
-    '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">可修改每条报工的「报工人」与各工序「本次数量」；保存后，排产单累计完成数将按新数量自动重算（修改后不能超过本次排产数）。</div>'+inner,
+    '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">可修改每条报工的「报工人」与各工序「本次数量」（最小 1，不可改为 0）；如需移除某条报工请点「删除」（同步回退累计）；保存后，排产单累计完成数将按新数量自动重算（修改后不能超过本次排产数）。</div>'+inner,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="ppSaveReportEdits(\''+esc(planId)+'\')">保存修改</button>');
 }
 /* 保存报工明细编辑：更新 worker/qty 并按新数量重算排产单累计（超量拦截；已完成不全完成回退生产中） */
@@ -3498,7 +3500,7 @@ function ppSaveReportEdits(planId){
     if(!updates[i].worker){alert('第 '+(i+1)+' 条报工缺少报工人');return;}
     for(const step in updates[i].qtyMap){
       const q=updates[i].qtyMap[step];
-      if(!isFinite(q)||q<0||Math.round(q)!==q){alert('第 '+(i+1)+' 条报工的工序数量无效（须为非负整数）');return;}
+      if(!isFinite(q)||q<1||Math.round(q)!==q){alert('第 '+(i+1)+' 条报工的工序数量无效（须为正整数，且不能改为 0）');return;}
     }
   }
   /* 按产品行×工序聚合新累计，并检查是否超过本次排产数 */
@@ -5852,6 +5854,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.14</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.15</div>
 </body>
 </html>
