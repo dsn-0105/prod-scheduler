@@ -5,7 +5,6 @@ node_modules/
 # 本地敏感文档（含服务器信息），不入库
 deploy.sh
 deploy.bat
-docs/系统知识.md
 
 # 服务器数据/凭据，绝不入库
 server/data.json
