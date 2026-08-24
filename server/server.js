@@ -15,13 +15,14 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 
 const DEFAULT_DATA = {
   products: [], orders: [], dailyPlans: [], dailyPkgs: [],
-  deliveries: [], productionPlans: [], productionReports: [], logs: [], fields: null, meta: { seq: 0 },
+  deliveries: [], productionPlans: [], productionReports: [], processTemplates: [],
+  logs: [], fields: null, meta: { seq: 0 },
   fieldsAudit: 'audited', fieldsDraft: null, tblLayout: {},
   transfers: []
 };
 
 /* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写） */
-const BIZ_KEYS = ['products', 'orders', 'dailyPlans', 'dailyPkgs', 'deliveries', 'productionPlans', 'fields'];
+const BIZ_KEYS = ['products', 'orders', 'dailyPlans', 'dailyPkgs', 'deliveries', 'productionPlans', 'processTemplates', 'fields'];
 const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers', 'productionReports'];
 
 function load(file, def) {
@@ -50,7 +51,7 @@ let revs = {};
 Object.keys(data).forEach(k => revs[k] = 0);
 
 /* 用户（兼容旧格式：补 name/status/perms） */
-const STAFF_PERMS = { products: false, orders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, fields: false };
+const STAFF_PERMS = { products: false, orders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, processTemplates: false, fields: false };
 let users = load(USERS_FILE, null);
 if (!users || !Array.isArray(users)) {
   users = [

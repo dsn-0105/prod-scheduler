@@ -134,6 +134,16 @@ thead .exp-col{background:#eef2ff}
 .pp-rep-parts{display:flex;flex-wrap:wrap;gap:4px 10px;flex:1}
 .pp-rep-item{white-space:nowrap}
 .pp-rep-item b{color:var(--primary)}
+/* 工序模板卡片（build 2026-08-24.11） */
+.tpl-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.tpl-head{display:flex;align-items:center;gap:8px;font-size:14px;flex-wrap:wrap}
+.tpl-head b{font-size:14px}
+.tpl-id{font-size:11px;color:var(--muted);background:#f1f5f9;padding:1px 6px;border-radius:4px}
+.tpl-steps{display:flex;flex-wrap:wrap;gap:6px}
+.tpl-chip{font-size:12px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;padding:3px 8px}
+.tpl-chip.mand{background:#fef2f2;color:#dc2626;border-color:#fecaca}
+.tpl-notes{font-size:12px;color:var(--muted)}
+.tpl-ops{display:flex;gap:6px;margin-top:2px}
 .table-wrap tbody tr{cursor:pointer}
 .table-wrap tbody tr:hover{background:#f5f7ff}
 /* 选中行高亮：透明蓝（row-sel 类由 updateSelUI 切换；td 覆盖含左右吸顶列与 rowspan 合并组） */
@@ -446,7 +456,7 @@ function logout(){
 /* ---- 权限：按表单控制写权限（管理员全放行；员工按 perms 逐表单） ---- */
 let currentUser=null;
 function formToKey(formKey){
-  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',prodPlan:'dailyPlans',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};
+  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',prodPlan:'dailyPlans',processTpl:'processTemplates',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};
   return m[formKey]||formKey;
 }
 function canWriteKey(k){
@@ -719,6 +729,7 @@ const NAV=[
   {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
   {id:'prodPlan',label:'排产计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
+  {id:'processTpl',label:'工序模板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4a4 4 0 0 1-4 4H8M14 13v1a4 4 0 0 0 4 4h1"/></svg>'},
   {id:'fields',label:'字段设置',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>'},
   {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'},
   {id:'transfers',label:'调拨台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4M7 4L3 8M7 4l4 4M17 8v12M17 20l4-4M17 20l-4-4"/></svg>'},
@@ -728,7 +739,7 @@ const NAV=[
 /* ================================================================
    状态
 ================================================================ */
-let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[],productionPlans=[],productionReports=[];
+let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[],productionPlans=[],productionReports=[],processTemplates=[];
 let logs=[];
 let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
@@ -1299,6 +1310,7 @@ function renderContent(){
     case 'dailyReport':c.innerHTML=renderDailyReport();break;
     case 'prodPlan':c.innerHTML=renderProdPlan();break;
     case 'delivery':c.innerHTML=renderDelivery();break;
+    case 'processTpl':c.innerHTML=renderProcessTpl();break;
     case 'fields':c.innerHTML=renderFields();break;
     case 'logs':c.innerHTML=renderLogs();break;
     case 'transfers':c.innerHTML=renderTransfers();break;
@@ -1512,7 +1524,10 @@ function renderProducts(){
       html+='<tr onclick="selRowClick(\'product\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' data-sel-id="'+idx+'" data-sel-form="product" onclick="event.stopPropagation();selRowClick(\'product\','+idx+')"></td>';
       cols.forEach(f=>{
         let val=p[f.key];
-        if(f.key==='status'){
+        if(f.key==='processTplId'){
+          const t=tplOf(val);
+          html+='<td data-key="'+f.key+'">'+esc(t?t.name:val)+'</td>';
+        }else if(f.key==='status'){
           const cls=val==='启用'?'tag-green':'tag-gray';
           html+='<td data-key="'+f.key+'"><span class="tag '+cls+'">'+esc(val)+'</span></td>';
         }else if(f.type==='number'){
@@ -1537,7 +1552,14 @@ function productModal(idx,prefill){
   cols.forEach((f,i)=>{
     if(i>0&&i%2===0)body+='</div><div class="form-row">';
     const val=p[f.key]!=null?p[f.key]:'';
-    const ctrl=genControl(f,'pf_',val,'product');
+    let ctrl;
+    /* 工序模板：动态下拉（选项=processTemplates），必选 */
+    if(f.key==='processTplId'){
+      const tplOpts=(processTemplates.length?processTemplates.map(t=>'<option value="'+esc(t.id)+'" '+(val===t.id?'selected':'')+'>'+esc(t.id)+' - '+esc(t.name)+'</option>').join(''):'<option value="">（暂无模板，请先在「工序模板」中新增）</option>');
+      ctrl='<select id="pf_processTplId" required><option value="">请选择</option>'+tplOpts+'</select>';
+    }else{
+      ctrl=genControl(f,'pf_',val,'product');
+    }
     body+='<div><label>'+esc(f.label)+(f.required?' *':'')+'</label>'+ctrl+'</div>';
   });
   body+='</div>';
@@ -1556,6 +1578,7 @@ function saveProduct(idx){
   cols.forEach(f=>{ if(f.type==='ref'){ p[f.key]=lookupRef(f.refForm,f.refMatch,p[f.refKey],f.refField); } });
   if(!p.id){alert('请填写产品编码');return;}
   if(!p.name){alert('请填写产品名称');return;}
+  if(!p.processTplId){alert('请选择工序模板（产品必须关联工序模板）');return;}
   if(idx>=0){
     const oldP=products[idx];
     products[idx]=p;
@@ -1685,6 +1708,40 @@ function migrateProductDailyCap(){
     if(fieldsAudit!=='draft'){ save('fields',fields); }
     if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
     logOp('字段设置','产品主数据','系统迁移：合并「日产能(未包)/日产能(包装)」为「日产能」，新增「库存」关键字段');
+  }
+}
+/* 工序模板：确保「默认」模板存在（幂等；新表 processTemplates 首次加载自动 seed） */
+function ensureDefaultTpl(){
+  if(processTemplates.some(t=>t.id==='default'))return;
+  processTemplates.unshift({
+    id:'default',name:'默认工序',notes:'系统默认模板（装配/瞬时/延时/内包/老化/入库）',
+    steps:DEFAULT_TPL_STEPS.map(x=>({key:x.key,label:x.label,plan:!!x.plan,mandatory:!!x.mandatory}))
+  });
+  save('processTemplates',processTemplates);
+  logOp('工序模板','工序模板','系统初始化默认工序模板（装配/瞬时/延时/内包/老化/入库）');
+}
+/* 产品主数据：新增「工序模板」字段（配置迁移）+ 存量产品自动指派默认模板（.11，3.a 决策） */
+function migrateProductProcessTpl(){
+  let cfgChanged=false,dataChanged=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.product))return;
+    if(!cfg.product.some(f=>f.key==='processTplId')){
+      const def={key:'processTplId',label:'工序模板',type:'select',required:true,locked:false};
+      const idx=cfg.product.findIndex(f=>f.key==='status');
+      if(idx>=0)cfg.product.splice(idx,0,def); else cfg.product.push(def);
+      cfgChanged=true;
+    }
+  });
+  products.forEach(p=>{
+    if(!p.processTplId){ p.processTplId='default'; dataChanged=true; }
+  });
+  if(cfgChanged){
+    if(fieldsAudit!=='draft'){ save('fields',fields); }
+    if(fieldsDraft){ save('fieldsDraft',fieldsDraft); }
+  }
+  if(dataChanged){ save('products',products); }
+  if(cfgChanged||dataChanged){
+    logOp('字段设置','产品主数据','系统迁移：新增「工序模板」字段（必选），存量产品默认指派「默认工序」模板');
   }
 }
 function orderItems(o){
@@ -3241,19 +3298,31 @@ let planDateFrom=todayStr();  // 日视图开始日期（.10 起支持时间段�
 let planDateTo=todayStr();    // 日视图结束日期
 let planExpand={};            // 排产计划展开态（planId->true，纯内存，刷新重置）
 
-/* 6 工序定义：plan=true 表示该工序有计划量字段（入库类工序只报完成） */
-const PP_STEPS=[
-  {key:'assembly',label:'装配',plan:true},
-  {key:'innerPack',label:'内包',plan:true},
-  {key:'testAging',label:'调试老化',plan:true},
-  {key:'semiInbound',label:'半成品入库',plan:false},
-  {key:'pkg',label:'包装',plan:true},
-  {key:'finInbound',label:'成品入库',plan:false}
+/* 工序模板（2026-08-24.11）：默认模板 = 新 6 工序（用户确认：装配/瞬时/延时/内包/老化/入库）。
+   模板=从预置工序选用 + 可加自定义工序；每工序可设 计划量(plan)/必报(mandatory)。
+   排产单下推时按产品模板固化工序快照 items[].stepsDef；存量单无 stepsDef → 用默认模板。 */
+const DEFAULT_TPL_STEPS=[
+  {key:'assembly',label:'装配',plan:true,mandatory:true},
+  {key:'instant',label:'瞬时',plan:true,mandatory:false},
+  {key:'delay',label:'延时',plan:true,mandatory:false},
+  {key:'innerPack',label:'内包',plan:true,mandatory:false},
+  {key:'aging',label:'老化',plan:true,mandatory:true},
+  {key:'inbound',label:'入库',plan:false,mandatory:true}
 ];
-/* 报工必填关键节点（2.a 决策：其余工序可留空） */
-const PP_MANDATORY=['assembly','pkg','finInbound'];
-
-/* 导出列定义（排产计划无持久化 fields 配置，导出用内置列） */
+/* 预置工序枚举（模板编辑可选） */
+const PP_PRESET_STEPS=[
+  {key:'assembly',label:'装配',plan:true},
+  {key:'instant',label:'瞬时',plan:true},
+  {key:'delay',label:'延时',plan:true},
+  {key:'innerPack',label:'内包',plan:true},
+  {key:'aging',label:'老化',plan:true},
+  {key:'inbound',label:'入库',plan:false}
+];
+/* 老键→新键读取映射（存量排产单兼容：老化←调试老化，入库←成品入库；半成品入库/包装老数据保留不显示） */
+const PP_LEGACY_MAP={aging:'testAging',inbound:'finInbound'};
+/* 兼容引用：默认模板必报 key 列表（老代码路径；报工必填按单内 stepsDef.mandatory） */
+const PP_MANDATORY=DEFAULT_TPL_STEPS.filter(x=>x.mandatory).map(x=>x.key);
+/* 导出列定义（排产计划无持久化 fields 配置，导出用内置列；工序完成列动态拼） */
 const PP_EXPORT_COLS=[
   {key:'id',label:'排产单号',type:'text'},
   {key:'planDate',label:'计划日期',type:'date'},
@@ -3267,12 +3336,6 @@ const PP_EXPORT_COLS=[
   {key:'model',label:'型号',type:'text'},
   {key:'unit',label:'单位',type:'text'},
   {key:'planQty',label:'计划数量',type:'number'},
-  {key:'assemblyDone',label:'装配完成',type:'number'},
-  {key:'innerPackDone',label:'内包完成',type:'number'},
-  {key:'testAgingDone',label:'调试老化完成',type:'number'},
-  {key:'semiInbound',label:'半成品入库',type:'number'},
-  {key:'pkgDone',label:'包装完成',type:'number'},
-  {key:'finInbound',label:'成品入库',type:'number'},
   {key:'doneQty',label:'累计完成',type:'number'},
   {key:'progress',label:'进度%',type:'number'},
   {key:'notes',label:'备注',type:'text'}
@@ -3282,19 +3345,46 @@ const PP_EXPORT_COLS=[
 function ppItems(p){ return (Array.isArray(p.items)&&p.items.length)?p.items:[{productId:p.productId||'',productName:p.productName||'',spec:p.spec||'',model:p.model||'',unit:p.unit||'',planQty:num(p.planQty),doneQty:num(p.doneQty),steps:null}]; }
 function ppSteps(it){
   if(it&&it.steps)return it.steps;
-  const s={assembly:{plan:0,done:0},innerPack:{plan:0,done:0},testAging:{plan:0,done:0},semiInbound:0,pkg:{plan:0,done:0},finInbound:0};
+  const s={assembly:{plan:0,done:0},instant:{plan:0,done:0},delay:{plan:0,done:0},innerPack:{plan:0,done:0},aging:{plan:0,done:0},inbound:0};
   if(it){
     s.assembly.plan=num(it.assemblyPlan);s.innerPack.plan=num(it.innerPackPlan);
-    s.testAging.plan=num(it.testAgingPlan);s.pkg.plan=num(it.pkgPlan);
     s.assembly.done=num(it.assemblyDone);s.innerPack.done=num(it.innerPackDone);
-    s.testAging.done=num(it.testAgingDone);s.semiInbound=num(it.semiInbound);
-    s.pkg.done=num(it.pkgDone);s.finInbound=num(it.finInbound);
+    s.aging.plan=num(it.testAgingPlan);s.aging.done=num(it.testAgingDone);
+    s.inbound=num(it.finInbound);
   }
   return s;
 }
-function ppStepDone(it,key){ const v=ppSteps(it)[key]; return num(typeof v==='object'?v.done:v); }
-function ppStepPlan(it,key){ const v=ppSteps(it)[key]; return num(typeof v==='object'?v.plan:v); }
-function ppDoneOf(it){ return num(it&&it.doneQty!=null?it.doneQty:ppStepDone(it,'finInbound')); }
+/* 工序定义（含 label/plan/mandatory）：行快照 stepsDef > 排产单模板 > 默认模板 */
+function tplOf(id){
+  if(!processTemplates||!processTemplates.length)return null;
+  return processTemplates.find(t=>t.id===id)||null;
+}
+function stepsDefOf(p,it){
+  if(it&&Array.isArray(it.stepsDef)&&it.stepsDef.length)return it.stepsDef;
+  if(p&&p.processTplId){const t=tplOf(p.processTplId);if(t&&Array.isArray(t.steps)&&t.steps.length)return t.steps;}
+  return DEFAULT_TPL_STEPS;
+}
+/* 确保 steps 包含工序定义全部键（缺失补 0；老键数据平移：aging←testAging/inbound←finInbound） */
+function ppEnsureSteps(it,def){
+  if(!it)return;
+  const st=it.steps||(it.steps={});
+  (def||DEFAULT_TPL_STEPS).forEach(x=>{
+    if(st[x.key]===undefined){
+      const lv=PP_LEGACY_MAP[x.key]?st[PP_LEGACY_MAP[x.key]]:undefined;
+      if(lv!==undefined)st[x.key]=(typeof lv==='object')?{plan:num(lv.plan),done:num(lv.done)}:num(lv);
+      else st[x.key]=x.plan?{plan:0,done:0}:0;
+    }
+  });
+  return st;
+}
+function ppStepRaw(st,key){
+  if(st[key]!==undefined)return st[key];
+  if(PP_LEGACY_MAP[key]&&st[PP_LEGACY_MAP[key]]!==undefined)return st[PP_LEGACY_MAP[key]];
+  return undefined;
+}
+function ppStepDone(it,key){ const v=ppStepRaw(ppSteps(it),key); return num(typeof v==='object'?v.done:v); }
+function ppStepPlan(it,key){ const v=ppStepRaw(ppSteps(it),key); return num(typeof v==='object'?v.plan:v); }
+function ppDoneOf(it){ return num(it&&it.doneQty!=null?it.doneQty:ppStepDone(it,'inbound')); }
 function ppPlanOf(it){ return num(it&&it.planQty!=null?it.planQty:0); }
 function ppProgress(p){ let t=0,d=0; ppItems(p).forEach(it=>{t+=ppPlanOf(it);d+=ppDoneOf(it);}); return t>0?Math.round(d/t*100):0; }
 function ppStatusCls(st){ return st==='已完成'?'tag-green':st==='生产中'?'tag-blue':st==='已取消'?'tag-gray':'tag-amber'; }
@@ -3413,11 +3503,12 @@ function ppDelReport(id){
       const it=ppItems(p).find(z=>(z.productId||'')===(x.productId||''));
       if(!it)return;
       const st=ppSteps(it);
+      if(st[x.step]===undefined)ppEnsureSteps(it,stepsDefOf(p,it));   // 防御：确保工序键存在
       const v=st[x.step];
       const cur=num(typeof v==='object'?v.done:v);
       const dec=Math.min(num(x.qty),cur);
       if(typeof v==='object')v.done=Math.max(0,cur-dec);else st[x.step]=Math.max(0,cur-dec);
-      if(x.step==='finInbound')it.doneQty=Math.max(0,num(it.doneQty||0)-dec);
+      if(x.step==='inbound'||x.step==='finInbound')it.doneQty=Math.max(0,num(it.doneQty||0)-dec);   // 兼容老 finInbound 记录
     });
     const allDone=ppItems(p).every(z=>ppPlanOf(z)>0&&ppDoneOf(z)>=ppPlanOf(z));
     if(p.status==='已完成'&&!allDone)p.status='生产中';
@@ -3614,8 +3705,13 @@ function genProdPlan(){
   const items=deliveryItems(d).filter(it=>num(it.planQty)>0).map(it=>{
     const prod=products.find(p=>p.id===it.productId)||{};
     const q=num(it.planQty);
-    return {productId:it.productId||'',productName:it.productName||'',spec:it.spec||prod.spec||'',model:it.model||prod.model||'',unit:prod.unit||'',planQty:q,doneQty:0,lineNotes:it.lineNotes||'',
-      steps:{assembly:{plan:q,done:0},innerPack:{plan:q,done:0},testAging:{plan:q,done:0},semiInbound:0,pkg:{plan:q,done:0},finInbound:0}};
+    /* 工序模板（.11）：按产品主数据 processTplId 取模板，固化工序快照 stepsDef + 初始化 steps */
+    const tpl=prod.processTplId?tplOf(prod.processTplId):null;
+    const def=(tpl&&Array.isArray(tpl.steps)&&tpl.steps.length)?tpl.steps:DEFAULT_TPL_STEPS;
+    const stepsDef=def.map(x=>({key:x.key,label:x.label,plan:!!x.plan,mandatory:!!x.mandatory}));
+    const steps={};
+    def.forEach(x=>{steps[x.key]=x.plan?{plan:q,done:0}:0;});
+    return {productId:it.productId||'',productName:it.productName||'',spec:it.spec||prod.spec||'',model:it.model||prod.model||'',unit:prod.unit||'',planQty:q,doneQty:0,lineNotes:it.lineNotes||'',stepsDef:stepsDef,steps:steps};
   });
   if(items.length===0){alert('该交付计划无「本批计划交付数量>0」的明细行，无法下推');return;}
   const existing=productionPlans.filter(p=>p.deliveryIdx===di).length;
@@ -3647,6 +3743,7 @@ function prodPlanModal(idx,prefill){
      未排产=总−已排产；本次排产数可编辑（默认：下推/复制=未排产，编辑=当前 planQty；独立单不限制显示 —） */
   let rows='';
   items.forEach((it,i)=>{
+    const stepsDef=stepsDefOf(p,it);
     const total=ppTotalOf(p.deliveryIdx,it.productId);
     const already=ppPlannedOf(p.deliveryIdx,it.productId,idx>=0?idx:null);
     const remain=(total!=null)?Math.max(0,total-already):null;
@@ -3661,7 +3758,7 @@ function prodPlanModal(idx,prefill){
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+(remain!=null?money(remain):'—')+'</td>'+
       '<td style="text-align:center"><input type="number" class="pp_qty" data-li="'+i+'" min="0" '+(remain!=null?('max="'+remain+'"'):'')+' value="'+defVal+'" style="width:88px"></td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
-      PP_STEPS.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+'</tr>';
+      stepsDef.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+'</tr>';
   });
   const srcTxt=(p.deliveryIdx!=null)?('#'+(p.deliveryIdx+1)+' · 订单 '+esc(p.orderId)):'';
   const body='<div class="form-row">'+
@@ -3678,7 +3775,7 @@ function prodPlanModal(idx,prefill){
     '<div style="margin-bottom:6px;font-size:12px;color:var(--muted)">本次排产数量可修改（留空或 0 = 该行本次不排）；同一交付计划多次排产合计不能超过「未排产」数</div>'+
     '<div class="table-wrap" style="max-height:300px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>单位</th>'+
       '<th style="text-align:right">总计划数</th><th style="text-align:right">已排产</th><th style="text-align:right">未排产</th><th style="text-align:center">本次排产数量</th><th style="text-align:right">累计完成</th>'+
-      PP_STEPS.map(x=>'<th style="text-align:right;font-size:12px">'+x.label+'<br>完成</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+      (items.length?stepsDefOf(p,items[0]).map(x=>'<th style="text-align:right;font-size:12px">'+esc(x.label)+'<br>完成</th>').join(''):'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal(isNew?'下推排产计划（确认）':'编辑排产计划',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveProdPlan('+(idx!=null?idx:-1)+')">保存</button>');
 }
@@ -3709,17 +3806,20 @@ function saveProdPlan(idx){
       alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 超过未排产 '+money(remain)+'，请调整（同一交付计划多次排产合计不能超过总计划数）。');
       return;
     }
-    for(let k=0;k<PP_STEPS.length;k++){
-      const d=ppStepDone(it,PP_STEPS[k].key);
+    const stepsDef=stepsDefOf(p,it);
+    for(let k=0;k<stepsDef.length;k++){
+      const d=ppStepDone(it,stepsDef[k].key);
       if(d>q){
-        alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 低于该工序「'+PP_STEPS[k].label+'」已完成 '+money(d)+'，请调整。');
+        alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 低于该工序「'+stepsDef[k].label+'」已完成 '+money(d)+'，请调整。');
         return;
       }
     }
     const ni=JSON.parse(JSON.stringify(it));
     ni.planQty=q;
-    if(!ni.steps){ni.steps={assembly:{plan:0,done:0},innerPack:{plan:0,done:0},testAging:{plan:0,done:0},semiInbound:0,pkg:{plan:0,done:0},finInbound:0};}
-    PP_STEPS.forEach(x=>{ if(x.plan&&typeof ni.steps[x.key]==='object')ni.steps[x.key].plan=q; });
+    if(!ni.steps)ni.steps={};
+    ppEnsureSteps(ni,stepsDef);
+    if(!ni.stepsDef)ni.stepsDef=stepsDef.map(x=>({key:x.key,label:x.label,plan:!!x.plan,mandatory:!!x.mandatory}));
+    stepsDef.forEach(x=>{ if(x.plan&&typeof ni.steps[x.key]==='object')ni.steps[x.key].plan=q; });
     finalItems.push(ni);
   }
   if(finalItems.length===0){alert('请至少保留一行「本次排产数量>0」的明细');return;}
@@ -3747,8 +3847,10 @@ function copyProdPlan(i){
   c.deliveryIdx=null;   /* 复制单为独立排产（不占原交付计划额度，本次排产数量可自由调整） */
   c.items.forEach(it=>{
     const q=num(it.planQty);
+    const def=Array.isArray(it.stepsDef)&&it.stepsDef.length?it.stepsDef:DEFAULT_TPL_STEPS;
     it.doneQty=0;
-    it.steps={assembly:{plan:q,done:0},innerPack:{plan:q,done:0},testAging:{plan:q,done:0},semiInbound:0,pkg:{plan:q,done:0},finInbound:0};
+    it.steps={};
+    def.forEach(x=>{it.steps[x.key]=x.plan?{plan:q,done:0}:0;});
   });
   window.__ppPending=c;
   prodPlanModal(-1,c);
@@ -3761,8 +3863,8 @@ function delProdPlan(i){
   renderContent();
 }
 
-/* 生产报工：选中 1 条排产计划 → 按工序填本次完成数（增量累计）；
-   必报工序=装配/包装/成品入库（可填 0，填 0 视为已填写）；报工累计硬性不能超过本次排产数（超量直接拦截）；
+/* 生产报工：选中 1 条排产计划 → 按产品工序模板（stepsDef）填本次完成数（增量累计）；
+   必报工序=模板 mandatory（可填 0，填 0 视为已填写）；报工累计硬性不能超过本次排产数（超量直接拦截）；
    首次报工自动置「生产中」 */
 function reportProdPlan(){
   const s=selSet('prodPlan');
@@ -3773,14 +3875,20 @@ function reportProdPlan(){
   if(!p){alert('未找到该排产计划');return;}
   if(p.status==='已取消'){alert('已取消的排产计划不能报工');return;}
   const items=ppItems(p);
+  /* 工序列 = 各产品行 stepsDef 的并集（不同产品模板列一致展示，缺工序行显示 —） */
+  const union=[];
+  items.forEach(it=>stepsDefOf(p,it).forEach(x=>{if(!union.find(u=>u.key===x.key))union.push({key:x.key,label:x.label,plan:!!x.plan,mandatory:!!x.mandatory});}));
   let rows='';
   items.forEach((it,i)=>{
+    const myDef=stepsDefOf(p,it);
     rows+='<tr data-li="'+i+'"><td>'+esc(it.productId)+'</td><td>'+esc(it.productName)+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlanOf(it))+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
-      PP_STEPS.map(x=>{
+      union.map(x=>{
+        const stepDef=myDef.find(s=>s.key===x.key);
+        if(!stepDef)return '<td style="text-align:center;color:var(--muted);font-size:11px">—</td>';
         const done=ppStepDone(it,x.key),plan=ppStepPlan(it,x.key);
-        const isMand=PP_MANDATORY.indexOf(x.key)>=0;
+        const isMand=!!stepDef.mandatory;
         return '<td style="text-align:center"><div style="font-size:11px;color:var(--muted)">'+(plan>0?('计划'+money(plan)):'—')+'<br>已报 '+money(done)+'</div>'+
           '<input type="number" class="rp_qty" data-li="'+i+'" data-step="'+x.key+'" min="0" placeholder="本次" style="width:72px">'+(isMand?' <span style="color:var(--red)">*</span>':'')+'</td>';
       }).join('')+'</tr>';
@@ -3790,7 +3898,7 @@ function reportProdPlan(){
     '<div style="flex:1"><span style="font-size:12px;color:var(--muted)">报工人为手动必填，将记录到报工明细中</span></div>'+
     '</div>'+
     '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，且不能超过本次排产数）</div>'+
-    '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+PP_STEPS.map(x=>'<th style="text-align:center">'+x.label+(PP_MANDATORY.indexOf(x.key)>=0?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+union.map(x=>'<th style="text-align:center">'+esc(x.label)+(x.mandatory?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal('生产报工（'+esc(p.id)+'）',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
 }
@@ -3811,26 +3919,29 @@ function saveReport(pi){
   });
   if(entries.length===0){alert('请至少填写一个工序的本次完成数');return;}
   if(!entries.some(e=>e.qty>0)){alert('请至少填写一个大于 0 的本次完成数（仅填 0 无法报工）');return;}
-  /* 必填校验：每行必报工序（装配/包装/成品入库）已填写即可（填 0 视为已填写） */
+  /* 必填校验：每行按工序模板 mandatory 工序已填写即可（填 0 视为已填写） */
   for(let li=0;li<items.length;li++){
-    for(let k=0;k<PP_MANDATORY.length;k++){
-      const st=PP_MANDATORY[k];
+    const def=stepsDefOf(p,items[li]).filter(x=>x.mandatory);
+    for(let k=0;k<def.length;k++){
+      const st=def[k].key;
       if(!entries.some(e=>e.li===li&&e.step===st)){
         const it=items[li];
-        alert('产品「'+(it.productName||it.productId)+'」必报工序「'+PP_STEPS.find(x=>x.key===st).label+'」未填写本次数量（可填 0）。');
+        alert('产品「'+(it.productName||it.productId)+'」必报工序「'+def[k].label+'」未填写本次数量（可填 0）。');
         return;
       }
     }
   }
   /* 硬性上限（需求 2026-08-24.7）：报工累计不能超过本次排产数。
-     入库工序（半成品/成品入库）上限=本批排产数 planQty，其余工序上限=工序计划量 */
+     入库类工序（plan=false）上限=本批排产数 planQty，其余工序上限=工序计划量 */
   const overRows=[];
   entries.forEach(e=>{
     if(e.qty<=0)return;
     const it=items[e.li];
+    const def=stepsDefOf(p,it);
+    const stepDef=def.find(x=>x.key===e.step);
     const cur=ppStepDone(it,e.step);
-    const plan=(e.step==='semiInbound'||e.step==='finInbound')?ppPlanOf(it):ppStepPlan(it,e.step);
-    if(plan>0&&cur+e.qty>plan)overRows.push({name:it.productName||it.productId,step:PP_STEPS.find(x=>x.key===e.step).label,qty:e.qty,plan:plan,cur:cur});
+    const plan=(stepDef&&!stepDef.plan)?ppPlanOf(it):ppStepPlan(it,e.step);
+    if(plan>0&&cur+e.qty>plan)overRows.push({name:it.productName||it.productId,step:(stepDef?stepDef.label:e.step),qty:e.qty,plan:plan,cur:cur});
   });
   if(overRows.length>0){
     alert('报工数量不能超过本次排产数量：\n\n'+overRows.map(o=>'• '+o.name+' · '+o.step+'：本次排产 '+o.plan+'，已报 '+o.cur+'，本次 '+o.qty+' → 合计 '+(o.cur+o.qty)).join('\n')+'\n\n请调整本次数量后重新提交。');
@@ -3847,11 +3958,13 @@ function applyReport(pi,entries,items,worker){
     if(e.qty<=0)return;                        // 填 0 的工序无增量、不进日志/明细
     const it=items[e.li];
     const st=ppSteps(it);
+    if(st[e.step]===undefined)ppEnsureSteps(it,stepsDefOf(p,it));   // 存量单首次写入新工序键
     const v=st[e.step];
     if(typeof v==='object')v.done=num(v.done)+e.qty;else st[e.step]=num(v)+e.qty;
-    if(e.step==='finInbound')it.doneQty=num(it.doneQty||0)+e.qty;
-    logParts.push((it.productName||it.productId)+'·'+PP_STEPS.find(x=>x.key===e.step).label+'+'+e.qty);
-    repItems.push({productId:it.productId,productName:it.productName,step:e.step,label:PP_STEPS.find(x=>x.key===e.step).label,qty:e.qty});
+    if(e.step==='inbound')it.doneQty=num(it.doneQty||0)+e.qty;
+    const stepLabel=(stepsDefOf(p,it).find(x=>x.key===e.step)||{}).label||e.step;
+    logParts.push((it.productName||it.productId)+'·'+stepLabel+'+'+e.qty);
+    repItems.push({productId:it.productId,productName:it.productName,step:e.step,label:stepLabel,qty:e.qty});
   });
   if(p.status==='待排产')p.status='生产中';
   const allDone=items.every(x=>ppPlanOf(x)>0&&ppDoneOf(x)>=ppPlanOf(x));
@@ -4102,9 +4215,139 @@ function clearLogs(){
   renderContent();
 }
 
+/* ================================================================
+   工序模板（processTemplates，build 2026-08-24.11）：
+   产品主数据关联「工序模板」，排产下推时按模板固化工序快照 stepsDef；
+   模板=预置 6 工序（装配/瞬时/延时/内包/老化/入库）+ 自定义工序，每工序可设 计划量/必报
+================================================================ */
+let __tplSteps=[];   // 模板编辑弹窗中的临时工序数组
+function renderProcessTpl(){
+  const writable=canWriteForm('processTpl');
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4a4 4 0 0 1-4 4H8M14 13v1a4 4 0 0 0 4 4h1"/></svg>工序模板 <span class="desc">按产品类型定义不同工艺路线 · 排产下推时固化工序快照</span>'+(writable?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="tplModal()">新增工序模板</button>':'')+'</div>';
+  if(processTemplates.length===0){
+    html+='<div class="empty">暂无工序模板，请先新增</div>';
+  }else{
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px">'+
+      processTemplates.map((t,i)=>{
+        const refCount=products.filter(p=>p.processTplId===t.id).length;
+        const usedDefault=t.id==='default';
+        const stepsHtml=(t.steps||[]).map(s=>
+          '<span class="tpl-chip'+(s.mandatory?' mand':'')+'" title="'+(s.plan?'有计划量（报工上限=工序计划量）':'无计划量（入库类，上限=本批排产数）')+(s.mandatory?' · 必报':'')+'">'+esc(s.label)+(s.mandatory?' *':'')+'</span>').join('');
+        return '<div class="tpl-card"><div class="tpl-head">'+
+          '<b>'+esc(t.name)+'</b><span class="tpl-id">'+esc(t.id)+'</span>'+(usedDefault?'<span class="tag tag-blue">系统默认</span>':'')+
+          '<span style="margin-left:auto;font-size:12px;color:var(--muted)">'+refCount+' 个产品使用</span></div>'+
+          '<div class="tpl-steps">'+stepsHtml+'</div>'+
+          (t.notes?'<div class="tpl-notes">'+esc(t.notes)+'</div>':'')+
+          (writable?'<div class="tpl-ops"><button class="btn btn-sm" onclick="tplModal('+i+')">编辑</button><button class="btn btn-sm" onclick="copyTpl('+i+')">复制</button><button class="btn btn-sm btn-danger" onclick="delTpl('+i+')">删除</button></div>':'')+
+          '</div>';
+      }).join('')+'</div>';
+  }
+  html+='</div>';
+  return html;
+}
+function tplModal(idx,prefill){
+  if(!ensureWrite('processTpl'))return;
+  const isNew=(prefill!=null)||idx==null;   // 无参=新增；prefill=复制；idx>=0=编辑
+  const t=(prefill!=null)?prefill:(idx!=null?JSON.parse(JSON.stringify(processTemplates[idx])):null);
+  __tplSteps=(t&&Array.isArray(t.steps))?JSON.parse(JSON.stringify(t.steps)):[];
+  const body='<div class="form-row">'+
+    '<div><label>模板编码 *</label><input type="text" id="tpl_id" value="'+esc((t&&t.id)||'')+'"'+(isNew||idx<0?' placeholder="如 ACB、MCCB"':' readonly style="background:#f6f8fa;color:var(--muted)"')+'></div>'+
+    '<div><label>模板名称 *</label><input type="text" id="tpl_name" value="'+esc((t&&t.name)||'')+'" placeholder="如 框架断路器工艺"></div>'+
+    '<div style="flex:1"><label>备注</label><input type="text" id="tpl_notes" value="'+esc((t&&t.notes)||'')+'"></div>'+
+    '</div>'+
+    '<div style="margin:10px 0 6px;font-size:13px;color:var(--muted)">工序列表（可填预置名 装配/瞬时/延时/内包/老化/入库，或输入任意自定义工序名）：</div>'+
+    '<div class="table-wrap" style="max-height:300px;overflow:auto"><div id="tplStepsBox">'+tplStepsBoxHtml()+'</div></div>'+
+    '<div style="margin-top:8px"><button class="btn btn-sm btn-primary" onclick="tplAddStep()">+ 添加工序</button>'+
+    '<span style="margin-left:8px;font-size:12px;color:var(--muted)">「计划量」勾选=报工上限按该工序计划量；「必报」勾选=报工必须填写（可填 0）</span></div>';
+  showModal(isNew?'新增工序模板':'编辑工序模板',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveTpl('+(idx!=null?idx:-1)+')">保存</button>');
+}
+function tplStepsBoxHtml(){
+  const arr=__tplSteps||[];
+  if(!arr.length)return '<div class="empty" style="padding:12px">尚未添加工序</div>';
+  return '<table><thead><tr><th>工序名称</th><th style="width:70px;text-align:center">计划量</th><th style="width:60px;text-align:center">必报</th><th style="width:130px;text-align:center">操作</th></tr></thead><tbody>'+
+    arr.map((s,i)=>
+      '<tr>'+
+      '<td><input type="text" class="tpl_step_name" data-idx="'+i+'" value="'+esc(s.label)+'" style="width:130px"></td>'+
+      '<td style="text-align:center"><input type="checkbox" class="tpl_step_plan" data-idx="'+i+'" '+(s.plan?'checked':'')+'></td>'+
+      '<td style="text-align:center"><input type="checkbox" class="tpl_step_mand" data-idx="'+i+'" '+(s.mandatory?'checked':'')+'></td>'+
+      '<td style="text-align:center;white-space:nowrap"><button class="btn btn-sm" style="padding:1px 6px" onclick="tplMoveStep('+i+',-1)" title="上移">↑</button> <button class="btn btn-sm" style="padding:1px 6px" onclick="tplMoveStep('+i+',1)" title="下移">↓</button> <button class="btn btn-sm btn-danger" style="padding:1px 6px" onclick="tplDelStep('+i+')" title="删除">✕</button></td>'+
+      '</tr>').join('')+'</tbody></table>';
+}
+function tplStepsRender(){const el=document.getElementById('tplStepsBox');if(el)el.innerHTML=tplStepsBoxHtml();}
+function tplAddStep(){
+  const name=prompt('工序名称（预置：装配/瞬时/延时/内包/老化/入库；或输入自定义工序名）','');
+  if(name==null)return;
+  const label=String(name||'').trim();
+  if(!label)return;
+  const preset=PP_PRESET_STEPS.find(x=>x.label===label);
+  const key=preset?preset.key:('c'+(__tplSteps.length+1));
+  __tplSteps.push({key:key,label:label,plan:preset?(preset.plan!==false):true,mandatory:false});
+  tplStepsRender();
+}
+function tplMoveStep(i,d){
+  const j=i+d;
+  if(j<0||j>=__tplSteps.length)return;
+  const a=__tplSteps,tmp=a[i];a[i]=a[j];a[j]=tmp;
+  tplStepsRender();
+}
+function tplDelStep(i){__tplSteps.splice(i,1);tplStepsRender();}
+function saveTpl(idx){
+  const id=String((document.getElementById('tpl_id')||{}).value||'').trim();
+  const name=String((document.getElementById('tpl_name')||{}).value||'').trim();
+  const notes=String((document.getElementById('tpl_notes')||{}).value||'');
+  if(!id){alert('请填写模板编码');return;}
+  if(!name){alert('请填写模板名称');return;}
+  if(idx<0&&processTemplates.some(t=>t.id===id)){alert('模板编码「'+id+'」已存在');return;}
+  const rows=Array.prototype.slice.call(document.querySelectorAll('.tpl_step_name'));
+  const steps=[];
+  rows.forEach((inp,i)=>{
+    const label=String(inp.value||'').trim();
+    if(!label)return;
+    const plan=!!(document.querySelector('.tpl_step_plan[data-idx="'+i+'"]')||{}).checked;
+    const mandatory=!!(document.querySelector('.tpl_step_mand[data-idx="'+i+'"]')||{}).checked;
+    const preset=PP_PRESET_STEPS.find(x=>x.label===label);
+    steps.push({key:preset?preset.key:('c'+(i+1)),label:label,plan:plan,mandatory:mandatory});
+  });
+  if(steps.length===0){alert('请至少添加一个工序');return;}
+  const seen={};let dup=false;
+  steps.forEach(s=>{if(seen[s.key])dup=true;seen[s.key]=1;});
+  if(dup){alert('存在重复工序：请勿使用多个相同名称（自定义工序名请勿与预置工序重名）');return;}
+  if(idx>=0){
+    const t=processTemplates[idx];
+    const oldId=t.id;
+    if(oldId!=='default'&&id!==oldId&&products.some(p=>p.processTplId===oldId)){alert('该模板已被产品引用，模板编码不可修改');return;}
+    t.id=id;t.name=name;t.notes=notes;t.steps=steps;
+    logOp('编辑','工序模板','编辑「'+id+'」工序模板');
+  }else{
+    processTemplates.push({id:id,name:name,notes:notes,steps:steps});
+    logOp('新增','工序模板','新增「'+id+'」工序模板');
+  }
+  save('processTemplates',processTemplates);
+  closeModal();
+  renderContent();
+}
+function copyTpl(i){
+  const c=JSON.parse(JSON.stringify(processTemplates[i]));
+  c.id=suggestCopyId(c.id+'副本',id=>processTemplates.some(t=>t.id===id));
+  c.name=c.name+'（副本）';
+  tplModal(-1,c);
+}
+function delTpl(i){
+  const t=processTemplates[i];
+  if(!t)return;
+  if(t.id==='default'){alert('系统默认模板不可删除');return;}
+  const ref=products.filter(p=>p.processTplId===t.id).length;
+  if(ref>0){alert('该模板正被 '+ref+' 个产品使用，请先在产品主数据中改用其他模板后再删除。');return;}
+  if(!confirm('确认删除工序模板「'+t.id+'」？'))return;
+  logOp('删除','工序模板','删除「'+t.id+'」工序模板');
+  processTemplates.splice(i,1);
+  save('processTemplates',processTemplates);
+  renderContent();
+}
+
 /* 调拨台账：只读流水，逐条可冲销 */
-function renderTransfers(){
-  let html='<div class="page">';
+function renderTransfers(){  let html='<div class="page">';
   html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录每次「调用库存 / 退回库存」及冲销。记录不可修改，仅可逐条冲销。</span></div>';
   html+='<div class="table-wrap"><table><thead><tr>'
     +'<th style="min-width:140px">时间</th>'
@@ -4144,7 +4387,7 @@ function renderTransfers(){
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',fields:'字段设置',transfers:'调拨台账'};
+const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',processTemplates:'工序模板',fields:'字段设置',transfers:'调拨台账'};
 async function loadUsers(){
   try{
     const r=await apiReq('/users?token='+authToken);
@@ -5360,6 +5603,7 @@ var FORM_ACTIONS={
   dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
   prodPlan:{formKey:'prodPlan',get:function(i){return productionPlans[i];},edit:function(i){prodPlanModal(i);},del:function(i){delProdPlan(i);},copy:function(i){copyProdPlan(i);}},
+  processTpl:{formKey:'processTpl',get:function(i){return processTemplates[i];},edit:function(i){tplModal(i);},del:function(i){delTpl(i);},copy:function(i){copyTpl(i);}},
   delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);}}
 };
 
@@ -5437,6 +5681,7 @@ function bulkDelete(m){
   else if(m==='dp_stockup'){idxs.forEach(i=>dailyPlans.splice(i,1));save('dailyPlans',dailyPlans);}
   else if(m==='dp_pkg'){idxs.forEach(i=>dailyPkgs.splice(i,1));save('dailyPkgs',dailyPkgs);}
   else if(m==='prodPlan'){idxs.forEach(i=>productionPlans.splice(i,1));save('productionPlans',productionPlans);}
+  else if(m==='processTpl'){idxs.forEach(i=>processTemplates.splice(i,1));save('processTemplates',processTemplates);}
   else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));save('deliveries',deliveries);}
   clearSel(m);
   renderContent();
@@ -5497,7 +5742,7 @@ function autoBackupNow(force){
   var data={
     version:2,exportDate:new Date().toISOString(),
     products:products,orders:orders,
-    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,productionPlans:productionPlans,productionReports:productionReports,
+    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,productionPlans:productionPlans,productionReports:productionReports,processTemplates:processTemplates,
     logs:logs,fields:fields,meta:meta
   };
   var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
@@ -5540,6 +5785,7 @@ function backupAll(){
     deliveries:deliveries,
     productionPlans:productionPlans,
     productionReports:productionReports,
+    processTemplates:processTemplates,
     logs:logs,
     fields:fields,
     meta:meta
@@ -5572,6 +5818,7 @@ function restoreBackup(e){
       if(data.deliveries)deliveries=data.deliveries;
       if(data.productionPlans)productionPlans=data.productionPlans;
       if(data.productionReports)productionReports=data.productionReports;
+      if(data.processTemplates)processTemplates=data.processTemplates;
       if(data.logs)logs=data.logs;
       if(data.fields)fields=data.fields;
       if(data.meta)meta=data.meta;
@@ -5586,15 +5833,15 @@ function restoreBackup(e){
       backfillInvDeliveredFromStock();
       syncStockFromInvOrders();
       save('products',products);save('orders',orders);
-      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);
+      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);save('processTemplates',processTemplates);
       save('logs',logs);save('fields',fields);save('meta',meta);
       renderAll();
       logOp('恢复','全部数据','从备份文件恢复 '+
         ((products.length||0)+(orders.length||0)+
-         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0))+' 条记录');
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)+(processTemplates.length||0))+' 条记录');
       alert('恢复成功！共恢复 ' +
         ((products.length||0)+(orders.length||0)+
-         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)) + ' 条记录。');
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)+(processTemplates.length||0)) + ' 条记录。');
     }catch(err){
       alert('恢复失败：'+err.message+'\n\n请确认文件为系统导出的 .json 备份文件。');
     }
@@ -5606,9 +5853,9 @@ function restoreBackup(e){
 function confirmClear(){
   if(!confirm('确认清空所有数据？此操作不可恢复，建议先导出备份！'))return;
   if(!confirm('再次确认：所有产品、订单、库存、排产、交付数据将被删除！'))return;
-  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];productionPlans=[];productionReports=[];
+  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];productionPlans=[];productionReports=[];processTemplates=[];
   save('products',products);save('orders',orders);
-  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);
+  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);save('processTemplates',processTemplates);
   logOp('清空','全部数据','清空所有业务数据');
   renderAll();
 }
@@ -5641,6 +5888,7 @@ async function initApp(){
   deliveries=await DB.get('deliveries',[]);
   productionPlans=await DB.get('productionPlans',[]);
   productionReports=await DB.get('productionReports',[]);
+  processTemplates=await DB.get('processTemplates',[]);
   logs=await DB.get('logs',[]);
   transfers=await DB.get('transfers',[]);
   fields=await DB.get('fields',JSON.parse(JSON.stringify(defaultFields)));
@@ -5693,6 +5941,9 @@ async function initApp(){
   // 库存打通：先把产品现有库存反填到库存订单的已交付数量，再同步 库存=Σ(已交付)（含历史数据一次性对齐）
   backfillInvDeliveredFromStock();
   syncStockFromInvOrders();
+  // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
+  ensureDefaultTpl();
+  migrateProductProcessTpl();
 
   bootDone=true;
   var ab=document.getElementById('autoBackupBtn');
@@ -5749,6 +6000,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.10</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.11</div>
 </body>
 </html>
