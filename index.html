@@ -3346,9 +3346,10 @@ function togglePlanExpand(id){
   planExpand[id]=!planExpand[id];
   renderContent();
 }
-/* 行内展开行：缩进显示报工明细（实时算累计/计划） */
+/* 行内展开行：缩进显示报工明细（实时算累计/计划）；.9 起每行可删除（回退累计） */
 function ppExpandRow(p){
   const reps=ppReportsOf(p.id);
+  const canDel=canWriteForm('prodPlan');
   let inner;
   if(reps.length===0){
     let tp=0,td=0;
@@ -3364,7 +3365,8 @@ function ppExpandRow(p){
           (plan>0?('（累计 '+money(cur)+'/'+money(plan)+'）'):('（累计 '+money(cur)+'）'))+'</span>';
       }).join(' · ');
       return '<div class="pp-rep-line"><span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
-        '<span class="pp-rep-worker">'+esc(r.worker||'')+'</span><div class="pp-rep-parts">'+parts+'</div></div>';
+        '<span class="pp-rep-worker">'+esc(r.worker||'')+'</span><div class="pp-rep-parts">'+parts+'</div>'+
+        (canDel?'<button class="btn btn-sm btn-danger" style="padding:1px 8px;font-size:12px" onclick="event.stopPropagation();ppDelReport(\''+esc(r.id)+'\')" title="删除该条报工（同步回退累计完成数）">删除</button>':'')+'</div>';
     }).join('');
   }
   return '<tr class="pp-exp-row"><td colspan="'+(TBL_SCHEMAS.prodPlan.length+2)+'"><div class="pp-exp">'+
@@ -3372,26 +3374,58 @@ function ppExpandRow(p){
     '<button class="btn btn-sm" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">弹窗查看</button></div>'+
     inner+'</div></td></tr>';
 }
-/* 方案 B：报工明细弹窗（表格形式，按时间倒序） */
+/* 方案 B：报工明细弹窗（表格形式，按时间倒序；.9 起每行可删除） */
 function ppReportsModal(planId){
   const p=productionPlans.find(x=>x.id===planId);
   const reps=ppReportsOf(planId);
+  const canDel=canWriteForm('prodPlan');
   let inner;
   if(reps.length===0){
     inner='<div class="empty">暂无报工明细</div>';
   }else{
-    inner='<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>时间</th><th>报工人</th><th>产品</th><th>工序</th><th style="text-align:right">本次数量</th><th style="text-align:right">累计/计划</th></tr></thead><tbody>'+reps.map(r=>{
+    inner='<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>时间</th><th>报工人</th><th>产品</th><th>工序</th><th style="text-align:right">本次数量</th><th style="text-align:right">累计/计划</th>'+(canDel?'<th>操作</th>':'')+'</tr></thead><tbody>'+reps.map(r=>{
       return (r.items||[]).map(x=>{
         const it=p?ppItems(p).find(z=>(z.productId||'')===(x.productId||'')):null;
         const cur=it?ppStepDone(it,x.step):0;
         const plan=(x.step==='semiInbound'||x.step==='finInbound')?(it?ppPlanOf(it):0):(it?ppStepPlan(it,x.step):0);
         return '<tr><td>'+esc(r.date||'')+' '+esc(r.time||'')+'</td><td>'+esc(r.worker||'')+'</td><td>'+esc(x.productName||x.productId)+'</td><td>'+esc(x.label)+'</td>'+
           '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(x.qty)+'</td>'+
-          '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(cur)+' / '+money(plan)+'</td></tr>';
+          '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(cur)+' / '+money(plan)+'</td>'+
+          (canDel?'<td><button class="btn btn-sm btn-danger" style="padding:1px 8px;font-size:12px" onclick="ppDelReport(\''+esc(r.id)+'\')">删除</button></td>':'')+'</tr>';
       }).join('');
     }).join('')+'</tbody></table></div>';
   }
   showModal('报工明细 · '+esc(p?p.id:planId),inner,'<button class="btn" onclick="closeModal()">关闭</button>');
+}
+/* 删除一条报工明细：同步回退排产单对应工序累计完成数；已完成后回退则状态回到生产中 */
+function ppDelReport(id){
+  if(!ensureWrite('prodPlan'))return;
+  const idx=productionReports.findIndex(r=>r.id===id);
+  if(idx<0){alert('未找到该报工记录');return;}
+  const rec=productionReports[idx];
+  const p=productionPlans.find(x=>x.id===rec.planId);
+  const labelParts=(rec.items||[]).map(x=>x.label+'-'+money(x.qty)).join('、');
+  if(!confirm('删除该条报工（'+(rec.date||'')+' '+(rec.time||'')+' '+(rec.worker||'')+'：'+labelParts+'）？\n\n将同步回退排产单「'+rec.planId+'」的累计完成数，此操作不可撤销。'))return;
+  if(p){
+    (rec.items||[]).forEach(x=>{
+      const it=ppItems(p).find(z=>(z.productId||'')===(x.productId||''));
+      if(!it)return;
+      const st=ppSteps(it);
+      const v=st[x.step];
+      const cur=num(typeof v==='object'?v.done:v);
+      const dec=Math.min(num(x.qty),cur);
+      if(typeof v==='object')v.done=Math.max(0,cur-dec);else st[x.step]=Math.max(0,cur-dec);
+      if(x.step==='finInbound')it.doneQty=Math.max(0,num(it.doneQty||0)-dec);
+    });
+    const allDone=ppItems(p).every(z=>ppPlanOf(z)>0&&ppDoneOf(z)>=ppPlanOf(z));
+    if(p.status==='已完成'&&!allDone)p.status='生产中';
+    save('productionPlans',productionPlans);
+  }
+  productionReports.splice(idx,1);
+  save('productionReports',productionReports);
+  logOp('删除报工','排产计划','删除排产单「'+rec.planId+'」报工 '+(rec.date||'')+' '+(rec.time||'')+'：'+labelParts+'（累计已回退）');
+  closeModal();
+  renderContent();
 }
 
 /* 主渲染：视图切换 + 日视图表格 / 周月聚合 */
@@ -3712,7 +3746,11 @@ function reportProdPlan(){
           '<input type="number" class="rp_qty" data-li="'+i+'" data-step="'+x.key+'" min="0" placeholder="本次" style="width:72px">'+(isMand?' <span style="color:var(--red)">*</span>':'')+'</td>';
       }).join('')+'</tr>';
   });
-  const body='<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，且不能超过本次排产数）</div>'+
+  const body='<div class="form-row">'+
+    '<div><label>报工人 *</label><input type="text" id="rp_worker" placeholder="请输入报工人姓名" maxlength="20"></div>'+
+    '<div style="flex:1"><span style="font-size:12px;color:var(--muted)">报工人为手动必填，将记录到报工明细中</span></div>'+
+    '</div>'+
+    '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，且不能超过本次排产数）</div>'+
     '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+PP_STEPS.map(x=>'<th style="text-align:center">'+x.label+(PP_MANDATORY.indexOf(x.key)>=0?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal('生产报工（'+esc(p.id)+'）',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
@@ -3720,6 +3758,8 @@ function reportProdPlan(){
 function saveReport(pi){
   const p=productionPlans[pi];
   if(!p)return;
+  const worker=String((document.getElementById('rp_worker')||{}).value||'').trim();
+  if(!worker){alert('请填写报工人');document.getElementById('rp_worker').focus();return;}
   const items=ppItems(p);
   const inputs=Array.prototype.slice.call(document.querySelectorAll('.rp_qty'));
   const entries=[];
@@ -3757,9 +3797,9 @@ function saveReport(pi){
     alert('报工数量不能超过本次排产数量：\n\n'+overRows.map(o=>'• '+o.name+' · '+o.step+'：本次排产 '+o.plan+'，已报 '+o.cur+'，本次 '+o.qty+' → 合计 '+(o.cur+o.qty)).join('\n')+'\n\n请调整本次数量后重新提交。');
     return;
   }
-  applyReport(pi,entries,items);
+  applyReport(pi,entries,items,worker);
 }
-function applyReport(pi,entries,items){
+function applyReport(pi,entries,items,worker){
   const p=productionPlans[pi];
   if(!p)return;
   const logParts=[];
@@ -3777,14 +3817,14 @@ function applyReport(pi,entries,items){
   if(p.status==='待排产')p.status='生产中';
   const allDone=items.every(x=>ppPlanOf(x)>0&&ppDoneOf(x)>=ppPlanOf(x));
   save('productionPlans',productionPlans);
-  /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序 */
+  /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序；报工人为弹窗必填输入（.9） */
   if(repItems.length>0){
     const now=new Date();
     const rec={
       id:prNextId(),planId:p.id,
       date:todayStr(),
       time:now.getHours()+':'+String(now.getMinutes()).padStart(2,'0'),
-      worker:(currentUser&&(currentUser.name||currentUser.username))||'',
+      worker:worker||'',
       items:repItems,createdAt:now.toISOString()
     };
     productionReports.push(rec);
@@ -4371,7 +4411,8 @@ function showModal(title,body,foot){
   document.getElementById('modalBg').classList.add('show');
 }
 function closeModal(){
-  document.getElementById('modalBg').classList.remove('show');
+  const el=document.getElementById('modalBg');
+  if(el)el.classList.remove('show');
 }
 /* 二级确认浮层：浮在弹窗之上（z-index 300），不替换底层弹窗 DOM。
    点「取消」/遮罩 → onCancel（退回原弹窗）；点「确认」→ onOk */
@@ -5669,6 +5710,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.8</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.9</div>
 </body>
 </html>
