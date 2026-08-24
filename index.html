@@ -428,7 +428,7 @@ function logout(){
 /* ---- 权限：按表单控制写权限（管理员全放行；员工按 perms 逐表单） ---- */
 let currentUser=null;
 function formToKey(formKey){
-  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};
+  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',prodPlan:'dailyPlans',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};
   return m[formKey]||formKey;
 }
 function canWriteKey(k){
@@ -571,6 +571,10 @@ const HARD_FIELDS={
     {key:'productName',label:'产品名称'},{key:'orderTotal',label:'订单总量'},{key:'delivered',label:'已交付'},
     {key:'undelivered',label:'未交付'},{key:'planQty',label:'本批计划交付数量'},{key:'finalDate',label:'最终交付期'},
     {key:'firstDate',label:'首次交付日'},{key:'notes',label:'备注'}
+  ],
+  prodPlan:[
+    {key:'planDate',label:'计划生产日期'},{key:'finalDate',label:'交付期'},{key:'status',label:'状态'},
+    {key:'notes',label:'备注'}
   ]
 };
 function fmtLogVal(v){ if(v===undefined||v===null||v==='')return '空'; return String(v); }
@@ -695,8 +699,7 @@ const NAV=[
   {id:'dashboard',label:'看板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>'},
   {id:'product',label:'产品主数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
   {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
-  {id:'dailyPlan',label:'日排产',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
-  {id:'dailyReport',label:'生产日报',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>'},
+  {id:'prodPlan',label:'排产计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
   {id:'fields',label:'字段设置',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>'},
   {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'},
@@ -707,7 +710,7 @@ const NAV=[
 /* ================================================================
    状态
 ================================================================ */
-let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[];
+let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[],productionPlans=[];
 let logs=[];
 let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
@@ -1276,6 +1279,7 @@ function renderContent(){
     case 'order':c.innerHTML=renderOrders();break;
     case 'dailyPlan':c.innerHTML=renderDailyPlan();break;
     case 'dailyReport':c.innerHTML=renderDailyReport();break;
+    case 'prodPlan':c.innerHTML=renderProdPlan();break;
     case 'delivery':c.innerHTML=renderDelivery();break;
     case 'fields':c.innerHTML=renderFields();break;
     case 'logs':c.innerHTML=renderLogs();break;
@@ -1295,7 +1299,7 @@ function renderContent(){
   applyTableLayout();
   syncBottomScrollbar();
   /* 渲染后同步选中态：恢复复选框勾选与选中行高亮（row-sel，含 rowspan 合并组） */
-  ['product','order_frame','order_inv','dp_stockup','dp_pkg','delivery'].forEach(function(m){
+  ['product','order_frame','order_inv','dp_stockup','dp_pkg','delivery','prodPlan'].forEach(function(m){
     if(document.querySelector('#content input[data-sel-form="'+m+'"]'))updateSelUI(m);
   });
   /* 布局完成后再次校正（字体/图片等加载可能改变表格宽度，避免滚动条不出现或错位） */
@@ -3208,6 +3212,428 @@ function renderDelivery(){
   return html;
 }
 
+/* ================================================================
+   排产计划（生产排产：交付计划下推 + 工序报工，月/周/日视图）
+   数据表 productionPlans（server.js DEFAULT_DATA+BIZ_KEYS 已登记）
+   口径：planQty=交付计划行 planQty（1:1）；doneQty=成品入库累计（回写二期）
+================================================================ */
+let planView='day';           // day / week / month
+let planViewDate=todayStr();  // 当前视图参照日期
+
+/* 6 工序定义：plan=true 表示该工序有计划量字段（入库类工序只报完成） */
+const PP_STEPS=[
+  {key:'assembly',label:'装配',plan:true},
+  {key:'innerPack',label:'内包',plan:true},
+  {key:'testAging',label:'调试老化',plan:true},
+  {key:'semiInbound',label:'半成品入库',plan:false},
+  {key:'pkg',label:'包装',plan:true},
+  {key:'finInbound',label:'成品入库',plan:false}
+];
+/* 报工必填关键节点（2.a 决策：其余工序可留空） */
+const PP_MANDATORY=['assembly','pkg','finInbound'];
+
+/* 导出列定义（排产计划无持久化 fields 配置，导出用内置列） */
+const PP_EXPORT_COLS=[
+  {key:'id',label:'排产单号',type:'text'},
+  {key:'planDate',label:'计划日期',type:'date'},
+  {key:'finalDate',label:'交付期',type:'date'},
+  {key:'orderId',label:'订单',type:'text'},
+  {key:'customer',label:'客户',type:'text'},
+  {key:'status',label:'状态',type:'text'},
+  {key:'productId',label:'产品编码',type:'text'},
+  {key:'productName',label:'产品名称',type:'text'},
+  {key:'spec',label:'规格',type:'text'},
+  {key:'model',label:'型号',type:'text'},
+  {key:'unit',label:'单位',type:'text'},
+  {key:'planQty',label:'计划数量',type:'number'},
+  {key:'assemblyDone',label:'装配完成',type:'number'},
+  {key:'innerPackDone',label:'内包完成',type:'number'},
+  {key:'testAgingDone',label:'调试老化完成',type:'number'},
+  {key:'semiInbound',label:'半成品入库',type:'number'},
+  {key:'pkgDone',label:'包装完成',type:'number'},
+  {key:'finInbound',label:'成品入库',type:'number'},
+  {key:'doneQty',label:'累计完成',type:'number'},
+  {key:'progress',label:'进度%',type:'number'},
+  {key:'notes',label:'备注',type:'text'}
+];
+
+/* 明细/工序兜底：老/手工结构（顶层平铺字段）自动构造 */
+function ppItems(p){ return (Array.isArray(p.items)&&p.items.length)?p.items:[{productId:p.productId||'',productName:p.productName||'',spec:p.spec||'',model:p.model||'',unit:p.unit||'',planQty:num(p.planQty),doneQty:num(p.doneQty),steps:null}]; }
+function ppSteps(it){
+  if(it&&it.steps)return it.steps;
+  const s={assembly:{plan:0,done:0},innerPack:{plan:0,done:0},testAging:{plan:0,done:0},semiInbound:0,pkg:{plan:0,done:0},finInbound:0};
+  if(it){
+    s.assembly.plan=num(it.assemblyPlan);s.innerPack.plan=num(it.innerPackPlan);
+    s.testAging.plan=num(it.testAgingPlan);s.pkg.plan=num(it.pkgPlan);
+    s.assembly.done=num(it.assemblyDone);s.innerPack.done=num(it.innerPackDone);
+    s.testAging.done=num(it.testAgingDone);s.semiInbound=num(it.semiInbound);
+    s.pkg.done=num(it.pkgDone);s.finInbound=num(it.finInbound);
+  }
+  return s;
+}
+function ppStepDone(it,key){ const v=ppSteps(it)[key]; return num(typeof v==='object'?v.done:v); }
+function ppStepPlan(it,key){ const v=ppSteps(it)[key]; return num(typeof v==='object'?v.plan:v); }
+function ppDoneOf(it){ return num(it&&it.doneQty!=null?it.doneQty:ppStepDone(it,'finInbound')); }
+function ppPlanOf(it){ return num(it&&it.planQty!=null?it.planQty:0); }
+function ppProgress(p){ let t=0,d=0; ppItems(p).forEach(it=>{t+=ppPlanOf(it);d+=ppDoneOf(it);}); return t>0?Math.round(d/t*100):0; }
+function ppStatusCls(st){ return st==='已完成'?'tag-green':st==='生产中'?'tag-blue':st==='已取消'?'tag-gray':'tag-amber'; }
+function ppWeekRange(d){
+  const date=new Date(d);
+  const day=date.getDay()||7;
+  date.setDate(date.getDate()-day+1);
+  const start=fmtDate(date);
+  date.setDate(date.getDate()+6);
+  return [start,fmtDate(date)];
+}
+
+/* 主渲染：视图切换 + 日视图表格 / 周月聚合 */
+function renderProdPlan(){
+  const writable=canWriteForm('prodPlan');
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>排产计划 <span class="desc">交付计划下推 · 工序报工 · 月/周/日视图</span></div>';
+  html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'+
+    '<div style="display:inline-flex;border:1px solid #d1d5db;border-radius:6px;overflow:hidden">'+[['day','日'],['week','周'],['month','月']].map(x=>'<button class="btn btn-sm" style="border-radius:0;margin:0;'+(planView===x[0]?'background:var(--primary);color:#fff;':'')+'" onclick="ppSetView(\''+x[0]+'\')">'+x[1]+'</button>').join('')+'</div>'+
+    (planView==='day'?('<label style="margin:0"><input type="date" id="ppDate" value="'+planViewDate+'" onchange="ppChangeDate()" style="width:auto"></label>')
+     :(planView==='week'?('<span style="font-size:13px;color:var(--muted)">'+ppWeekRange(planViewDate)[0]+' ~ '+ppWeekRange(planViewDate)[1]+'</span><label style="margin:0"><input type="date" id="ppDate" value="'+planViewDate+'" onchange="ppChangeDate()" style="width:auto"></label>')
+     :('<span style="font-size:13px;color:var(--muted)">'+planViewDate.slice(0,7)+' 月</span><label style="margin:0"><input type="month" id="ppDate" value="'+planViewDate.slice(0,7)+'" onchange="ppChangeMonth()" style="width:auto"></label>')))+
+    '<button class="btn btn-sm" onclick="ppShiftDate(-1)">上一'+({day:'天',week:'周',month:'月'}[planView])+'</button>'+
+    '<button class="btn btn-sm" onclick="ppShiftDate(1)">下一'+({day:'天',week:'周',month:'月'}[planView])+'</button>'+
+    '<button class="btn btn-sm" onclick="planViewDate=todayStr();renderContent()">今天</button>'+
+    '</div>';
+  if(planView==='day')html+=renderProdPlanDay(writable);
+  else if(planView==='week')html+=renderProdPlanAgg('week',writable);
+  else html+=renderProdPlanAgg('month',writable);
+  html+='</div>';
+  return html;
+}
+function ppSetView(v){planView=v;renderContent();}
+function ppChangeDate(){planViewDate=document.getElementById('ppDate').value||planViewDate;renderContent();}
+function ppChangeMonth(){const v=document.getElementById('ppDate').value;if(v)planViewDate=v+'-01';renderContent();}
+function ppShiftDate(delta){
+  const d=new Date(planViewDate);
+  if(planView==='month'){d.setMonth(d.getMonth()+delta);planViewDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01';}
+  else if(planView==='week'){d.setDate(d.getDate()+delta*7);planViewDate=fmtDate(d);}
+  else{d.setDate(d.getDate()+delta);planViewDate=fmtDate(d);}
+  renderContent();
+}
+
+/* 日视图：当日排产计划表格（每产品一行，勾选/操作按排产单） */
+function renderProdPlanDay(writable){
+  const dayPlans=productionPlans.filter(p=>fmtDate(p.planDate)===planViewDate);
+  if(dayPlans.length===0)return '<div class="empty" style="padding:18px">当日无排产计划，请先在「交付计划」页勾选一条记录点「下推排产计划」</div>';
+  const rows=[];
+  dayPlans.forEach(p=>{ppItems(p).forEach(it=>rows.push({p:p,it:it,pi:productionPlans.indexOf(p)}));});
+  TBL_SCHEMAS.prodPlan=[
+    {key:'id',label:'排产单号',type:'text',get:r=>r.p.id},
+    {key:'planDate',label:'计划日期',type:'date',get:r=>r.p.planDate},
+    {key:'finalDate',label:'交付期',type:'date',get:r=>r.p.finalDate},
+    {key:'orderId',label:'订单',type:'text',get:r=>r.p.orderId},
+    {key:'customer',label:'客户',type:'text',get:r=>r.p.customer},
+    {key:'status',label:'状态',type:'text',select:true,get:r=>r.p.status},
+    {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
+    {key:'productName',label:'产品名称',type:'text',get:r=>r.it.productName},
+    {key:'model',label:'型号',type:'text',get:r=>r.it.model},
+    {key:'spec',label:'规格',type:'text',get:r=>r.it.spec},
+    {key:'planQty',label:'计划数量',type:'number',get:r=>ppPlanOf(r.it)},
+    {key:'doneQty',label:'累计完成',type:'number',get:r=>ppDoneOf(r.it)},
+    {key:'_pct',label:'进度%',type:'number',get:r=>{const t=ppPlanOf(r.it);return t>0?Math.round(ppDoneOf(r.it)/t*100):0;}},
+    {key:'notes',label:'备注',type:'text',get:r=>r.p.notes}
+  ];
+  TBL_ROWS.prodPlan=rows;
+  let shown=applyTable('prodPlan',rows);
+  lastRowIds.prodPlan=shown.map(r=>r.pi);
+  let html=bulkBar('prodPlan');
+  html+=filterBar('prodPlan');
+  html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.prodPlan.map(c=>thCol('prodPlan',c)).join('')+'</tr></thead><tbody>';
+  if(shown.length===0){html+=noMatchRow('prodPlan',TBL_SCHEMAS.prodPlan.length+1);}
+  let sumPlan=0,sumDone=0;
+  shown.forEach(r=>{
+    const p=r.p,it=r.it,pi=r.pi;
+    const t=ppPlanOf(it),d=ppDoneOf(it);
+    const pct=t>0?Math.round(d/t*100):0;
+    const selChecked=selSet('prodPlan').has(String(pi))?'checked':'';
+    const allDone=t>0&&d>=t;
+    html+='<tr onclick="selRowClick(\'prodPlan\','+pi+')">'+
+      '<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+pi+'" data-sel-form="prodPlan" onclick="event.stopPropagation();selRowClick(\'prodPlan\','+pi+')"></td>'+
+      '<td data-key="id" style="font-weight:600">'+esc(p.id)+'</td>'+
+      '<td data-key="planDate">'+fmtDate(p.planDate)+'</td>'+
+      '<td data-key="finalDate">'+fmtDate(p.finalDate)+'</td>'+
+      '<td data-key="orderId">'+esc(p.orderId)+'</td>'+
+      '<td data-key="customer">'+esc(p.customer)+'</td>'+
+      '<td data-key="status"><span class="tag '+ppStatusCls(p.status)+'">'+esc(p.status)+'</span></td>'+
+      '<td data-key="productId">'+esc(it.productId)+'</td>'+
+      '<td data-key="productName">'+esc(it.productName)+'</td>'+
+      '<td data-key="model">'+esc(it.model||'')+'</td>'+
+      '<td data-key="spec">'+esc(it.spec||'')+'</td>'+
+      '<td data-key="planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(t)+'</td>'+
+      '<td data-key="doneQty" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(d)+'</td>'+
+      '<td data-key="_pct" style="font-variant-numeric:tabular-nums;text-align:right">'+(allDone?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
+      '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
+    sumPlan+=t;sumDone+=d;
+  });
+  html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="10">小计</td><td style="text-align:right">'+money(sumPlan)+'</td><td style="text-align:right">'+money(sumDone)+'</td><td colspan="2"></td></tr>';
+  html+='</tbody></table></div>';
+  return html;
+}
+
+/* 周/月聚合视图：按产品汇总计划量/完成量/进度 */
+function ppInRange(p,view){
+  const d=fmtDate(p.planDate);
+  if(view==='week'){const w=ppWeekRange(planViewDate);return d>=w[0]&&d<=w[1];}
+  return d.slice(0,7)===planViewDate.slice(0,7);
+}
+function renderProdPlanAgg(view,writable){
+  const inRange=productionPlans.filter(p=>ppInRange(p,view));
+  if(inRange.length===0)return '<div class="empty" style="padding:18px">'+(view==='week'?('本周（'+ppWeekRange(planViewDate)[0]+' ~ '+ppWeekRange(planViewDate)[1]+'）'):(planViewDate.slice(0,7)+' 月'))+'无排产计划</div>';
+  const agg={};
+  inRange.forEach(p=>{ppItems(p).forEach(it=>{
+    const pid=it.productId||'';
+    if(!agg[pid])agg[pid]={productId:pid,productName:it.productName||'',planQty:0,doneQty:0,count:0};
+    agg[pid].planQty+=ppPlanOf(it);agg[pid].doneQty+=ppDoneOf(it);agg[pid].count++;
+  });});
+  const list=Object.values(agg).sort((a,b)=>b.planQty-a.planQty);
+  const tPlan=list.reduce((s,a)=>s+a.planQty,0),tDone=list.reduce((s,a)=>s+a.doneQty,0);
+  let html='<div class="stats">'+
+    statCard(inRange.length,'排产单数','blue')+
+    statCard(tPlan,'计划总量','blue')+
+    statCard(tDone,'累计完成','amber')+
+    statCard(tPlan>0?Math.round(tDone/tPlan*100):0,'整体进度%','')+
+    '</div>';
+  html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th><th style="text-align:right">进度</th><th style="text-align:right">排产单数</th></tr></thead><tbody>';
+  list.forEach(a=>{
+    const pct=a.planQty>0?Math.round(a.doneQty/a.planQty*100):0;
+    html+='<tr><td>'+esc(a.productId)+'</td><td>'+esc(a.productName)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(a.planQty)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(a.doneQty)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(a.planQty>0&&a.doneQty>=a.planQty?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
+      '<td style="text-align:right">'+a.count+'</td></tr>';
+  });
+  html+='</tbody></table></div>';
+  return html;
+}
+
+/* 交付计划 → 下推排产计划（仅限 1 条；planQty=0 行跳过；可重复下推支持分批生产） */
+function genProdPlan(){
+  const s=selSet('delivery');
+  if(s.size===0){alert('请先勾选 1 条交付计划');return;}
+  if(s.size>1){alert('「下推排产计划」一次只能选择 1 条交付计划，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
+  const di=Number([...s][0]);
+  const d=deliveries[di];
+  if(!d){alert('未找到该交付计划');return;}
+  const items=deliveryItems(d).filter(it=>num(it.planQty)>0).map(it=>{
+    const prod=products.find(p=>p.id===it.productId)||{};
+    const q=num(it.planQty);
+    return {productId:it.productId||'',productName:it.productName||'',spec:it.spec||prod.spec||'',model:it.model||prod.model||'',unit:prod.unit||'',planQty:q,doneQty:0,lineNotes:it.lineNotes||'',
+      steps:{assembly:{plan:q,done:0},innerPack:{plan:q,done:0},testAging:{plan:q,done:0},semiInbound:0,pkg:{plan:q,done:0},finInbound:0}};
+  });
+  if(items.length===0){alert('该交付计划无「本批计划交付数量>0」的明细行，无法下推');return;}
+  const existing=productionPlans.filter(p=>p.deliveryIdx===di).length;
+  if(existing>0&&!confirm('该交付计划已下推过 '+existing+' 张排产计划，继续将再生成一张（支持分批生产）？'))return;
+  const np={id:ppNextId(),deliveryIdx:di,orderId:d.orderId,customer:d.customer||'',finalDate:fmtDate(d.finalDate),planDate:fmtDate(d.finalDate)||todayStr(),status:'待排产',notes:'',items:items};
+  window.__ppPending=np;
+  switchTab('prodPlan');
+  prodPlanModal(-1,np);
+}
+function ppNextId(){
+  const today=todayStr().replace(/-/g,'');
+  const re=new RegExp('^PSCD-'+today+'-(\\d+)$');
+  let max=0;
+  productionPlans.forEach(p=>{
+    const m=String(p.id||'').match(re);
+    if(m)max=Math.max(max,parseInt(m[1],10));
+  });
+  return 'PSCD-'+today+'-'+String(max+1).padStart(3,'0');
+}
+
+/* 排产计划编辑弹窗（下推确认 / 编辑）：明细只读，可改计划日期/交付期/状态/备注 */
+function prodPlanModal(idx,prefill){
+  if(!ensureWrite('prodPlan'))return;
+  const isNew=(prefill!=null);
+  const p=isNew?prefill:(idx!=null?JSON.parse(JSON.stringify(productionPlans[idx])):null);
+  if(!p)return;
+  const items=ppItems(p);
+  let rows='';
+  items.forEach(it=>{
+    rows+='<tr><td>'+esc(it.productId)+'</td><td>'+esc(it.productName)+'</td><td>'+esc(it.model||'')+'</td><td>'+esc(it.spec||'')+'</td><td>'+esc(it.unit||'')+'</td>'+
+      '<td style="text-align:right;font-weight:600">'+money(ppPlanOf(it))+'</td>'+
+      '<td style="text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
+      PP_STEPS.map(x=>'<td style="text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+'</tr>';
+  });
+  const srcTxt=(p.deliveryIdx!=null)?('#'+(p.deliveryIdx+1)+' · 订单 '+esc(p.orderId)):'';
+  const body='<div class="form-row">'+
+    '<div><label>排产单号 *</label><input type="text" id="pp_id" value="'+esc(p.id)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '<div><label>来源交付计划</label><input type="text" value="'+srcTxt+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '<div><label>客户</label><input type="text" value="'+esc(p.customer)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>计划生产日期 *</label><input type="date" id="pp_planDate" value="'+fmtDate(p.planDate)+'"></div>'+
+    '<div><label>交付期</label><input type="date" id="pp_finalDate" value="'+fmtDate(p.finalDate)+'"></div>'+
+    '<div><label>状态</label><select id="pp_status">'+['待排产','生产中','已完成','已取消'].map(x=>'<option value="'+x+'" '+(p.status===x?'selected':'')+'>'+x+'</option>').join('')+'</select></div>'+
+    '</div><div class="form-row">'+
+    '<div style="flex:1"><label>备注</label><input type="text" id="pp_notes" value="'+esc(p.notes)+'"></div>'+
+    '</div>'+
+    '<div class="table-wrap" style="max-height:280px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>单位</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+PP_STEPS.map(x=>'<th style="text-align:right;font-size:12px">'+x.label+'<br>完成</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  showModal(isNew?'下推排产计划（确认）':'编辑排产计划',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveProdPlan('+(idx!=null?idx:-1)+')">保存</button>');
+}
+function saveProdPlan(idx){
+  const id=(document.getElementById('pp_id')||{}).value;
+  if(!id){alert('排产单号缺失');return;}
+  const planDate=document.getElementById('pp_planDate').value;
+  if(!planDate){alert('请填写计划生产日期');return;}
+  const finalDate=document.getElementById('pp_finalDate').value;
+  const status=document.getElementById('pp_status').value;
+  const notes=document.getElementById('pp_notes').value;
+  if(idx>=0){
+    const p=productionPlans[idx];
+    if(!p)return;
+    const old=JSON.parse(JSON.stringify(p));
+    p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;
+    logFieldDiffs('排产计划',HARD_FIELDS.prodPlan,old,p,p.id);
+  }else{
+    const np=window.__ppPending;
+    if(!np){alert('下推数据缺失，请重新操作');return;}
+    np.planDate=planDate;np.finalDate=finalDate;np.status=status;np.notes=notes;
+    productionPlans.push(np);
+    window.__ppPending=null;
+    logOp('新增','排产计划','新增「'+np.id+'」（订单'+np.orderId+'）');
+  }
+  save('productionPlans',productionPlans);
+  closeModal();
+  renderContent();
+}
+function copyProdPlan(i){
+  const c=JSON.parse(JSON.stringify(productionPlans[i]));
+  c.id=ppNextId();
+  c.planDate=todayStr();
+  c.status='待排产';
+  c.notes='';
+  c.items.forEach(it=>{
+    const q=num(it.planQty);
+    it.doneQty=0;
+    it.steps={assembly:{plan:q,done:0},innerPack:{plan:q,done:0},testAging:{plan:q,done:0},semiInbound:0,pkg:{plan:q,done:0},finInbound:0};
+  });
+  window.__ppPending=c;
+  prodPlanModal(-1,c);
+}
+function delProdPlan(i){
+  if(!confirm('确认删除该排产计划「'+productionPlans[i].id+'」？'))return;
+  logOp('删除','排产计划','删除「'+productionPlans[i].id+'」');
+  productionPlans.splice(i,1);
+  save('productionPlans',productionPlans);
+  renderContent();
+}
+
+/* 生产报工：选中 1 条排产计划 → 按工序填本次完成数（增量累计）；
+   必报工序=装配/包装/成品入库（可填 0）；超量（累计>计划）弹浮层确认；首次报工自动置「生产中」 */
+function reportProdPlan(){
+  const s=selSet('prodPlan');
+  if(s.size===0){alert('请先勾选 1 条排产计划');return;}
+  if(s.size>1){alert('「报工」一次只能选择 1 条排产计划，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
+  const pi=Number([...s][0]);
+  const p=productionPlans[pi];
+  if(!p){alert('未找到该排产计划');return;}
+  if(p.status==='已取消'){alert('已取消的排产计划不能报工');return;}
+  const items=ppItems(p);
+  let rows='';
+  items.forEach((it,i)=>{
+    rows+='<tr data-li="'+i+'"><td>'+esc(it.productId)+'</td><td>'+esc(it.productName)+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlanOf(it))+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
+      PP_STEPS.map(x=>{
+        const done=ppStepDone(it,x.key),plan=ppStepPlan(it,x.key);
+        const isMand=PP_MANDATORY.indexOf(x.key)>=0;
+        return '<td style="text-align:center"><div style="font-size:11px;color:var(--muted)">'+(plan>0?('计划'+money(plan)):'—')+'<br>已报 '+money(done)+'</div>'+
+          '<input type="number" class="rp_qty" data-li="'+i+'" data-step="'+x.key+'" min="0" placeholder="本次" style="width:72px">'+(isMand?' <span style="color:var(--red)">*</span>':'')+'</td>';
+      }).join('')+'</tr>';
+  });
+  const body='<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，累计自动汇总）</div>'+
+    '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+PP_STEPS.map(x=>'<th style="text-align:center">'+x.label+(PP_MANDATORY.indexOf(x.key)>=0?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  showModal('生产报工（'+esc(p.id)+'）',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
+}
+function saveReport(pi){
+  const p=productionPlans[pi];
+  if(!p)return;
+  const items=ppItems(p);
+  const inputs=Array.prototype.slice.call(document.querySelectorAll('.rp_qty'));
+  const entries=[];
+  inputs.forEach(inp=>{
+    const v=parseFloat(inp.value);
+    if(isNaN(v)||v<=0)return;
+    entries.push({li:parseInt(inp.getAttribute('data-li'),10),step:inp.getAttribute('data-step'),qty:v});
+  });
+  if(entries.length===0){alert('请至少填写一个工序的本次完成数');return;}
+  for(let li=0;li<items.length;li++){
+    for(let k=0;k<PP_MANDATORY.length;k++){
+      const st=PP_MANDATORY[k];
+      if(!entries.some(e=>e.li===li&&e.step===st)){
+        const it=items[li];
+        alert('产品「'+(it.productName||it.productId)+'」必报工序「'+PP_STEPS.find(x=>x.key===st).label+'」未填写本次数量（可填 0）。');
+        return;
+      }
+    }
+  }
+  const overRows=[];
+  entries.forEach(e=>{
+    const it=items[e.li];
+    const cur=ppStepDone(it,e.step),plan=ppStepPlan(it,e.step);
+    if(plan>0&&cur+e.qty>plan)overRows.push({name:it.productName||it.productId,step:PP_STEPS.find(x=>x.key===e.step).label,qty:e.qty,plan:plan,cur:cur});
+  });
+  if(overRows.length>0){
+    showConfirmOverlay(
+      '以下工序本次报工后将超过计划量：<br>'+overRows.map(o=>'• '+esc(o.name)+' · '+esc(o.step)+'：计划 '+o.plan+'，已报 '+o.cur+'，本次 '+o.qty+' → 合计 '+(o.cur+o.qty)).join('<br>')+'<br><br>仍要提交？（超量部分计入完成数）',
+      null,
+      function(){applyReport(pi,entries,items);},
+      '取消','仍要提交');
+    return;
+  }
+  applyReport(pi,entries,items);
+}
+function applyReport(pi,entries,items){
+  const p=productionPlans[pi];
+  if(!p)return;
+  const logParts=[];
+  entries.forEach(e=>{
+    const it=items[e.li];
+    const st=ppSteps(it);
+    const v=st[e.step];
+    if(typeof v==='object')v.done=num(v.done)+e.qty;else st[e.step]=num(v)+e.qty;
+    if(e.step==='finInbound')it.doneQty=num(it.doneQty||0)+e.qty;
+    logParts.push((it.productName||it.productId)+'·'+PP_STEPS.find(x=>x.key===e.step).label+'+'+e.qty);
+  });
+  if(p.status==='待排产')p.status='生产中';
+  const allDone=items.every(x=>ppPlanOf(x)>0&&ppDoneOf(x)>=ppPlanOf(x));
+  save('productionPlans',productionPlans);
+  logOp('报工','排产计划','排产单「'+p.id+'」报工：'+logParts.join('、'));
+  closeModal();
+  renderContent();
+  if(allDone&&p.status!=='已完成'){
+    if(confirm('该排产计划所有产品均已完工（累计完成≥计划数量），是否标记为「已完成」？')){
+      p.status='已完成';
+      save('productionPlans',productionPlans);
+      logOp('完成','排产计划','排产单「'+p.id+'」标记为已完成');
+      renderContent();
+    }
+  }
+}
+
+/* 排产计划导出平铺行（每产品一行） */
+function prodPlanFlatRows(list){
+  const rows=[];
+  (list||[]).forEach(p=>{
+    ppItems(p).forEach(it=>{
+      const t=ppPlanOf(it),d=ppDoneOf(it);
+      rows.push({
+        id:p.id,planDate:fmtDate(p.planDate),finalDate:fmtDate(p.finalDate),orderId:p.orderId,customer:p.customer,status:p.status,
+        productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',unit:it.unit||'',
+        planQty:t,assemblyDone:ppStepDone(it,'assembly'),innerPackDone:ppStepDone(it,'innerPack'),testAgingDone:ppStepDone(it,'testAging'),
+        semiInbound:ppStepDone(it,'semiInbound'),pkgDone:ppStepDone(it,'pkg'),finInbound:ppStepDone(it,'finInbound'),
+        doneQty:d,progress:t>0?Math.round(d/t*100):0,notes:p.notes||''
+      });
+    });
+  });
+  return rows;
+}
+
 /* 交付计划明细行：新结构 items[]（含规格/型号/商品行备注）；旧数据（单产品平铺）自动构造单行 */
 function deliveryItems(d){
   if(Array.isArray(d.items)&&d.items.length)return d.items;
@@ -3452,7 +3878,7 @@ function renderTransfers(){
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'备货排产',dailyPkgs:'包装排产',deliveries:'交付计划',fields:'字段设置',transfers:'调拨台账'};
+const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',fields:'字段设置',transfers:'调拨台账'};
 async function loadUsers(){
   try{
     const r=await apiReq('/users?token='+authToken);
@@ -3964,7 +4390,8 @@ var XLSX_SHEETS=[
   {sheet:'订单管理',varName:'orders',formKey:'order'},
   {sheet:'备货排产',varName:'dailyPlans',formKey:'dailyPlan'},
   {sheet:'包装排产',varName:'dailyPkgs',formKey:'dailyPkg'},
-  {sheet:'交付计划',varName:'deliveries',formKey:'delivery'}
+  {sheet:'交付计划',varName:'deliveries',formKey:'delivery'},
+  {sheet:'排产计划',varName:'productionPlans',formKey:'prodPlan'}
 ];
 
 /* varName -> 实际变量 的映射（不能用 window[name]，因为数组用 let 声明不挂到 window） */
@@ -3975,6 +4402,7 @@ function dataByVar(name){
     case 'dailyPlans':return dailyPlans;
     case 'dailyPkgs':return dailyPkgs;
     case 'deliveries':return deliveries;
+    case 'productionPlans':return productionPlans;
     case 'logs':return logs;
   }
   return [];
@@ -3986,6 +4414,7 @@ function setDataByVar(name,arr){
     case 'dailyPlans':dailyPlans=arr;break;
     case 'dailyPkgs':dailyPkgs=arr;break;
     case 'deliveries':deliveries=arr;break;
+    case 'productionPlans':productionPlans=arr;break;
     case 'logs':logs=arr;break;
   }
 }
@@ -4028,14 +4457,20 @@ function groupOrderRows(rows){
 
 function exportXLSX(){
   var sheets=XLSX_SHEETS.map(function(cfg){
-    var farr=fields[cfg.formKey]||[];
-    var headers=farr.map(function(f){return f.label;});
-    var data=cfg.formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
+    var cols,data;
+    if(cfg.formKey==='prodPlan'){
+      cols=PP_EXPORT_COLS;
+      data=prodPlanFlatRows(dataByVar(cfg.varName));
+    }else{
+      cols=(fields[cfg.formKey]||[]).map(function(f){return {key:f.key,label:f.label,type:f.type};});
+      data=cfg.formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
+    }
+    var headers=cols.map(function(c){return c.label;});
     var rows=data.map(function(item){
-      return farr.map(function(f){
-        var val=item[f.key];
-        if(f.type==='date'&&val)return fmtDate(val);
-        if(f.type==='number')return num(val);
+      return cols.map(function(c){
+        var val=item[c.key];
+        if(c.type==='date'&&val)return fmtDate(val);
+        if(c.type==='number')return num(val);
         return val==null?'':val;
       });
     });
@@ -4054,15 +4489,16 @@ function exportXLSX(){
 function exportForm(formKey,rows){
   var cfg=XLSX_SHEETS.find(function(c){return c.formKey===formKey;});
   if(!cfg)return;
-  var farr=fields[cfg.formKey]||[];
-  var headers=farr.map(function(f){return f.label;});
   var isSel=(rows!=null);
-  if(!isSel)rows=formKey==='order'?orderFlatRows():dataByVar(cfg.varName);
+  if(!isSel)rows=formKey==='order'?orderFlatRows():(formKey==='prodPlan'?prodPlanFlatRows(dataByVar(cfg.varName)):dataByVar(cfg.varName));
+  /* 排产计划无持久化 fields 配置，用内置导出列定义；其余表单沿用 fields 配置 */
+  var cols=(formKey==='prodPlan')?PP_EXPORT_COLS:(fields[cfg.formKey]||[]).map(function(f){return {key:f.key,label:f.label,type:f.type};});
+  var headers=cols.map(function(c){return c.label;});
   var data=rows.map(function(item){
-    return farr.map(function(f){
-      var val=item[f.key];
-      if(f.type==='date'&&val)return fmtDate(val);
-      if(f.type==='number')return num(val);
+    return cols.map(function(c){
+      var val=item[c.key];
+      if(c.type==='date'&&val)return fmtDate(val);
+      if(c.type==='number')return num(val);
       return val==null?'':val;
     });
   });
@@ -4656,6 +5092,7 @@ var FORM_ACTIONS={
   order_inv:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
   dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
+  prodPlan:{formKey:'prodPlan',get:function(i){return productionPlans[i];},edit:function(i){prodPlanModal(i);},del:function(i){delProdPlan(i);},copy:function(i){copyProdPlan(i);}},
   delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);}}
 };
 
@@ -4672,14 +5109,16 @@ function bulkBar(m){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
+    if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
+    if(m==='prodPlan')btns.push('<button class="btn btn-sm btn-primary" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条）">报工</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
-  if(m==='order_frame'||m==='order_inv'){
-    /* 订单管理：模板/导入按钮暂禁用，避免误导入空文件清空本表单数据 */
+  if(m==='order_frame'||m==='order_inv'||m==='prodPlan'){
+    /* 订单管理/排产计划：模板/导入按钮暂禁用（排产计划由交付计划下推生成，不手工导入） */
     btns.push('<button class="btn btn-sm" disabled style="margin-left:4px;opacity:.45;cursor:not-allowed" title="已暂禁用：误导入空文件会清空本表单数据">模板</button>');
     if(writable)btns.push('<button class="btn btn-sm" disabled style="opacity:.45;cursor:not-allowed" title="已暂禁用：误导入空文件会清空本表单数据">导入</button>');
   }else{
@@ -4730,6 +5169,7 @@ function bulkDelete(m){
   else if(m==='order'||m==='order_frame'||m==='order_inv'){idxs.forEach(i=>orders.splice(i,1));save('orders',orders);}
   else if(m==='dp_stockup'){idxs.forEach(i=>dailyPlans.splice(i,1));save('dailyPlans',dailyPlans);}
   else if(m==='dp_pkg'){idxs.forEach(i=>dailyPkgs.splice(i,1));save('dailyPkgs',dailyPkgs);}
+  else if(m==='prodPlan'){idxs.forEach(i=>productionPlans.splice(i,1));save('productionPlans',productionPlans);}
   else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));save('deliveries',deliveries);}
   clearSel(m);
   renderContent();
@@ -4743,6 +5183,7 @@ function bulkExport(m){
   const idxs=[...s].map(Number);
   let rows=idxs.map(i=>a.get(i)).filter(Boolean);
   if(m==='order'||m==='order_frame'||m==='order_inv')rows=orderFlatRowsOf(idxs.map(i=>orders[i]));
+  else if(m==='prodPlan')rows=prodPlanFlatRows(idxs.map(i=>productionPlans[i]));
   exportForm(a.formKey,rows);
   logOp('导出',a.formKey,'导出选中 '+rows.length+' 条记录');
 }
@@ -4789,7 +5230,7 @@ function autoBackupNow(force){
   var data={
     version:2,exportDate:new Date().toISOString(),
     products:products,orders:orders,
-    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,
+    dailyPlans:dailyPlans,dailyPkgs:dailyPkgs,deliveries:deliveries,productionPlans:productionPlans,
     logs:logs,fields:fields,meta:meta
   };
   var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
@@ -4830,6 +5271,7 @@ function backupAll(){
     dailyPlans:dailyPlans,
     dailyPkgs:dailyPkgs,
     deliveries:deliveries,
+    productionPlans:productionPlans,
     logs:logs,
     fields:fields,
     meta:meta
@@ -4860,6 +5302,7 @@ function restoreBackup(e){
             if(data.dailyPlans)dailyPlans=data.dailyPlans;
       if(data.dailyPkgs)dailyPkgs=data.dailyPkgs;
       if(data.deliveries)deliveries=data.deliveries;
+      if(data.productionPlans)productionPlans=data.productionPlans;
       if(data.logs)logs=data.logs;
       if(data.fields)fields=data.fields;
       if(data.meta)meta=data.meta;
@@ -4874,15 +5317,15 @@ function restoreBackup(e){
       backfillInvDeliveredFromStock();
       syncStockFromInvOrders();
       save('products',products);save('orders',orders);
-      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
+      save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);
       save('logs',logs);save('fields',fields);save('meta',meta);
       renderAll();
       logOp('恢复','全部数据','从备份文件恢复 '+
         ((products.length||0)+(orders.length||0)+
-         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0))+' 条记录');
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0))+' 条记录');
       alert('恢复成功！共恢复 ' +
         ((products.length||0)+(orders.length||0)+
-         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)) + ' 条记录。');
+         (dailyPlans.length||0)+(dailyPkgs.length||0)+(deliveries.length||0)+(productionPlans.length||0)) + ' 条记录。');
     }catch(err){
       alert('恢复失败：'+err.message+'\n\n请确认文件为系统导出的 .json 备份文件。');
     }
@@ -4894,9 +5337,9 @@ function restoreBackup(e){
 function confirmClear(){
   if(!confirm('确认清空所有数据？此操作不可恢复，建议先导出备份！'))return;
   if(!confirm('再次确认：所有产品、订单、库存、排产、交付数据将被删除！'))return;
-  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];
+  products=[];orders=[];dailyPlans=[];dailyPkgs=[];deliveries=[];productionPlans=[];
   save('products',products);save('orders',orders);
-  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);
+  save('dailyPlans',dailyPlans);save('dailyPkgs',dailyPkgs);save('deliveries',deliveries);save('productionPlans',productionPlans);
   logOp('清空','全部数据','清空所有业务数据');
   renderAll();
 }
@@ -4927,6 +5370,7 @@ async function initApp(){
   dailyPlans=await DB.get('dailyPlans',[]);
   dailyPkgs=await DB.get('dailyPkgs',[]);
   deliveries=await DB.get('deliveries',[]);
+  productionPlans=await DB.get('productionPlans',[]);
   logs=await DB.get('logs',[]);
   transfers=await DB.get('transfers',[]);
   fields=await DB.get('fields',JSON.parse(JSON.stringify(defaultFields)));
@@ -5035,6 +5479,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.5</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.6</div>
 </body>
 </html>
