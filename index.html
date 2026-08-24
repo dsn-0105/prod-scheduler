@@ -3285,6 +3285,25 @@ function ppWeekRange(d){
   date.setDate(date.getDate()+6);
   return [start,fmtDate(date)];
 }
+/* 需求 2026-08-24.7：同一交付计划 + 同一产品，已下推的排产数量总和（编辑时 excludeIdx 排除自身） */
+function ppPlannedOf(deliveryIdx,productId,excludeIdx){
+  if(deliveryIdx==null)return 0;
+  let s=0;
+  productionPlans.forEach((p,idx)=>{
+    if(idx===excludeIdx)return;
+    if(p.deliveryIdx!==deliveryIdx)return;
+    ppItems(p).forEach(it=>{ if((it.productId||'')===(productId||'')) s+=num(it.planQty); });
+  });
+  return s;
+}
+/* 交付计划某产品行的本批计划交付数量（总计划数）；查不到返回 null（独立单不限制） */
+function ppTotalOf(deliveryIdx,productId){
+  if(deliveryIdx==null)return null;
+  const d=deliveries[deliveryIdx];
+  if(!d)return null;
+  const it=deliveryItems(d).find(x=>(x.productId||'')===(productId||''));
+  return it?num(it.planQty):null;
+}
 
 /* 主渲染：视图切换 + 日视图表格 / 周月聚合 */
 function renderProdPlan(){
@@ -3451,12 +3470,25 @@ function prodPlanModal(idx,prefill){
   const p=isNew?prefill:(idx!=null?JSON.parse(JSON.stringify(productionPlans[idx])):null);
   if(!p)return;
   const items=ppItems(p);
+  /* 明细行：总计划数=交付计划行 planQty；已排产=同交付计划同产品其他排产单之和（编辑排除自身）；
+     未排产=总−已排产；本次排产数可编辑（默认：下推/复制=未排产，编辑=当前 planQty；独立单不限制显示 —） */
   let rows='';
-  items.forEach(it=>{
-    rows+='<tr><td>'+esc(it.productId)+'</td><td>'+esc(it.productName)+'</td><td>'+esc(it.model||'')+'</td><td>'+esc(it.spec||'')+'</td><td>'+esc(it.unit||'')+'</td>'+
-      '<td style="text-align:right;font-weight:600">'+money(ppPlanOf(it))+'</td>'+
-      '<td style="text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
-      PP_STEPS.map(x=>'<td style="text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+'</tr>';
+  items.forEach((it,i)=>{
+    const total=ppTotalOf(p.deliveryIdx,it.productId);
+    const already=ppPlannedOf(p.deliveryIdx,it.productId,idx>=0?idx:null);
+    const remain=(total!=null)?Math.max(0,total-already):null;
+    let defVal;
+    if(!isNew)defVal=ppPlanOf(it);                      // 编辑已有单：当前数量
+    else if(remain!=null)defVal=remain>0?remain:0;      // 下推：默认=未排产
+    else defVal=ppPlanOf(it);                           // 独立单（复制）：原数量
+    rows+='<tr>'+
+      '<td>'+esc(it.productId)+'</td><td>'+esc(it.productName)+'</td><td>'+esc(it.model||'')+'</td><td>'+esc(it.spec||'')+'</td><td>'+esc(it.unit||'')+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(total!=null?money(total):'—')+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(total!=null?money(already):'—')+'</td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+(remain!=null?money(remain):'—')+'</td>'+
+      '<td style="text-align:center"><input type="number" class="pp_qty" data-li="'+i+'" min="0" '+(remain!=null?('max="'+remain+'"'):'')+' value="'+defVal+'" style="width:88px"></td>'+
+      '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
+      PP_STEPS.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+'</tr>';
   });
   const srcTxt=(p.deliveryIdx!=null)?('#'+(p.deliveryIdx+1)+' · 订单 '+esc(p.orderId)):'';
   const body='<div class="form-row">'+
@@ -3470,7 +3502,10 @@ function prodPlanModal(idx,prefill){
     '</div><div class="form-row">'+
     '<div style="flex:1"><label>备注</label><input type="text" id="pp_notes" value="'+esc(p.notes)+'"></div>'+
     '</div>'+
-    '<div class="table-wrap" style="max-height:280px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>单位</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+PP_STEPS.map(x=>'<th style="text-align:right;font-size:12px">'+x.label+'<br>完成</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div style="margin-bottom:6px;font-size:12px;color:var(--muted)">本次排产数量可修改（留空或 0 = 该行本次不排）；同一交付计划多次排产合计不能超过「未排产」数</div>'+
+    '<div class="table-wrap" style="max-height:300px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>单位</th>'+
+      '<th style="text-align:right">总计划数</th><th style="text-align:right">已排产</th><th style="text-align:right">未排产</th><th style="text-align:center">本次排产数量</th><th style="text-align:right">累计完成</th>'+
+      PP_STEPS.map(x=>'<th style="text-align:right;font-size:12px">'+x.label+'<br>完成</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal(isNew?'下推排产计划（确认）':'编辑排产计划',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveProdPlan('+(idx!=null?idx:-1)+')">保存</button>');
 }
@@ -3482,19 +3517,49 @@ function saveProdPlan(idx){
   const finalDate=document.getElementById('pp_finalDate').value;
   const status=document.getElementById('pp_status').value;
   const notes=document.getElementById('pp_notes').value;
+  const p=(idx>=0)?productionPlans[idx]:(window.__ppPending||null);
+  if(!p){alert('下推数据缺失，请重新操作');return;}
+  const srcItems=ppItems(p);
+  /* 逐行读取本次排产数量：留空/0=该行本次不排；校验 ≤ 未排产、且不能低于已完成数 */
+  const finalItems=[];
+  for(let i=0;i<srcItems.length;i++){
+    const it=srcItems[i];
+    const el=document.querySelector('.pp_qty[data-li="'+i+'"]');
+    const raw=el?String(el.value||'').trim():'';
+    if(raw==='')continue;
+    const q=parseFloat(raw);
+    if(isNaN(q)||q<=0)continue;
+    const total=ppTotalOf(p.deliveryIdx,it.productId);
+    const already=ppPlannedOf(p.deliveryIdx,it.productId,idx>=0?idx:null);
+    const remain=(total!=null)?Math.max(0,total-already):null;
+    if(remain!=null&&q>remain){
+      alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 超过未排产 '+money(remain)+'，请调整（同一交付计划多次排产合计不能超过总计划数）。');
+      return;
+    }
+    for(let k=0;k<PP_STEPS.length;k++){
+      const d=ppStepDone(it,PP_STEPS[k].key);
+      if(d>q){
+        alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 低于该工序「'+PP_STEPS[k].label+'」已完成 '+money(d)+'，请调整。');
+        return;
+      }
+    }
+    const ni=JSON.parse(JSON.stringify(it));
+    ni.planQty=q;
+    if(!ni.steps){ni.steps={assembly:{plan:0,done:0},innerPack:{plan:0,done:0},testAging:{plan:0,done:0},semiInbound:0,pkg:{plan:0,done:0},finInbound:0};}
+    PP_STEPS.forEach(x=>{ if(x.plan&&typeof ni.steps[x.key]==='object')ni.steps[x.key].plan=q; });
+    finalItems.push(ni);
+  }
+  if(finalItems.length===0){alert('请至少保留一行「本次排产数量>0」的明细');return;}
   if(idx>=0){
-    const p=productionPlans[idx];
-    if(!p)return;
     const old=JSON.parse(JSON.stringify(p));
-    p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;
+    p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;p.items=finalItems;
     logFieldDiffs('排产计划',HARD_FIELDS.prodPlan,old,p,p.id);
+    logOp('编辑','排产计划','排产单「'+p.id+'」调整排产数量/信息');
   }else{
-    const np=window.__ppPending;
-    if(!np){alert('下推数据缺失，请重新操作');return;}
-    np.planDate=planDate;np.finalDate=finalDate;np.status=status;np.notes=notes;
-    productionPlans.push(np);
+    p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;p.items=finalItems;
+    productionPlans.push(p);
     window.__ppPending=null;
-    logOp('新增','排产计划','新增「'+np.id+'」（订单'+np.orderId+'）');
+    logOp('新增','排产计划','新增「'+p.id+'」（订单'+p.orderId+'）');
   }
   save('productionPlans',productionPlans);
   closeModal();
@@ -3506,6 +3571,7 @@ function copyProdPlan(i){
   c.planDate=todayStr();
   c.status='待排产';
   c.notes='';
+  c.deliveryIdx=null;   /* 复制单为独立排产（不占原交付计划额度，本次排产数量可自由调整） */
   c.items.forEach(it=>{
     const q=num(it.planQty);
     it.doneQty=0;
@@ -3523,7 +3589,8 @@ function delProdPlan(i){
 }
 
 /* 生产报工：选中 1 条排产计划 → 按工序填本次完成数（增量累计）；
-   必报工序=装配/包装/成品入库（可填 0）；超量（累计>计划）弹浮层确认；首次报工自动置「生产中」 */
+   必报工序=装配/包装/成品入库（可填 0，填 0 视为已填写）；报工累计硬性不能超过本次排产数（超量直接拦截）；
+   首次报工自动置「生产中」 */
 function reportProdPlan(){
   const s=selSet('prodPlan');
   if(s.size===0){alert('请先勾选 1 条排产计划');return;}
@@ -3545,7 +3612,7 @@ function reportProdPlan(){
           '<input type="number" class="rp_qty" data-li="'+i+'" data-step="'+x.key+'" min="0" placeholder="本次" style="width:72px">'+(isMand?' <span style="color:var(--red)">*</span>':'')+'</td>';
       }).join('')+'</tr>';
   });
-  const body='<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，累计自动汇总）</div>'+
+  const body='<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（带 * 为必报工序，可填 0；本次数量为增量，且不能超过本次排产数）</div>'+
     '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+PP_STEPS.map(x=>'<th style="text-align:center">'+x.label+(PP_MANDATORY.indexOf(x.key)>=0?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal('生产报工（'+esc(p.id)+'）',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
@@ -3557,11 +3624,15 @@ function saveReport(pi){
   const inputs=Array.prototype.slice.call(document.querySelectorAll('.rp_qty'));
   const entries=[];
   inputs.forEach(inp=>{
-    const v=parseFloat(inp.value);
-    if(isNaN(v)||v<=0)return;
-    entries.push({li:parseInt(inp.getAttribute('data-li'),10),step:inp.getAttribute('data-step'),qty:v});
+    const raw=String(inp.value||'').trim();
+    if(raw==='')return;                        // 留空=不填
+    const v=parseFloat(raw);
+    if(isNaN(v))return;
+    entries.push({li:parseInt(inp.getAttribute('data-li'),10),step:inp.getAttribute('data-step'),qty:v});  // 含 0：视为已填写
   });
   if(entries.length===0){alert('请至少填写一个工序的本次完成数');return;}
+  if(!entries.some(e=>e.qty>0)){alert('请至少填写一个大于 0 的本次完成数（仅填 0 无法报工）');return;}
+  /* 必填校验：每行必报工序（装配/包装/成品入库）已填写即可（填 0 视为已填写） */
   for(let li=0;li<items.length;li++){
     for(let k=0;k<PP_MANDATORY.length;k++){
       const st=PP_MANDATORY[k];
@@ -3572,18 +3643,18 @@ function saveReport(pi){
       }
     }
   }
+  /* 硬性上限（需求 2026-08-24.7）：报工累计不能超过本次排产数。
+     入库工序（半成品/成品入库）上限=本批排产数 planQty，其余工序上限=工序计划量 */
   const overRows=[];
   entries.forEach(e=>{
+    if(e.qty<=0)return;
     const it=items[e.li];
-    const cur=ppStepDone(it,e.step),plan=ppStepPlan(it,e.step);
+    const cur=ppStepDone(it,e.step);
+    const plan=(e.step==='semiInbound'||e.step==='finInbound')?ppPlanOf(it):ppStepPlan(it,e.step);
     if(plan>0&&cur+e.qty>plan)overRows.push({name:it.productName||it.productId,step:PP_STEPS.find(x=>x.key===e.step).label,qty:e.qty,plan:plan,cur:cur});
   });
   if(overRows.length>0){
-    showConfirmOverlay(
-      '以下工序本次报工后将超过计划量：<br>'+overRows.map(o=>'• '+esc(o.name)+' · '+esc(o.step)+'：计划 '+o.plan+'，已报 '+o.cur+'，本次 '+o.qty+' → 合计 '+(o.cur+o.qty)).join('<br>')+'<br><br>仍要提交？（超量部分计入完成数）',
-      null,
-      function(){applyReport(pi,entries,items);},
-      '取消','仍要提交');
+    alert('报工数量不能超过本次排产数量：\n\n'+overRows.map(o=>'• '+o.name+' · '+o.step+'：本次排产 '+o.plan+'，已报 '+o.cur+'，本次 '+o.qty+' → 合计 '+(o.cur+o.qty)).join('\n')+'\n\n请调整本次数量后重新提交。');
     return;
   }
   applyReport(pi,entries,items);
@@ -3593,6 +3664,7 @@ function applyReport(pi,entries,items){
   if(!p)return;
   const logParts=[];
   entries.forEach(e=>{
+    if(e.qty<=0)return;                        // 填 0 的工序无增量、不进日志
     const it=items[e.li];
     const st=ppSteps(it);
     const v=st[e.step];
@@ -5479,6 +5551,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.6</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.7</div>
 </body>
 </html>
