@@ -16,7 +16,8 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 const DEFAULT_DATA = {
   products: [], orders: [], dailyPlans: [], dailyPkgs: [],
   deliveries: [], logs: [], fields: null, meta: { seq: 0 },
-  fieldsAudit: 'audited', fieldsDraft: null, tblLayout: {}
+  fieldsAudit: 'audited', fieldsDraft: null, tblLayout: {},
+  transfers: []
 };
 
 /* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写） */
@@ -42,7 +43,9 @@ function newUser(username, name, role, pwd, perms) {
 /* 数据 */
 let data = load(DATA_FILE, null);
 if (!data) { data = JSON.parse(JSON.stringify(DEFAULT_DATA)); saveJson(DATA_FILE, data); }
-Object.keys(DEFAULT_DATA).forEach(k => { if (data[k] === undefined) data[k] = DEFAULT_DATA[k]; });
+let dataBootChanged = false;
+Object.keys(DEFAULT_DATA).forEach(k => { if (data[k] === undefined) { data[k] = DEFAULT_DATA[k]; dataBootChanged = true; } });
+if (dataBootChanged) saveJson(DATA_FILE, data);
 let revs = {};
 Object.keys(data).forEach(k => revs[k] = 0);
 

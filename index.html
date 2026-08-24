@@ -339,22 +339,24 @@ const DB={
     }
     try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}
   },
-  async set(k,v){
+  async set(k,v,silent){
     if(API_BASE){
       try{
         const r=await apiReq('/save?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v})});
         if(!r.ok){
-          let msg='保存失败('+r.status+')';
-          try{const j=await r.json();if(j&&j.error)msg+='：'+j.error;}catch(_e){}
-          alert(msg+'，数据可能未同步到服务器，请刷新后检查。');
-          return v;
+          if(!silent){
+            let msg='保存失败('+r.status+')';
+            try{const j=await r.json();if(j&&j.error)msg+='：'+j.error;}catch(_e){}
+            alert(msg+'，数据可能未同步到服务器，请刷新后检查。');
+          }
+          return false;
         }
         if(serverData)serverData[k]=v;
-      }catch(e){if(e&&e.message!=='unauthorized')alert('保存失败（网络异常）：'+e.message);}
-      return v;
+        return true;
+      }catch(e){if(!silent&&e&&e.message!=='unauthorized')alert('保存失败（网络异常）：'+e.message);return false;}
     }
     localStorage.setItem(KEY+k,JSON.stringify(v));
-    return v;
+    return true;
   }
 };
 /* ---- 实时同步：轮询版本号，有变化自动拉取刷新 ---- */
@@ -2702,7 +2704,9 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
       qty:su.qty, ts:ts, user:user, reversed:false, reverseOf:null
     });
   });
-  save('transfers',transfers);
+  DB.set('transfers',transfers,true).then(function(ok){
+    if(ok===false)alert('调拨台账保存失败：订单库存变更已生效，但台账记录未保存，请刷新后核对调拨台账。');
+  });
   logOp(type==='call'?'调用库存':'退回库存','订单管理','销售订单 '+salesOrder.id+(type==='call'?' 调用库存':' 退回库存'));
   renderContent();
 }
@@ -2732,7 +2736,9 @@ function reverseTransfer(id){
     qty:t.qty, ts:new Date().toLocaleString('zh-CN',{hour12:false}),
     user:(currentUser&&currentUser.name)||'未知', reversed:false, reverseOf:t.id
   });
-  save('transfers',transfers);
+  DB.set('transfers',transfers,true).then(function(ok){
+    if(ok===false)alert('调拨台账保存失败：冲销已生效，但台账记录未保存，请刷新后核对调拨台账。');
+  });
   logOp('冲销','调拨台账','冲销调拨记录 '+t.id);
   renderContent();
 }
