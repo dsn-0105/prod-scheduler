@@ -866,6 +866,7 @@ function sortRows(m,rows){
   const dir=s.sort.dir;
   return [...rows].sort((a,b)=>{
     let va=colVal(col,a),vb=colVal(col,b);
+    if(typeof col.sort==='function')return (col.sort(va)-col.sort(vb))*dir;   /* 自定义语义排序（如交付计划状态权重） */
     if(col.type==='number')return (num(va)-num(vb))*dir;
     if(col.type==='date'){va=fmtDate(va);vb=fmtDate(vb);return va<vb?-dir:(va>vb?dir:0);}
     va=String(va);vb=String(vb);
@@ -3245,6 +3246,7 @@ function renderDelivery(){
       {key:'delivered',label:'已交付',type:'number'},
       {key:'undelivered',label:'未交付',type:'number'},
       {key:'planQty',label:'本批计划交付数量',type:'number'},
+      {key:'ppStatus',label:'状态',type:'text',get:r=>ppDeliveryStatus(deliveries.indexOf(r)),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},
       {key:'finalDate',label:'最终交付期',type:'date'},
       {key:'firstDate',label:'首次交付日',type:'date'},
       {key:'specModel',label:'规格/型号',type:'text',get:r=>deliveryItems(r).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、')},
@@ -3256,7 +3258,7 @@ function renderDelivery(){
     html+=bulkBar('delivery');
     html+=filterBar('delivery');
     html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'</tr></thead><tbody>';
-    if(shownDl.length===0){html+=noMatchRow('delivery',12);}
+    if(shownDl.length===0){html+=noMatchRow('delivery',13);}
     shownDl.forEach((d)=>{
       const idx=deliveries.indexOf(d);
       const selChecked=selSet('delivery').has(String(idx))?'checked':'';
@@ -3265,6 +3267,7 @@ function renderDelivery(){
         '<td data-key="delivered" style="text-align:right">'+money(d.delivered)+'</td>'+
         '<td data-key="undelivered" style="text-align:right">'+money(d.undelivered)+'</td>'+
         '<td data-key="planQty" style="text-align:right">'+(d.planQty!=null?money(d.planQty):'')+'</td>'+
+        '<td data-key="ppStatus" style="text-align:center"><span class="tag '+ppDlStatusTag(ppDeliveryStatus(idx))+'">'+ppDeliveryStatus(idx)+'</span></td>'+
         '<td data-key="finalDate">'+fmtDate(d.finalDate)+'</td>'+
         '<td data-key="firstDate">'+fmtDate(d.firstDate)+'</td>'+
         '<td data-key="specModel">'+esc(deliveryItems(d).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、'))+'</td>'+
@@ -3393,6 +3396,7 @@ function ppPlannedOf(deliveryIdx,productId,excludeIdx){
   productionPlans.forEach((p,idx)=>{
     if(idx===excludeIdx)return;
     if(p.deliveryIdx!==deliveryIdx)return;
+    if(p.status==='已取消')return;   /* 2026-08-24.16：已取消排产单不计入已排产（释放额度） */
     ppItems(p).forEach(it=>{ if((it.productId||'')===(productId||'')) s+=num(it.planQty); });
   });
   return s;
@@ -3405,6 +3409,25 @@ function ppTotalOf(deliveryIdx,productId){
   const it=deliveryItems(d).find(x=>(x.productId||'')===(productId||''));
   return it?num(it.planQty):null;
 }
+/* 交付计划排产状态（build 2026-08-24.16）：未排产/部分排产/全部排产，实时计算不可编辑。
+   口径：已排产=名下全部排产单（排除已取消，同 ppPlannedOf）items.planQty 合计；总计划=明细行 planQty 合计；
+   独立单（deliveryIdx=null）不参与。删除/取消排产单、改排产数量、改交付计划 planQty 均自动反映。 */
+const PP_DL_STATUS_W={未排产:0,部分排产:1,全部排产:2};
+function ppDeliveryStatus(deliveryIdx){
+  const d=deliveries[deliveryIdx];
+  if(!d)return '未排产';
+  let total=0,planned=0;
+  deliveryItems(d).forEach(it=>{total+=num(it.planQty);});
+  if(total<=0)return '未排产';
+  productionPlans.forEach(p=>{
+    if(p.deliveryIdx!==deliveryIdx)return;
+    if(p.status==='已取消')return;   /* 取消=释放额度，不计入已排产 */
+    ppItems(p).forEach(it=>{planned+=num(it.planQty);});
+  });
+  if(planned<=0)return '未排产';
+  return planned>=total?'全部排产':'部分排产';
+}
+function ppDlStatusTag(st){ return st==='全部排产'?'tag-green':st==='部分排产'?'tag-blue':'tag-amber'; }
 /* ================================================================
    报工明细（productionReports，build 2026-08-24.8）：
    一次报工=一条记录；行内展开（▶）+ 弹窗查看；只读展示
@@ -5854,6 +5877,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.15</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.16</div>
 </body>
 </html>
