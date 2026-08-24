@@ -486,7 +486,6 @@ const AUTO_BACKUP_MIN=15; // 两次自动备份最小间隔(分钟)
 /* ================================================================
    常量
 ================================================================ */
-const TYPES=['text','number','date','select','textarea','ref'];
 const PROCESS_STEPS=['assembly','innerPack','testAging','semiInbound'];
 const PROCESS_LABELS={assembly:'装配',innerPack:'内包',testAging:'调试老化',semiInbound:'半成品入库'};
 const PKG_STEPS=['packaging','finishedInbound'];
@@ -507,9 +506,6 @@ const FORM_DATA={
   dailyPkg:()=>dailyPkgs,
   delivery:()=>deliveries
 };
-const REF_FORM_LABELS={product:'产品主数据',order:'订单管理',dailyPlan:'日排产-备货',dailyPkg:'日排产-包装',delivery:'交付计划'};
-/* 支持引用字段的表单（其余表单的录入界面为固定结构，暂不在字段设置中开放引用） */
-const REF_ENABLED=['product','order'];
 
 /* 在 refForm 中找到 refMatch 字段值等于 keyVal 的记录，返回 refField 的值 */
 function lookupRef(refForm,refMatch,keyVal,refField){
@@ -528,13 +524,6 @@ function refKeysOf(sec){
 function fieldLabel(sec,key){
   const f=(fields[sec]||[]).find(x=>x.key===key);
   return f?f.label:key;
-}
-function refDesc(f,sec){
-  if(!f.refForm)return '未配置引用';
-  const tf=REF_FORM_LABELS[f.refForm]||f.refForm;
-  const refFieldLabel=fieldLabel(f.refForm,f.refField);
-  const refKeyLabel=fieldLabel(sec,f.refKey);
-  return '引用 '+tf+' · '+refFieldLabel+'（按「'+refKeyLabel+'」匹配）';
 }
 /* 通用控件生成：支持 ref 类型（只读带出）与关联键 onchange 绑定 */
 function genControl(f,prefix,val,sec){
@@ -730,7 +719,6 @@ const NAV=[
   {id:'prodPlan',label:'排产计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
   {id:'processTpl',label:'工序模板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4a4 4 0 0 1-4 4H8M14 13v1a4 4 0 0 0 4 4h1"/></svg>'},
-  {id:'fields',label:'字段设置',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>'},
   {id:'logs',label:'操作日志',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>'},
   {id:'transfers',label:'调拨台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4M7 4L3 8M7 4l4 4M17 8v12M17 20l4-4M17 20l-4-4"/></svg>'},
   {id:'users',label:'员工管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>'}
@@ -745,7 +733,6 @@ let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
 let meta={seq:0};
 let activeTab='dashboard';
-let selectedFieldForm='product';
 /* 字段设置审核状态：audited=已审核(锁定) / draft=草稿(可编辑未生效) */
 let fieldsAudit='audited';
 let fieldsDraft=null;
@@ -1189,7 +1176,6 @@ function renderNav(){
   const nav=document.getElementById('nav');
   let items=NAV.filter(n=>{
     if(n.id==='users')return currentUser&&currentUser.role==='admin';
-    if(n.id==='fields')return canWriteKey('fields');
     return true;
   });
   /* 应用已保存的菜单顺序（长按拖动调整），新增/无权限项自动跟随默认顺序 */
@@ -1311,7 +1297,6 @@ function renderContent(){
     case 'prodPlan':c.innerHTML=renderProdPlan();break;
     case 'delivery':c.innerHTML=renderDelivery();break;
     case 'processTpl':c.innerHTML=renderProcessTpl();break;
-    case 'fields':c.innerHTML=renderFields();break;
     case 'logs':c.innerHTML=renderLogs();break;
     case 'transfers':c.innerHTML=renderTransfers();break;
     case 'users':c.innerHTML=renderUsers();break;
@@ -4387,7 +4372,7 @@ function renderTransfers(){  let html='<div class="page">';
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',processTemplates:'工序模板',fields:'字段设置',transfers:'调拨台账'};
+const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};
 async function loadUsers(){
   try{
     const r=await apiReq('/users?token='+authToken);
@@ -4482,206 +4467,6 @@ async function savePwd(){
     if(!r.ok){alert(j.error||'修改失败');return;}
     alert('密码已修改');closeModal();
   }catch(e){alert('修改失败');}
-}
-
-/* ================================================================
-   字段设置
-================================================================ */
-function curFields(){ return (fieldsAudit==='draft'&&fieldsDraft)?fieldsDraft:fields; }
-function saveFieldsEdit(){
-  if(fieldsAudit==='draft'&&fieldsDraft){save('fieldsDraft',fieldsDraft);}
-  else{save('fields',fields);}
-}
-function reverseAudit(){
-  if(fieldsAudit!=='audited')return;
-  if(!confirm('反审核后将解锁字段设置，修改需重新审核才会生效。确定反审核？'))return;
-  fieldsDraft=JSON.parse(JSON.stringify(fields));
-  fieldsAudit='draft';
-  save('fieldsDraft',fieldsDraft);
-  save('fieldsAudit','draft');
-  logOp('字段设置','审核','反审核：进入草稿可编辑状态');
-  renderContent();
-}
-function approveAudit(){
-  if(fieldsAudit!=='draft'||!fieldsDraft){return;}
-  if(!confirm('审核通过后，字段修改将正式生效并锁定，后续修改需再次反审核。确定审核？'))return;
-  fields=JSON.parse(JSON.stringify(fieldsDraft));
-  fieldsAudit='audited';
-  save('fields',fields);
-  save('fieldsAudit','audited');
-  fieldsDraft=null;
-  save('fieldsDraft',null);
-  logOp('字段设置','审核','审核通过：字段修改已正式生效');
-  renderContent();
-}
-function discardAudit(){
-  if(fieldsAudit!=='draft'){return;}
-  if(!confirm('放弃修改将丢弃当前草稿，恢复到已审核状态。确定放弃？'))return;
-  fieldsAudit='audited';
-  fieldsDraft=null;
-  save('fieldsAudit','audited');
-  save('fieldsDraft',null);
-  logOp('字段设置','审核','放弃草稿修改，恢复原配置');
-  renderContent();
-}
-function renderFields(){
-  const formMeta=[
-    {key:'product',label:'产品主数据',sub:'产品基础信息'},
-    {key:'order',label:'订单管理',sub:'销售订单'},
-    {key:'dailyPlan',label:'日排产-备货',sub:'装配→内包→调试'},
-    {key:'dailyPkg',label:'日排产-包装',sub:'包装→成品入库'},
-    {key:'delivery',label:'交付计划',sub:'分批交付排期'}
-  ];
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.3 2.9a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.9h5l.3-2.9a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>字段设置 <span class="desc">新增/改名/改类型/删除 · 系统字段锁保护</span></div>';
-  const ro=fieldsAudit==='audited';
-  const auditBadge=ro
-    ? '<span class="audit-badge audited">● 已审核（锁定）</span>'
-    : '<span class="audit-badge draft">● 未审核（草稿）</span>';
-  const auditBtns=ro
-    ? '<button class="btn btn-sm" style="cursor:pointer" onclick="reverseAudit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M3 7v6h6M21 17v-6h-6"/><path d="M21 7a9 9 0 0 0-15-3M3 17a9 9 0 0 0 15 3"/></svg>反审核</button>'
-    : '<button class="btn btn-sm btn-primary" style="cursor:pointer" onclick="approveAudit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M20 6L9 17l-5-5"/></svg>审核</button> <button class="btn btn-sm btn-danger" style="cursor:pointer" onclick="discardAudit()">放弃修改</button>';
-  html+='<div class="fs-auditbar">'+auditBadge+'<div class="fs-audit-actions">'+auditBtns+'</div></div>';
-  if(!ro){
-    html+='<div class="fs-note" style="font-size:12px;color:#b45309;margin-bottom:10px">⚠ 当前处于草稿状态，修改尚未生效。请核对无误后点击「审核」正式保存；或「放弃修改」恢复原配置。</div>';
-  }
-  html+='<div class="fs-layout">'+
-    '<div class="fs-menu">'+
-      formMeta.map(f=>{
-        const customCount=curFields()[f.key].filter(x=>!x.locked).length;
-        return '<div class="fs-menu-item'+(selectedFieldForm===f.key?' active':'')+'" onclick="selectFieldForm(\''+f.key+'\')">'+
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'+
-          '<span>'+f.label+'</span>'+
-          (customCount>0?'<span class="dot"></span>':'')+
-        '</div>';
-      }).join('')+
-    '</div>'+
-    '<div class="fs-body" id="fs-body"></div>'+
-  '</div></div>';
-  // render body after insertion
-  setTimeout(()=>renderFieldBody(),0);
-  return html;
-}
-
-function selectFieldForm(key){
-  selectedFieldForm=key;
-  renderContent();
-}
-
-function renderFieldBody(){
-  const body=document.getElementById('fs-body');
-  if(!body)return;
-  const sec=selectedFieldForm;
-  const meta=FORM_META[sec];
-  let html='';
-  if(meta){
-    html+='<div style="margin-bottom:10px"><div style="font-weight:700;font-size:14px">'+meta.title+'</div><div style="font-size:12px;color:var(--muted)">'+meta.sub+'</div></div>';
-  }
-  html+='<div class="fs-note" style="font-size:12px;color:var(--muted);margin-bottom:10px">带 '+LOCK+' 的字段为系统关键字段，不可修改、不可删除。</div>';
-  if(sec==='order'){
-    html+=fieldGroupHtml('order','head','表头字段','订单级信息 · 每单一条（订单编号 / 客户 / 日期 / 状态 / 备注等）');
-    html+=fieldGroupHtml('order','line','表体字段','明细行信息 · 每行一种产品（产品 / 数量 / 已交付等）');
-    html+='<div class="fs-note" style="font-size:12px;color:var(--muted);margin-top:8px">说明：表头字段每个订单只填一次；表体字段在「订单明细」中按产品逐行填写，可按需在表体下新增自定义列（如单价、行备注）。</div>';
-  }else{
-    if(REF_ENABLED.indexOf(sec)<0){
-      html+='<div class="fs-note" style="font-size:12px;color:#b45309;margin-bottom:8px">提示：该表单的录入弹窗为固定结构，本页的字段增删改仅影响「导入/导出」的表头列，录入界面暂不受字段设置控制。引用字段请使用「产品主数据」或「订单管理」。</div>';
-    }
-    html+=fieldGroupHtml(sec,null,null,null);
-  }
-  body.innerHTML=html;
-}
-
-/* 字段分组表格（订单分为表头/表体；其余表单单组） */
-function fieldGroupHtml(sec, level, title, note){
-  let html='';
-  if(title){
-    html+='<div style="font-weight:700;font-size:13.5px;margin:16px 0 4px"><span style="background:var(--primary-light);color:var(--primary);padding:3px 10px;border-radius:6px">'+title+'</span></div>';
-    if(note)html+='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+note+'</div>';
-  }
-  const ro=fieldsAudit==='audited';
-  html+='<div class="table-wrap"><table><thead><tr><th style="min-width:130px">字段名称</th><th>类型</th><th style="text-align:center">必填</th><th style="min-width:150px">选项 / 引用设置</th><th>操作</th></tr></thead><tbody>';
-  const typesFor=(REF_ENABLED.indexOf(sec)>=0)?TYPES:TYPES.filter(function(t){return t!=='ref';});
-  curFields()[sec].forEach((f,idx)=>{
-    if(level && f.level!==level)return;
-    const dis=(ro||f.locked)?' disabled':'';
-    const typeCtrl=f.locked?'<span style="color:var(--muted)">'+esc(f.type)+'</span>':'<select'+dis+' onchange="updField(\''+sec+'\','+idx+',\'type\',this.value)">'+typesFor.map(function(t){return '<option '+(t===f.type?'selected':'')+'>'+t+'</option>';}).join('')+'</select>';
-    const reqCtrl=(f.locked||ro)?(f.required?'<span style="color:var(--muted)">必填</span>':'<span style="color:var(--muted)">否</span>'):'<input type="checkbox" '+(f.required?'checked':'')+dis+' onchange="updField(\''+sec+'\','+idx+',\'required\',this.checked)">';
-    let optCtrl='<span style="color:#bbb">—</span>';
-    if(f.type==='select'){
-      optCtrl='<input'+dis+' value="'+esc((f.options||[]).join(','))+'" onchange="updField(\''+sec+'\','+idx+',\'options\',this.value.split(\',\').map(s=>s.trim()).filter(Boolean))" placeholder="逗号分隔" style="font-size:12px">';
-    }else if(f.type==='ref'){
-      optCtrl='<span style="font-size:11px;color:var(--primary)"><span title="'+esc(refDesc(f,sec))+'">'+esc(refDesc(f,sec))+'</span><br><button class="btn-sm"'+dis+' style="cursor:pointer;margin-top:2px" onclick="refConfigModal(\''+sec+'\','+idx+')">配置引用</button></span>';
-    }
-    const labelCell=(f.locked||ro)?(esc(f.label)+' '+LOCK):'<input value="'+esc(f.label)+'"'+dis+' onchange="updField(\''+sec+'\','+idx+',\'label\',this.value)">';
-    const delBtn=(f.locked||ro)?'<button disabled style="min-height:30px;padding:4px 10px;font-size:12px;border-radius:8px;border:1px solid var(--border);background:#f3f4f6;color:#bbb;cursor:not-allowed">删除</button>':'<button class="btn-danger btn-sm" style="cursor:pointer" onclick="delField(\''+sec+'\','+idx+')">删除</button>';
-    html+='<tr><td>'+labelCell+'</td><td>'+typeCtrl+'</td><td style="text-align:center">'+reqCtrl+'</td><td>'+optCtrl+'</td><td>'+delBtn+'</td></tr>';
-  });
-  html+='</tbody></table></div>';
-  html+='<button class="btn btn-ghost btn-sm" '+(ro?'disabled':'')+' style="margin-top:10px;cursor:'+(ro?'not-allowed':'pointer')+'" onclick="addField(\''+sec+'\''+(level?',\''+level+'\'':'')+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新增'+(level?(level==='line'?'表体':'表头'):'')+'字段</button>';
-  return html;
-}
-
-/* 引用字段配置弹窗 */
-function refConfigModal(sec,idx){
-  const f=curFields()[sec][idx];
-  const cur=f.refForm||'product';
-  const tcols=fields[cur]||[];
-  const keyOpts=(curFields()[sec]||[]).map(function(x){return '<option value="'+esc(x.key)+'" '+(x.key===f.refKey?'selected':'')+'>'+esc(x.label)+'</option>';}).join('');
-  const matchOpts=tcols.map(function(x){return '<option value="'+esc(x.key)+'" '+(x.key===f.refMatch?'selected':'')+'>'+esc(x.label)+'</option>';}).join('');
-  const fieldOpts=tcols.map(function(x){return '<option value="'+esc(x.key)+'" '+(x.key===f.refField?'selected':'')+'>'+esc(x.label)+'</option>';}).join('');
-  let body='<div class="form-row">'+
-    '<div><label>引用表单</label><select id="rc_form" onchange="rcReload(\''+sec+'\','+idx+')">'+Object.keys(REF_FORM_LABELS).map(function(k){return '<option value="'+k+'" '+(k===cur?'selected':'')+'>'+REF_FORM_LABELS[k]+'</option>';}).join('')+'</select></div>'+
-    '<div><label>本表关联键（用于匹配）</label><select id="rc_key">'+keyOpts+'</select></div>'+
-    '</div><div class="form-row">'+
-    '<div><label>目标匹配字段</label><select id="rc_match">'+matchOpts+'</select></div>'+
-    '<div><label>引用字段（要带出的值）</label><select id="rc_field">'+fieldOpts+'</select></div>'+
-    '</div>'+
-    '<div class="fs-note" style="font-size:12px;color:var(--muted);margin-top:6px">作用：录入本表单时，当「关联键」的值确定后，系统自动从「引用表单」中找到匹配记录，把「引用字段」的值带出并保存到本条记录（例如订单明细选了产品编码后，自动带出产品的规格、单位或单价）。</div>';
-  showModal('配置引用字段「'+esc(f.label)+'」',body,
-    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRefConfig(\''+sec+'\','+idx+')">保存</button>'
-  );
-}
-function rcReload(sec,idx){
-  const form=document.getElementById('rc_form').value;
-  const tcols=fields[form]||[];
-  const opts=tcols.map(function(x){return '<option value="'+esc(x.key)+'">'+esc(x.label)+'</option>';}).join('');
-  document.getElementById('rc_match').innerHTML=opts;
-  document.getElementById('rc_field').innerHTML=opts;
-}
-function saveRefConfig(sec,idx){
-  const f=curFields()[sec][idx];
-  f.type='ref';
-  f.refForm=document.getElementById('rc_form').value;
-  f.refKey=document.getElementById('rc_key').value;
-  f.refMatch=document.getElementById('rc_match').value;
-  f.refField=document.getElementById('rc_field').value;
-  saveFieldsEdit();
-  logOp('字段设置',REF_FORM_LABELS[sec]||sec,'配置引用字段「'+f.label+'」→ '+refDesc(f,sec), f.label);
-  closeModal();
-  renderFieldBody();
-}
-
-function addField(sec, level){
-  if(fieldsAudit==='audited')return;
-  curFields()[sec].push({key:'field_'+Date.now(),label:'新字段',type:'text',required:false,locked:false,level:level||'head'});
-  saveFieldsEdit();
-  logOp('字段设置',REF_FORM_LABELS[sec]||sec,'新增'+(level==='line'?'表体':'表头')+'字段「新字段」','新字段');
-  renderFieldBody();
-}
-function updField(sec,idx,key,val){
-  if(fieldsAudit==='audited')return;
-  var oldVal=curFields()[sec][idx][key];
-  curFields()[sec][idx][key]=val;
-  saveFieldsEdit();
-  if(key==='label')logOp('字段设置',REF_FORM_LABELS[sec]||sec,'字段改名「'+oldVal+'」→「'+val+'」', val, oldVal, val);
-  renderFieldBody();
-}
-function delField(sec,idx){
-  if(fieldsAudit==='audited')return;
-  if(!confirm('确认删除字段「'+curFields()[sec][idx].label+'」？已有数据中该字段的值将丢失。'))return;
-  logOp('字段设置',REF_FORM_LABELS[sec]||sec,'删除字段「'+curFields()[sec][idx].label+'」', curFields()[sec][idx].label);
-  curFields()[sec].splice(idx,1);
-  saveFieldsEdit();
-  renderFieldBody();
 }
 
 /* ================================================================
@@ -6000,6 +5785,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.11</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.12</div>
 </body>
 </html>
