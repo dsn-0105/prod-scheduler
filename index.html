@@ -2603,11 +2603,22 @@ function saveOrder(idx){
      顶部浮条提示数据已保存，并提供一键清除筛选/排序恢复显示 */
   if(idx>=0){
     const fk=orderTypeOf(o)==='库存订单'?'order_inv':'order_frame';
+    /* 2026-08-25.5：订单被筛选/排序隐藏（如改「已暂停」后不在「执行中」筛选内）→ 自动取消其勾选，防幽灵选择 */
+    if(!orderRowVisibleInDom(o.id))clearHiddenOrderSel(idx);
     maybeWarnHiddenOrder(fk,o.id);
   }
 }
 
 /* ===== 编辑后行被筛选/排序隐藏的提示与恢复 ===== */
+/* 2026-08-25.5：清理「幽灵选择」——订单被筛选/排序隐藏后自动取消勾选（含跨区块 order_frame/order_inv），
+   避免 selSet 残留导致后续操作误报「选择了两条」；行可见时勾选保留（原行为） */
+function clearHiddenOrderSel(idx){
+  if(idx==null)return;
+  const i=String(idx);
+  let changed=false;
+  ['order_frame','order_inv'].forEach(fk=>{ if(selSet(fk).delete(i))changed=true; });
+  if(changed){updateSelUI('order_frame');updateSelUI('order_inv');}
+}
 function orderRowVisibleInDom(id){
   const tds=document.querySelectorAll('#content .order-sec-body td[data-key="id"]');
   for(let i=0;i<tds.length;i++){if(String(tds[i].textContent).trim()===String(id))return true;}
@@ -2870,6 +2881,13 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
   });
   logOp(type==='call'?'调用库存':'退回库存','订单管理','销售订单 '+salesOrder.id+(type==='call'?' 调用库存':' 退回库存'));
   renderContent();
+  /* 2026-08-25.5：状态自动变化后（如全部交付→已完成）若订单被筛选隐藏，清理幽灵勾选（此时 DOM 已按新状态渲染） */
+  const _sid=orders.findIndex(function(x){return x.id===salesOrder.id;});
+  if(_sid>=0&&!orderRowVisibleInDom(salesOrder.id))clearHiddenOrderSel(_sid);
+  invUpdates.forEach(function(u){
+    const _ix=orders.findIndex(function(x){return x.id===u.invOrderId;});
+    if(_ix>=0&&!orderRowVisibleInDom(orders[_ix].id))clearHiddenOrderSel(_ix);
+  });
 }
 function reverseTransfer(id){
   if(!canWriteKey('transfers')){alert('当前账号无调拨台账编辑权限');return;}
@@ -2903,6 +2921,11 @@ function reverseTransfer(id){
   });
   logOp('冲销','调拨台账','冲销调拨记录 '+t.id);
   renderContent();
+  /* 2026-08-25.5：冲销后状态可能自动变化，清理被筛选隐藏订单的幽灵勾选 */
+  const _sid2=orders.findIndex(function(x){return x.id===t.salesOrderId;});
+  if(_sid2>=0&&!orderRowVisibleInDom(orders[_sid2].id))clearHiddenOrderSel(_sid2);
+  const _iid2=orders.findIndex(function(x){return x.id===t.invOrderId;});
+  if(_iid2>=0&&!orderRowVisibleInDom(orders[_iid2].id))clearHiddenOrderSel(_iid2);
 }
 
 /* 库存打通（一次性迁移）：把产品主数据现有「库存/已交付数量」反填到对应库存订单的
@@ -5547,6 +5570,7 @@ function kdDoImport(){
   if(skipCount)detail+='，跳过 '+skipCount+' 单';
   logOp('导入','订单管理',detail+'（来源文件：'+R.filename+'）');
   closeModal();renderContent();
+  clearSel('order_frame');   /* 2026-08-25.5：导入覆盖会 splice 旧订单导致索引漂移，清理销售订单区块勾选防幽灵选择 */
   alert('导入完成：'+detail+'\n\n销售订单已生成，审核状态默认「执行中」。');
   kdReport=null;kdState=null;
 }
@@ -6051,6 +6075,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.4</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.5</div>
 </body>
 </html>
