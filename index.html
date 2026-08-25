@@ -157,6 +157,14 @@ thead .exp-col{background:#eef2ff}
 .bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px;position:sticky;top:58px;z-index:40;background:var(--primary-light);border-radius:8px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
 .bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
 .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);scrollbar-width:none}
+/* 2026-08-25.8：订单表头随页面滚动固定（借鉴金蝶表头/表体双表结构；表头容器用 div sticky，
+   规避 rowspan 合并 + table-layout:fixed 下 sticky thead 的 Chrome 渲染 bug；表头表/表体表列宽经 colgroup 对齐） */
+.sticky-head{position:sticky;top:58px;z-index:20;background:var(--primary-light);border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;overflow:hidden}
+.head-scroll{overflow-x:auto;scrollbar-width:none}
+.head-scroll::-webkit-scrollbar{display:none;height:0}
+.head-tbl,.body-tbl{table-layout:fixed}
+.sticky-head+.table-wrap{border-radius:0 0 8px 8px;border-top:none}
+@media(max-width:768px){.sticky-head{top:48px}}
 .table-wrap::-webkit-scrollbar{display:none;height:0}
 /* 页面底部固定横向滚动条（不随页面/表格滚动位移） */
 .bottom-scrollbar{position:fixed;left:0;right:0;bottom:0;height:14px;overflow-x:auto;overflow-y:hidden;background:#fff;border-top:1px solid var(--border);z-index:150;display:none;scrollbar-width:thin}
@@ -1111,6 +1119,7 @@ function startColDrag(e,th){
       layoutOf(colDrag.m).order=curOrder;
       saveLayout();
       applyTableLayout();
+      syncHeadBody();   /* 2026-08-25.8：拖拽调序后同步表体列宽 */
     }
     if(colDrag){
       colDrag.targets.forEach(function(t){t.classList.remove('th-drop-before','th-drop-after');});
@@ -1162,7 +1171,7 @@ function startColResize(e,th){
     window.__colDragTS=Date.now();
     layoutOf(m).widths[key]=Math.round(th.getBoundingClientRect().width);
     saveLayout();
-    if(tbl&&tbl.style.tableLayout==='fixed')syncBottomScrollbar();
+    if(tbl&&tbl.style.tableLayout==='fixed'){syncBottomScrollbar();syncHeadBody();}   /* 2026-08-25.8：调宽后同步表体列宽 */
   };
   document.addEventListener('mousemove',move);
   document.addEventListener('mouseup',up);
@@ -1319,6 +1328,7 @@ function renderContent(){
     showBackupWarn();
   }
   applyTableLayout();
+  syncHeadBody();   // 2026-08-25.8：订单表头/表体列宽对齐（renderContent 后）
   syncBottomScrollbar();
   /* 渲染后同步选中态：恢复复选框勾选与选中行高亮（row-sel，含 rowspan 合并组） */
   ['product','order_frame','order_inv','dp_stockup','dp_pkg','delivery','prodPlan'].forEach(function(m){
@@ -1384,6 +1394,12 @@ function syncBottomScrollbar(){
 document.addEventListener('scroll',function(e){
   const t=e.target;
   if(!t||!t.classList||!t.classList.contains('table-wrap'))return;
+  /* 2026-08-25.8：订单表体横向滚动 → 表头容器跟随（双表结构列对齐） */
+  const hd=t.previousElementSibling;
+  if(hd&&hd.classList.contains('sticky-head')){
+    const hs=hd.querySelector('.head-scroll');
+    if(hs&&hs.scrollLeft!==t.scrollLeft)hs.scrollLeft=t.scrollLeft;
+  }
   const sb=document.getElementById('bottomScrollbar');
   if(sb&&sb.style.display==='block'&&__bsWraps&&__bsWraps.indexOf(t)>=0){
     __bsWrap=t;
@@ -1393,7 +1409,30 @@ document.addEventListener('scroll',function(e){
     sb._sync=false;
   }
 },true);
-window.addEventListener('resize',function(){syncBottomScrollbar();});
+window.addEventListener('resize',function(){syncBottomScrollbar();syncHeadBody();});
+
+/* 2026-08-25.8：订单表头/表体列宽同步——表头表 th 实际宽度写入表体表 colgroup，
+   并令表体表总宽=表头表总宽（table-layout:fixed 下两表列宽一致，保证滚动对齐） */
+function syncHeadBody(){
+  document.querySelectorAll('#content .sticky-head').forEach(function(hd){
+    var ht=hd.querySelector('table.head-tbl');
+    var bw=hd.nextElementSibling;
+    if(!bw||!bw.classList.contains('table-wrap'))return;
+    var bt=bw.querySelector('table.body-tbl');
+    if(!ht||!bt)return;
+    var hc=ht.tHead&&ht.tHead.rows[0]?Array.prototype.slice.call(ht.tHead.rows[0].cells):[];
+    var cg=bt.querySelector('colgroup');
+    if(!cg||!hc.length)return;
+    var cols=cg.querySelectorAll('col');
+    var total=0;
+    hc.forEach(function(th,i){
+      var w=th.offsetWidth||0;
+      if(cols[i])cols[i].style.width=w+'px';
+      total+=w;
+    });
+    if(total>0)bt.style.width=total+'px';
+  });
+}
 
 function showBackupWarn(){
   const c=document.getElementById('content');
@@ -2121,7 +2160,12 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   lastRowIds[formKey]=shown.map(r=>r.orderIdx);
   let html=bulkBar(formKey);
   html+=filterBar(formKey);
-  html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead><tbody>';
+  /* 2026-08-25.8：订单表头/表体双表结构——表头独立表置于 sticky 容器随页面滚动固定，表体表承载 rowspan 整单合并；
+     两表各带 colgroup，列宽由 syncHeadBody 从表头 th 实际宽度对齐 */
+  const _colN=TBL_SCHEMAS[formKey].length+1;
+  const _colg='<colgroup>'+Array(_colN).fill('<col>').join('')+'</colgroup>';
+  html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_colg+'<thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead></table></div></div>';
+  html+='<div class="table-wrap"><table class="body-tbl">'+_colg+'<tbody>';
   if(shown.length===0){html+=noMatchRow(formKey,TBL_SCHEMAS[formKey].length+1);}
   shown.forEach((r,i)=>{
     const o=r.order, it=r.item, oi=r.orderIdx;
@@ -6075,6 +6119,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.7</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.8</div>
 </body>
 </html>
