@@ -1466,11 +1466,12 @@ function fixStickyHeadTop(){
       var fbar=bb.nextElementSibling;
       while(fbar&&fbar!==hd&&!fbar.classList.contains('tbl-fbar'))fbar=fbar.nextElementSibling;
       if(fbar&&fbar!==hd&&fbar.classList.contains('tbl-fbar')){
-        var fT=parseFloat(getComputedStyle(fbar).marginTop)||0;
-        var fB=parseFloat(getComputedStyle(fbar).marginBottom)||0;
         fbar.style.position='sticky';
+        fbar.style.margin='0';    /* 2026-08-25.19：去掉上下 margin（原 8px 吸附时上下间距过大），贴住操作栏与表头 */
         fbar.style.top=top+'px';
         fbar.style.zIndex=30;
+        var fT=parseFloat(getComputedStyle(fbar).marginTop)||0;
+        var fB=parseFloat(getComputedStyle(fbar).marginBottom)||0;
         top+=fT+fbar.offsetHeight+fB;
       }
     }
@@ -6268,6 +6269,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.18</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.19</div>
 </body>
 </html>
