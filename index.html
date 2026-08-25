@@ -159,9 +159,9 @@ thead .exp-col{background:#eef2ff}
 .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);scrollbar-width:none}
 /* 2026-08-25.8：订单表头随页面滚动固定（借鉴金蝶表头/表体双表结构；表头容器用 div sticky，
    规避 rowspan 合并 + table-layout:fixed 下 sticky thead 的 Chrome 渲染 bug；表头表/表体表列宽经 colgroup 对齐） */
-.sticky-head{position:sticky;top:58px;z-index:20;background:var(--primary-light);border-radius:0;overflow:hidden;margin-top:-6px}   /* 2026-08-25.13：负 margin 抵消操作栏 margin-bottom:6px，未滚动时也贴住 */
-/* 2026-08-25.11：订单区块操作栏去阴影，与表头吸附时视觉一体（sticky-head 顶在操作栏边框盒底，0 空隙） */
-.order-sec .bulk-bar{box-shadow:none;border-radius:0}   /* 2026-08-25.12：去掉圆角，与表头拼矩形条带 */
+.sticky-head{position:sticky;top:58px;z-index:20;background:var(--primary-light);border-radius:0;overflow:hidden}   /* 2026-08-25.14：去掉负 margin（sticky 吸附不可靠），未滚动贴住改由操作栏 margin-bottom:0 实现 */
+/* 2026-08-25.11：订单区块操作栏去阴影+圆角+下margin（与表头未滚动/吸附均 0 空隙贴住，视觉一条带） */
+.order-sec .bulk-bar{box-shadow:none;border-radius:0;margin-bottom:0}
 .head-scroll{overflow-x:auto;scrollbar-width:none}
 .head-scroll::-webkit-scrollbar{display:none;height:0}
 .head-tbl,.body-tbl{table-layout:fixed}
@@ -1453,9 +1453,10 @@ function fixStickyHeadTop(){
     var top=base;
     if(bb){
       var mT=parseFloat(getComputedStyle(bb).marginTop)||0;
-      /* 2026-08-25.11：sticky top 是 margin box 顶 → 只需 顶栏+操作栏上margin+操作栏高度，贴住操作栏边框盒底（不含 margin-bottom，否则留 6px 空隙）
-         2026-08-25.13：sticky-head 自身 margin-top:-6px（抵消操作栏 margin-bottom），边框盒顶上移 6px → top 需 +6 补偿 */
-      top+=mT+bb.offsetHeight+6;
+      var mB=parseFloat(getComputedStyle(bb).marginBottom)||0;
+      /* 2026-08-25.11：sticky top 是 margin box 顶 → 顶栏+操作栏上下margin+高度，贴住操作栏边框盒底。
+         2026-08-25.14：订单区块操作栏 margin-bottom 已为 0（CSS 覆盖），此公式 mB=0 精确贴住；负 margin 方案已废弃 */
+      top+=mT+bb.offsetHeight+mB;
     }
     hd.style.top=top+'px';
   });
@@ -6169,6 +6170,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.13</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.14</div>
 </body>
 </html>
