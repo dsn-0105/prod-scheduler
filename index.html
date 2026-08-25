@@ -2790,7 +2790,11 @@ function hideSaveNotice(){
   if(__noticeTimer){clearTimeout(__noticeTimer);__noticeTimer=null;}
 }
 
+/* 2026-08-25.21：订单是否已下推交付计划（存在关联交付计划即视为已下推，禁止删除；对应交付计划删除后自动恢复可删） */
+function hasDeliveryOf(orderId){return deliveries.some(d=>d.orderId===orderId);}
 function delOrder(idx){
+  /* 2026-08-25.21：已下推交付计划的订单禁止删除（删除订单会破坏交付计划/排产关联链路） */
+  if(hasDeliveryOf(orders[idx].id)){alert('订单「'+orders[idx].id+'」已下推交付计划，不能删除；如需删除请先删除对应的交付计划');return;}
   if(!confirm('确认删除订单「'+orders[idx].id+'」？'))return;
   const del=orders[idx];
   logOp('删除','订单管理','删除订单「'+orders[idx].id+'」('+orders[idx].customer+')');
@@ -3486,7 +3490,7 @@ function shiftReportDate(delta){
    交付计划
 ================================================================ */
 function renderDelivery(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">按订单分批交付 · 本批数量确认</span> '+(canWriteForm('delivery')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="deliveryModal()">新增交付计划</button>':'')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>客户交付计划 <span class="desc">由订单管理「生成交付计划」下推 · 本批数量确认</span></div>';
 
   // 交付计划汇总
   html+='<h3 style="font-size:14px;margin:6px 0 8px">一、交付计划汇总</h3>';
@@ -4484,12 +4488,14 @@ function recalcDeliveryTotals(){
 
 function deliveryModal(idx,prefill){
   if(!ensureWrite('delivery'))return;
+  /* 2026-08-25.21：交付计划只能从订单管理「生成交付计划」下推，不支持直接新建 */
+  if(idx==null&&prefill==null){alert('交付计划请从订单管理中勾选订单后点「生成交付计划」下推，不支持直接新建');return;}
   const d=prefill!=null?{...prefill}:(idx!=null?{...deliveries[idx]}:{});
   /* 新增且已带订单（如「生成交付计划」）：明细稍后由 deliveryOrderChange 从订单带出，先不渲染 */
   const items=(idx<0&&d.orderId)?[]:deliveryItems(d);
-  /* 表头区：订单/客户/交付参数 */
+  /* 表头区：订单/客户/交付参数（订单编号由订单下推生成，不可更改） */
   let body='<div class="form-row">'+
-    '<div><label>订单编号 *</label><select id="dl_orderId" onchange="deliveryOrderChange()"><option value="">请选择订单</option>'+deliveryOrderOptions(d.orderId)+'</select></div>'+
+    '<div><label>订单编号 * <span style="font-weight:400;color:var(--muted);font-size:12px">（由订单下推，不可更改）</span></label><select id="dl_orderId" disabled onchange="deliveryOrderChange()"><option value="">请选择订单</option>'+deliveryOrderOptions(d.orderId)+'</select></div>'+
     '<div><label>客户名称 *</label><input type="text" id="dl_customer" value="'+esc(d.customer)+'"></div>'+
     '</div><div class="form-row">'+
     '<div><label>最终交付期</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
@@ -5848,7 +5854,8 @@ var FORM_ACTIONS={
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
   prodPlan:{formKey:'prodPlan',get:function(i){return productionPlans[i];},edit:function(i){prodPlanModal(i);},del:function(i){delProdPlan(i);},copy:function(i){copyProdPlan(i);}},
   processTpl:{formKey:'processTpl',get:function(i){return processTemplates[i];},edit:function(i){tplModal(i);},del:function(i){delTpl(i);},copy:function(i){copyTpl(i);}},
-  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);},copy:function(i){copyDelivery(i);}}
+  /* 2026-08-25.21：交付计划禁止复制（只能从订单管理下推），FORM_ACTIONS 无 copy 映射 */
+  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);}}
 };
 
 /* 表单上方批量操作工具栏 */
@@ -5861,7 +5868,8 @@ function bulkBar(m){
   btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' data-sel-all="'+m+'" onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   if(writable){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
-    btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
+    /* 2026-08-25.21：交付计划只能从订单下推，禁止复制 */
+    if(m!=='delivery')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
     if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
@@ -5913,6 +5921,11 @@ function genDeliveryPlan(m){
 function bulkDelete(m){
   const s=selSet(m);
   if(s.size===0){alert('请先在左侧勾选要删除的记录');return;}
+  /* 2026-08-25.21：订单批量删除——勾选范围内存在已下推交付计划的订单时整批拒绝（防止破坏交付计划/排产链路） */
+  if(m==='order'||m==='order_frame'||m==='order_inv'){
+    const blocked=[...s].map(Number).map(i=>FORM_ACTIONS[m].get(i)).filter(o=>o&&hasDeliveryOf(o.id));
+    if(blocked.length>0){alert('以下订单已下推交付计划，不能删除（如需删除请先删除对应交付计划）：\n'+blocked.map(o=>o.id+'（'+o.customer+'）').join('\n'));return;}
+  }
   if(!confirm('确认删除选中的 '+s.size+' 条记录？此操作不可撤销。'))return;
   const idxs=[...s].map(Number).sort((x,y)=>y-x);
   idxs.forEach(i=>{
@@ -5958,7 +5971,6 @@ function copyPlan(type,i){
   if(type==='stockup'){const c={...dailyPlans[i]};c.date=planDate;planModal('stockup',-1,c);}
   else{const c={...dailyPkgs[i]};c.date=planDate;planModal('packaging',-1,c);}
 }
-function copyDelivery(i){const c={...deliveries[i]};c.orderId=suggestCopyId(c.orderId,id=>deliveries.some(d=>d.orderId===id));deliveryModal(-1,c);}
 
 /* 订单按选中订单列表展开为多商品行（供导出选中用） */
 function orderFlatRowsOf(list){
@@ -6272,6 +6284,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.20</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.21</div>
 </body>
 </html>
