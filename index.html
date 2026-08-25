@@ -2169,9 +2169,33 @@ function orderSection(k,formKey,title,sub,prodMap){
 }
 
 /* 某分类下的明细表格（合并单元格 + 批量操作/筛选，formKey 独立） */
+/* 已计划未交付预计算（2026-08-25.17 新口径，用户拍板）：
+   已计划未交付 = Σ(该订单该产品交付计划.planQty) − Σ(名下排产单该产品入库累计 doneQty，排除已取消)。
+   只跟「生产入库」走：调拨/导入初始的订单行 deliveredQty 不再参与减数；独立单（deliveryIdx=null）不占交付计划额度不计入；
+   排产单删除/取消后其入库自动移出减数（与 .16 全链路反向同步自洽）。返回 orderId|productId → {plan,done} */
+function buildPlannedUndelMap(){
+  const m={};
+  deliveries.forEach((d,di)=>{
+    deliveryItems(d).forEach(x=>{
+      const k=d.orderId+'|'+(x.productId||'');
+      if(!m[k])m[k]={plan:0,done:0};
+      m[k].plan+=num(x.planQty);
+    });
+    productionPlans.forEach(pp=>{
+      if(pp.deliveryIdx!==di||pp.status==='已取消')return;
+      ppItems(pp).forEach(y=>{
+        const k=d.orderId+'|'+(y.productId||'');
+        if(!m[k])m[k]={plan:0,done:0};
+        m[k].done+=ppDoneOf(y);
+      });
+    });
+  });
+  return m;
+}
 function renderOrderTable(formKey,typeOrders,prodMap){
   const rows=[];
   typeOrders.forEach(({o,i})=>{orderItems(o).forEach(it=>rows.push({order:o,item:it,orderIdx:i}));});
+  const puMap=buildPlannedUndelMap();          // 2026-08-25.17：新口径已计划未交付预计算
   TBL_SCHEMAS[formKey]=[
     {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
     {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
@@ -2190,13 +2214,9 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
     {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
     {key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>{
-       const oid=r.order.id, pid=r.item.productId; let p=0;
-       deliveries.forEach(d=>{ if(d.orderId!==oid)return;
-         deliveryItems(d).forEach(it=>{ if((it.productId||'')===pid) p+=num(it.planQty); });});
-       /* 销售订单：已计划未交付 = 计划 − 已交付(真实发货)；
-          库存订单：已交付=库存(由 syncStockFromInvOrders 同步，并非实际交付)，不应扣减，直接取计划量 */
-       if(orderTypeOf(r.order)!=='库存订单') p=Math.max(0,p-num(r.item.deliveredQty));
-       return p; }},
+       /* 2026-08-25.17 新口径：Σ交付计划.planQty − Σ名下排产单入库累计(排除已取消)，只跟生产入库走（调拨/导入初始不参与） */
+       const pu=puMap[r.order.id+'|'+(r.item.productId||'')];
+       return pu?Math.max(0,pu.plan-pu.done):0; }},
     {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
     {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.item.lineNotes!=null?r.item.lineNotes:(r.item.notes||'')}
   ];
@@ -2234,10 +2254,9 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const oq=num(it.orderQty), dq=num(it.deliveredQty);
     const undel=oq-dq;
     const pct=oq>0?Math.round(dq/oq*100):0;
-    /* 已计划未交付 = Σ(同订单同商品的交付计划.planQty) − 已交付，下限 0（与 TBL_SCHEMAS._plannedUndel.get 口径一致） */
-    let pSum=0;
-    deliveries.forEach(d=>{ if(d.orderId!==o.id)return; deliveryItems(d).forEach(x=>{ if((x.productId||'')===it.productId) pSum+=num(x.planQty); }); });
-    const plannedUndel=(orderTypeOf(o)==='库存订单')?pSum:Math.max(0,pSum-dq);
+    /* 已计划未交付（2026-08-25.17 新口径）= Σ交付计划.planQty − Σ名下排产单入库累计，排除已取消（与 schema 计算列同口径） */
+    const pu=puMap[o.id+'|'+(it.productId||'')];
+    const plannedUndel=pu?Math.max(0,pu.plan-pu.done):0;
     const today=todayStr();
     const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
     const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':o.status==='已暂停'?'tag-amber':'tag-gray';
@@ -6237,6 +6256,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.16</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.17</div>
 </body>
 </html>
