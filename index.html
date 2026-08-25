@@ -5342,7 +5342,8 @@ function kdUnknownDecHtml(idx){
   var v=kdState.unknown[idx];
   if(v==='__NEW__'){
     return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#fdf6e3;color:#8a6d00;border:1px solid #e8d9a0;font-size:12px">→ 将新建商品（库存/产能为 0）</span> '+
-      '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选已有产品</button>';
+      '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选已有产品</button>'+
+      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__SKIP__\')" style="margin-left:4px">忽视</button>';
   }
   if(v==='__SKIP__'){
     return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#fdecea;color:#c0392b;border:1px solid #f0c4c0;font-size:12px">→ 已忽视，此明细不导入</span> '+
@@ -5360,7 +5361,8 @@ function kdUnknownDecHtml(idx){
     }
     return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#f3fbf3;color:#1a7a1a;border:1px solid #c8e6c8;font-size:12px">→ 替换为 '+esc(label)+'</span> '+
       '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选</button>'+
-      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')" style="margin-left:4px">恢复新建</button>';
+      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')" style="margin-left:4px">恢复新建</button>'+
+      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__SKIP__\')" style="margin-left:4px">忽视</button>';
   }
   return '<span style="font-size:12px;color:#999;margin-right:4px">未决策</span>'+
     '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-right:4px">选已有产品</button>'+
@@ -5935,6 +5937,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.1</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.2</div>
 </body>
 </html>
