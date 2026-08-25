@@ -2826,7 +2826,8 @@ function csWarn(li){
   if(c.productId!==line.productId){if(warn)warn.textContent='⚠ 跨料号替代：将用【'+esc(c.productId)+'】库存履行【'+esc(line.productId)+'】';}
   else if(warn)warn.textContent='';
   if(qinp){
-    const max=__csMode==='call'?Math.min(c.available,line.orderQty-line.deliveredQty):line.deliveredQty;
+    /* 2026-08-25.20：调用数量上限=销售未交付（放开库存可用量，可超调=欠货）；退回上限=销售已交付 */
+    const max=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
     qinp.max=max;
   }
 }
@@ -2885,7 +2886,7 @@ function openCallStock(){
       +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
       +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" value="0" style="width:90px"></td></tr>';
   });
-  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过库存可用量，也不可超过销售未交付量。</p>'
+  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过销售未交付量；可超出库存可用量，超出部分库存订单记欠货（已交付为负）。</p>'
     +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>调用库存订单</th><th>调用数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   __csOrder=o;
   showModal('调用库存 - '+esc(o.id),body,
@@ -2906,8 +2907,7 @@ function doCallStock(o){
     const c=__csCands[ci];
     const line=__csLines.find(function(l){return l.i===li;});
     const undel=line.orderQty-line.deliveredQty;
-    const curAvail=c.available-(used[ci]||0);
-    if(q>curAvail){alert('调用数量 '+q+' 超过库存可用量 '+curAvail);return;}
+    /* 2026-08-25.20：放开「不超过库存可用量」校验（可超调=库存订单记欠货），仅校验不超过销售未交付 */
     if(q>undel){alert('调用数量 '+q+' 超过销售未交付 '+undel);return;}
     used[ci]=(used[ci]||0)+q;
     invUpdates.push({invOrderId:c.invOrderId,invLineIdx:c.invLineIdx,qty:q});
@@ -2988,13 +2988,14 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
     const it=(inv.items||[])[u.invLineIdx];
     if(!it)return;
     const delta=type==='call'?-u.qty:u.qty;
-    it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);
+    /* 2026-08-25.20：库存订单已交付允许负数（调用超量=欠货，如 30-50=-20）；退回使负值向 0 恢复 */
+    it.deliveredQty=num(it.deliveredQty)+delta;
   });
   salesUpdates.forEach(function(u){
     const it=(salesOrder.items||[])[u.lineIdx];
     if(!it)return;
     const delta=type==='call'?u.qty:-u.qty;
-    it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);
+    it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);   /* 销售订单已交付保持非负（发货量不为负） */
   });
   save('orders',orders);
   syncStockFromInvOrders();
@@ -3040,7 +3041,8 @@ function reverseTransfer(id){
   const invIt=(inv.items||[])[t.invLineIdx];
   if(!salesIt||!invIt){alert('关联明细已不存在，无法冲销');return;}
   const revType=t.type==='call'?'return':'call';
-  invIt.deliveredQty=Math.max(0,num(invIt.deliveredQty)+(t.type==='call'?t.qty:-t.qty));
+  /* 2026-08-25.20：库存订单已交付允许负数（冲销时负欠货向 0 恢复）；销售订单保持非负 */
+  invIt.deliveredQty=num(invIt.deliveredQty)+(t.type==='call'?t.qty:-t.qty);
   salesIt.deliveredQty=Math.max(0,num(salesIt.deliveredQty)+(t.type==='call'?-t.qty:+t.qty));
   save('orders',orders);
   syncStockFromInvOrders();
@@ -4333,7 +4335,8 @@ function writebackInbound(orderId,productId,delta){
   if(!o)return;
   const it=orderItems(o).find(x=>String(x.productId)===String(productId));
   if(!it)return;
-  it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);
+  /* 2026-08-25.20：库存订单已交付允许负数（欠货向 0 恢复）；销售订单保持非负 */
+  it.deliveredQty=orderTypeOf(o)==='库存订单'?num(it.deliveredQty)+delta:Math.max(0,num(it.deliveredQty)+delta);
   save('orders',orders);
   if(orderTypeOf(o)==='库存订单')syncStockFromInvOrders();
   else syncOrderAutoStatus();
@@ -6269,6 +6272,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.19</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.20</div>
 </body>
 </html>
