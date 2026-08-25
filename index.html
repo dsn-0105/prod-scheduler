@@ -5298,7 +5298,7 @@ function kdShowReport(){
         '<div id="kd_unk_dec_'+u.idx+'" style="flex-shrink:0;white-space:nowrap"></div></div>'+subHtml+'</div>';
     }).join('');
     body+=sec('未知产品编码',R.unknown.length,
-      '<div style="font-size:12px;color:#666;margin-bottom:6px">可为每个未知编码「选已有产品」（弹出产品选择器，含编码/名称/型号/规格）或「新建」。</div>'+
+      '<div style="font-size:12px;color:#666;margin-bottom:6px">每行需完成决策：「选已有产品」（弹出产品选择器，含编码/名称/型号/规格）/「新建」/「忽视」；<b>未决策行无法导入</b>。</div>'+
       '<button class="btn btn-sm" onclick="kdBatchUnknown(\'__NEW__\')">全部新建</button>'+rows);
   }
   if(R.conflict.length){
@@ -5333,19 +5333,39 @@ function kdBatchUnknown(v){
   if(!kdState||!kdReport)return;
   kdReport.unknown.forEach(function(u){kdSetUnknown(u.idx,v);});
 }
-/* 未知编码行决策位 HTML：默认 [选已有产品][新建]；已选产品则显示 替换为 xxx + [改选][恢复新建] */
+/* 未知编码行决策位 HTML（4 态）：
+   未决策：灰字「未决策」+ [选已有产品][新建][忽视]（默认不导入，须先决策）
+   新建 __NEW__：黄底提示「将新建商品」+ [改选已有产品]
+   替换 pid：绿底提示「替换为 编码+名称（型号/规格）」+ [改选][恢复新建]
+   忽视 __SKIP__：红底提示「已忽视，此明细不导入」+ [恢复]（回到未决策） */
 function kdUnknownDecHtml(idx){
   var v=kdState.unknown[idx];
-  var pid=(v&&v!=='__NEW__')?v:null;
-  if(!pid){
-    return '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-right:4px">选已有产品</button>'+
-      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')">新建</button>';
+  if(v==='__NEW__'){
+    return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#fdf6e3;color:#8a6d00;border:1px solid #e8d9a0;font-size:12px">→ 将新建商品（库存/产能为 0）</span> '+
+      '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选已有产品</button>';
   }
-  var p=products.find(function(x){return x.id===pid;});
-  var label=pid+(p?(p.name?' '+p.name:''):'');
-  return '<span style="color:#1a7a1a;font-size:12px">→ 替换为 '+esc(label)+'</span> '+
-    '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选</button>'+
-    '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')">恢复新建</button>';
+  if(v==='__SKIP__'){
+    return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#fdecea;color:#c0392b;border:1px solid #f0c4c0;font-size:12px">→ 已忽视，此明细不导入</span> '+
+      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',null)" style="margin-left:4px">恢复</button>';
+  }
+  var pid=v||null;
+  if(pid){
+    var p=products.find(function(x){return x.id===pid;});
+    var label=pid+(p?(p.name?' '+p.name:''):'');
+    if(p){
+      var specs=[];
+      if(p.model)specs.push('型号 '+p.model);
+      if(p.spec)specs.push('规格 '+p.spec);
+      if(specs.length)label+='（'+specs.join(' / ')+'）';
+    }
+    return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#f3fbf3;color:#1a7a1a;border:1px solid #c8e6c8;font-size:12px">→ 替换为 '+esc(label)+'</span> '+
+      '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-left:4px">改选</button>'+
+      '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')" style="margin-left:4px">恢复新建</button>';
+  }
+  return '<span style="font-size:12px;color:#999;margin-right:4px">未决策</span>'+
+    '<button class="btn btn-sm" onclick="kdPickUnknown('+idx+')" style="margin-right:4px">选已有产品</button>'+
+    '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__NEW__\')" style="margin-right:4px">新建</button>'+
+    '<button class="btn btn-sm" onclick="kdSetUnknown('+idx+',\'__SKIP__\')">忽视</button>';
 }
 /* 局部刷新单个未知行的决策位（不重渲染整个报告，避免行多时弹窗滚动跳动） */
 function kdRenderUnknownDec(idx){
@@ -5358,7 +5378,7 @@ function kdPickUnknown(idx){
   var cur=kdState.unknown[idx];
   productPickerModal({
     mode:'single',
-    preselected:(cur&&cur!=='__NEW__')?[cur]:[],
+    preselected:(cur&&cur!=='__NEW__'&&cur!=='__SKIP__')?[cur]:[],
     onConfirm:function(ids){
       if(!ids.length)return;
       kdState.unknown[idx]=ids[0];
@@ -5379,10 +5399,22 @@ function kdBatchConflict(v){
 
 function kdDoImport(){
   var R=kdReport;if(!R||!kdState)return;
+  /* 校验：所有未知产品编码行必须已决策（替换/新建/忽视三选一），未决策默认不导入 */
+  var undecided=R.unknown.filter(function(u){var v=kdState.unknown[u.idx];return v==null||v==='';});
+  if(undecided.length){
+    alert('还有 '+undecided.length+' 条未知产品编码未决策（未决策默认不导入）。\n请为每行选择「选已有产品 / 新建 / 忽视」后再确认导入。');
+    var firstEl=document.getElementById('kd_unk_dec_'+undecided[0].idx);
+    if(firstEl){
+      firstEl.scrollIntoView({behavior:'smooth',block:'center'});
+      firstEl.style.outline='2px solid #e74c3c';firstEl.style.outlineOffset='2px';
+      setTimeout(function(){firstEl.style.outline='';firstEl.style.outlineOffset='';},2500);
+    }
+    return;
+  }
   var pm=R.pm;
   var unkMap={};R.unknown.forEach(function(u){unkMap[u.o.id+'#'+u.li]=u.idx;});
   var confByOrderId={};R.conflict.forEach(function(c){confByOrderId[c.id]=c.idx;});
-  var newOrders=[],newProducts=[],skipCount=0,overwriteLog=[],totalLines=0;
+  var newOrders=[],newProducts=[],skipCount=0,overwriteLog=[],totalLines=0,ignoredLines=0;
   R.list.forEach(function(o){
     if(!o.startDate||!o.deadline)return; // 日期缺失（理论上已被 blocked 拦截）
     var ci=confByOrderId[o.id];
@@ -5395,7 +5427,8 @@ function kdDoImport(){
       var pid=String(it.productId==null?'':it.productId).trim();
       if(!pid)return; // 跳过商品编码空行
       var ui=unkMap[o.id+'#'+li];
-      var u=(ui!=null)?kdState.unknown[ui]:'__NEW__';
+      var u=(ui!=null)?kdState.unknown[ui]:null;
+      if(u==='__SKIP__'){ignoredLines++;return;} // 忽视：此明细不导入
       if(u&&u!=='__NEW__')pid=u;
       else if(!pm[pid]){
         var np={id:pid,name:String(it.productName||pid),spec:String(it.spec||''),model:String(it.model||''),unit:String(it.unit||''),stock:0,dailyCap:0,stockMin:0,status:'启用'};
@@ -5419,6 +5452,7 @@ function kdDoImport(){
   save('orders',orders);
   var detail='从金蝶导入 '+newOrders.length+' 单 / '+totalLines+' 行';
   if(overwriteLog.length)detail+='（覆盖 '+overwriteLog.length+' 单）';
+  if(ignoredLines)detail+='，忽视 '+ignoredLines+' 行';
   if(newProducts.length)detail+='，新建产品 '+newProducts.length+' 个（库存/产能为0，请补全）';
   if(skipCount)detail+='，跳过 '+skipCount+' 单';
   logOp('导入','订单管理',detail+'（来源文件：'+R.filename+'）');
@@ -5901,6 +5935,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-24.17</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.1</div>
 </body>
 </html>
