@@ -3497,47 +3497,86 @@ function renderDelivery(){
   if(deliveries.length===0){
     html+='<div class="empty">暂无交付计划</div>';
   }else{
+    /* 2026-08-25.22：列表改订单管理式多行明细——一单 N 明细 → N 行，单据级列 rowspan 合并。
+       明细行只显示「本批计划(planQty)>0」的行（本批不交付的行不展示）；全为 0 时兜底显示全部行（兼容存量老数据无 planQty）。 */
+    const dlListRows=(d)=>{const its=deliveryItems(d);const pos=its.filter(i=>num(i.planQty)>0);return pos.length>0?pos:its;};
+    const rows=[];
+    deliveries.forEach(d=>dlListRows(d).forEach(it=>rows.push({d,it,di:deliveries.indexOf(d)})));
+    /* 单据级 9 列（rowspan 合并）+ 明细级 9 列（每行） */
     TBL_SCHEMAS.delivery=[
-      {key:'createdAt',label:'单据时间',type:'date'},
-      {key:'orderId',label:'订单编号',type:'text'},
-      {key:'customer',label:'客户',type:'text'},
-      {key:'productName',label:'产品',type:'text',get:r=>deliveryItems(r).map(i=>i.productName||i.productId).filter(Boolean).join('、')},
-      {key:'orderTotal',label:'订单总量',type:'number'},
-      {key:'delivered',label:'已交付',type:'number'},
-      {key:'undelivered',label:'未交付',type:'number'},
-      {key:'planQty',label:'本批计划',type:'number'},
-      {key:'ppPlanned',label:'已排产',type:'number',get:r=>ppPlannedTotal(deliveries.indexOf(r))},
-      {key:'ppStatus',label:'状态',type:'text',get:r=>ppDeliveryStatus(deliveries.indexOf(r)),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},
-      {key:'finalDate',label:'最终交付期',type:'date'},
-      {key:'firstDate',label:'首次交付日',type:'date'},
-      {key:'specModel',label:'规格/型号',type:'text',get:r=>deliveryItems(r).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、')},
-      {key:'lineNotes',label:'商品行备注',type:'text',get:r=>deliveryItems(r).map(i=>i.lineNotes||'').filter(Boolean).join('、')}
+      {key:'createdAt',label:'单据时间',type:'date',get:r=>r.d.createdAt},
+      {key:'orderId',label:'订单编号',type:'text',get:r=>r.d.orderId},
+      {key:'customer',label:'客户',type:'text',get:r=>r.d.customer},
+      {key:'orderTotal',label:'订单总量',type:'number',get:r=>r.d.orderTotal},
+      {key:'planQty',label:'本批计划',type:'number',get:r=>r.d.planQty},
+      {key:'ppPlanned',label:'已排产',type:'number',get:r=>ppPlannedTotal(r.di)},
+      {key:'ppStatus',label:'状态',type:'text',get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},
+      {key:'finalDate',label:'最终交付期',type:'date',get:r=>r.d.finalDate},
+      {key:'firstDate',label:'首次交付日',type:'date',get:r=>r.d.firstDate},
+      {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
+      {key:'productName',label:'产品名称',type:'text',get:r=>r.it.productName||r.it.productId},
+      {key:'spec',label:'规格',type:'text',get:r=>r.it.spec},
+      {key:'model',label:'型号',type:'text',get:r=>r.it.model},
+      {key:'orderQty',label:'订单数量',type:'number',get:r=>r.it.orderQty},
+      {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.it.deliveredQty},
+      {key:'_undel',label:'未交付',type:'number',get:r=>num(r.it.orderQty)-num(r.it.deliveredQty)},
+      {key:'_planQty',label:'本批计划',type:'number',get:r=>r.it.planQty},
+      {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.it.lineNotes}
     ];
-    TBL_ROWS.delivery=deliveries;
-    const shownDl=applyTable('delivery',deliveries);
-    lastRowIds.delivery=shownDl.map(d=>deliveries.indexOf(d));
+    TBL_ROWS.delivery=rows;
+    let shown=applyTable('delivery',rows);
+    /* 单据级列合并（订单管理同款）：前 9 列按单据 rowspan 合并；仅未按明细级列排序时合并，避免明细行打散致 rowspan 断裂 */
+    const HEAD_COLS=9;
+    const manualSort=tState('delivery').sort;
+    const sortKey=manualSort?manualSort.key:null;
+    const lineKeys=TBL_SCHEMAS.delivery.slice(HEAD_COLS).map(c=>c.key);
+    const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
+    if(shouldMerge) shown=[...shown].sort((a,b)=>a.di-b.di);   // 按交付计划顺序聚合（无手动排序时=原顺序；手动按单据级列排序时同订单管理：以单据聚合保序）
+    const groupMap=new Map();
+    shown.forEach((r,i)=>{if(!groupMap.has(r.di))groupMap.set(r.di,{start:i,count:0});groupMap.get(r.di).count++;});
+    lastRowIds.delivery=shown.map(r=>r.di);
     html+=bulkBar('delivery');
     html+=filterBar('delivery');
-    /* 2026-08-25.15：双表结构（表头 sticky 吸附 + 表体独立），同订单 */
+    /* 双表结构（表头 sticky 吸附 + 表体独立），同订单 */
     const _dColN=TBL_SCHEMAS.delivery.length+1;
     const _dColg='<colgroup>'+Array(_dColN).fill('<col>').join('')+'</colgroup>';
     html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_dColg+'<thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.delivery.map(c=>thCol('delivery',c)).join('')+'</tr></thead></table></div></div>';
     html+='<div class="table-wrap"><table class="body-tbl">'+_dColg+'<tbody>';
-    if(shownDl.length===0){html+=noMatchRow('delivery',15);}
-    shownDl.forEach((d)=>{
-      const idx=deliveries.indexOf(d);
-      const selChecked=selSet('delivery').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'delivery\','+idx+')"><td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+idx+'" data-sel-form="delivery" onclick="event.stopPropagation();selRowClick(\'delivery\','+idx+')"></td><td data-key="createdAt">'+fmtDate(d.createdAt)+'</td><td data-key="orderId" style="font-weight:600">'+esc(d.orderId)+'</td><td data-key="customer">'+esc(d.customer)+'</td><td data-key="productName">'+esc(deliveryItems(d).map(i=>i.productName||i.productId).filter(Boolean).join('、'))+'</td>'+
-        '<td data-key="orderTotal" style="text-align:right">'+money(d.orderTotal)+'</td>'+
-        '<td data-key="delivered" style="text-align:right">'+money(d.delivered)+'</td>'+
-        '<td data-key="undelivered" style="text-align:right">'+money(d.undelivered)+'</td>'+
-        '<td data-key="planQty" style="text-align:right">'+(d.planQty!=null?money(d.planQty):'')+'</td>'+
-        '<td data-key="ppPlanned" style="text-align:right;font-weight:600">'+money(ppPlannedTotal(idx))+'</td>'+
-        '<td data-key="ppStatus" style="text-align:center"><span class="tag '+ppDlStatusTag(ppDeliveryStatus(idx))+'">'+ppDeliveryStatus(idx)+'</span></td>'+
-        '<td data-key="finalDate">'+fmtDate(d.finalDate)+'</td>'+
-        '<td data-key="firstDate">'+fmtDate(d.firstDate)+'</td>'+
-        '<td data-key="specModel">'+esc(deliveryItems(d).map(i=>[i.spec,i.model].filter(Boolean).join(' ')).filter(Boolean).join('、'))+'</td>'+
-        '<td data-key="lineNotes">'+esc(deliveryItems(d).map(i=>i.lineNotes||'').filter(Boolean).join('、'))+'</td></tr>';
+    if(shown.length===0){html+=noMatchRow('delivery',_dColN);}
+    shown.forEach((r,i)=>{
+      const di=r.di, d=r.d, it=r.it;
+      const grp=groupMap.get(di);
+      const isFirst=grp.start===i;
+      const rs=grp.count;
+      const selChecked=selSet('delivery').has(String(di))?'checked':'';
+      const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' data-sel-id="'+di+'" data-sel-form="delivery" onclick="event.stopPropagation();selRowClick(\'delivery\','+di+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+di+'" data-sel-form="delivery" onclick="event.stopPropagation();selRowClick(\'delivery\','+di+')"></td>';
+      let headCells='';
+      const headHtml=
+        '<td data-key="createdAt" rowspan="'+rs+'">'+fmtDate(d.createdAt)+'</td>'+
+        '<td data-key="orderId" rowspan="'+rs+'" style="font-weight:600">'+esc(d.orderId)+'</td>'+
+        '<td data-key="customer" rowspan="'+rs+'">'+esc(d.customer)+'</td>'+
+        '<td data-key="orderTotal" rowspan="'+rs+'" style="text-align:right">'+money(d.orderTotal)+'</td>'+
+        '<td data-key="planQty" rowspan="'+rs+'" style="text-align:right">'+(d.planQty!=null?money(d.planQty):'')+'</td>'+
+        '<td data-key="ppPlanned" rowspan="'+rs+'" style="text-align:right;font-weight:600">'+money(ppPlannedTotal(di))+'</td>'+
+        '<td data-key="ppStatus" rowspan="'+rs+'" style="text-align:center"><span class="tag '+ppDlStatusTag(ppDeliveryStatus(di))+'">'+ppDeliveryStatus(di)+'</span></td>'+
+        '<td data-key="finalDate" rowspan="'+rs+'">'+fmtDate(d.finalDate)+'</td>'+
+        '<td data-key="firstDate" rowspan="'+rs+'">'+fmtDate(d.firstDate)+'</td>';
+      if(shouldMerge){
+        if(isFirst)headCells=headHtml;
+      }else{
+        headCells=headHtml;
+      }
+      const undel=num(it.orderQty)-num(it.deliveredQty);
+      html+='<tr onclick="selRowClick(\'delivery\','+di+')">'+selCell+headCells+
+        '<td data-key="productId">'+esc(it.productId)+'</td>'+
+        '<td data-key="productName">'+esc(it.productName||it.productId)+'</td>'+
+        '<td data-key="spec">'+esc(it.spec||'')+'</td>'+
+        '<td data-key="model">'+esc(it.model||'')+'</td>'+
+        '<td data-key="orderQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(it.orderQty)+'</td>'+
+        '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(it.deliveredQty)+'</td>'+
+        '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
+        '<td data-key="_planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.planQty!=null?money(it.planQty):'')+'</td>'+
+        '<td data-key="lineNotes">'+esc(it.lineNotes||'')+'</td></tr>';
     });
     html+='</tbody></table></div>';
   }
@@ -6284,6 +6323,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.21</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.22</div>
 </body>
 </html>
