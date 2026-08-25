@@ -496,7 +496,7 @@ const PROCESS_LABELS={assembly:'装配',innerPack:'内包',testAging:'调试老�
 const PKG_STEPS=['packaging','finishedInbound'];
 const PKG_LABELS={packaging:'包装',finishedInbound:'成品入库'};
 const STOCK_STATUS={normal:{label:'正常',cls:'tag-green'},low:{label:'低于下限',cls:'tag-red'},high:{label:'高于上限',cls:'tag-amber'}};
-const ORDER_STATUS=['待排产','执行中','已完成','已取消'];
+const ORDER_STATUS=['执行中','已完成','已取消','已暂停'];
 const ORDER_TYPES=['销售订单','库存订单'];
 const DELIVERY_FREQ=['每周一次(周一)','每周一次(周五)','每三天一次','每日'];
 const LOCK='<svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
@@ -531,21 +531,22 @@ function fieldLabel(sec,key){
   return f?f.label:key;
 }
 /* 通用控件生成：支持 ref 类型（只读带出）与关联键 onchange 绑定 */
-function genControl(f,prefix,val,sec){
+function genControl(f,prefix,val,sec,disabled){
   const id=prefix+f.key;
   const isRefKey=(sec&&refKeysOf(sec).has(f.key));
   const onch=isRefKey?' onchange="refKeyTrigger(this)"':'';
+  const dis=disabled?' disabled':'';
   if(f.type==='ref'){
     return '<input type="text" id="'+id+'" class="ref-field" data-key="'+f.key+'" data-ref-form="'+esc(f.refForm||'')+'" data-ref-match="'+esc(f.refMatch||'')+'" data-ref-field="'+esc(f.refField||'')+'" data-ref-key="'+esc(f.refKey||'')+'" value="'+esc(val)+'" readonly style="background:#f6f8fa;color:var(--muted)">';
   }
   if(f.type==='select'){
-    return '<select id="'+id+'"'+onch+'>'+(f.options||[]).map(o=>'<option '+(o===val?'selected':'')+'>'+esc(o)+'</option>').join('')+'</select>';
+    return '<select id="'+id+'"'+dis+onch+'>'+(f.options||[]).map(o=>'<option '+(o===val?'selected':'')+'>'+esc(o)+'</option>').join('')+'</select>';
   }
   if(f.type==='textarea'){
-    return '<textarea id="'+id+'" rows="2"'+onch+'>'+esc(val)+'</textarea>';
+    return '<textarea id="'+id+'" rows="2"'+dis+onch+'>'+esc(val)+'</textarea>';
   }
   const tp=f.type==='number'?'number':(f.type==='date'?'date':'text');
-  return '<input type="'+tp+'" id="'+id+'" value="'+esc(f.type==='date'?fmtDate(val):val)+'"'+(f.required?' required':'')+onch+'>';
+  return '<input type="'+tp+'" id="'+id+'" value="'+esc(f.type==='date'?fmtDate(val):val)+'"'+(f.required?' required':'')+dis+onch+'>';
 }
 /* 关联键变化时，带出同容器内所有依赖它的引用字段 */
 function refKeyTrigger(el){
@@ -1888,6 +1889,59 @@ function migrateOrderContractNo(){
   }
   if(changed)save('fields',fields);
 }
+/* 迁移（2026-08-25.3）：订单「审核状态」选项改为 执行中/已完成/已取消/已暂停（去掉待排产）。
+   持久化 fields.order 的 status.options 必须同步对齐，否则编辑弹窗旧选项残留会误改整单（orderType 选项残留同款坑）。 */
+function migrateOrderStatusField(){
+  if(!Array.isArray(fields.order))return;
+  let changed=false;
+  const f=fields.order.find(x=>x.key==='status');
+  if(!f){
+    fields.order.push({key:'status',label:'审核状态',type:'select',required:false,locked:false,options:ORDER_STATUS.slice(),level:'head'});
+    changed=true;
+    logOp('系统','订单管理','系统迁移：字段配置补回「审核状态」系统字段');
+  }else{
+    const _opts=(f.options||[]).map(String);
+    const _same=_opts.length===ORDER_STATUS.length&&ORDER_STATUS.every(s=>_opts.includes(s));
+    if(!_same){
+      f.options=ORDER_STATUS.slice();
+      changed=true;
+      logOp('系统','订单管理','系统迁移：修正「审核状态」选项为 '+ORDER_STATUS.join('/'));
+    }
+    if(f.label!=='审核状态'){f.label='审核状态';changed=true;}
+  }
+  if(changed)save('fields',fields);
+}
+/* 整单未交付数量合计（明细行 orderQty − deliveredQty，下限 0） */
+function orderUndelTotal(o){return orderItems(o).reduce((s,i)=>s+Math.max(0,num(i.orderQty)-num(i.deliveredQty)),0);}
+/* 订单状态自动规则（2026-08-25.3）：
+   仅对「执行中/已完成」生效；「已取消/已暂停」为手动状态，自动规则不覆盖。
+   整单未交付合计 = 0（全部交付完成）→ 已完成；否则 → 执行中。
+   变更落库并记操作日志（silent=true 用于存量初始化，仅统计不逐条记）。 */
+function syncOrderAutoStatus(silent){
+  const changed=[];
+  orders.forEach(o=>{
+    if(o.status==='已取消'||o.status==='已暂停')return;
+    const target=orderUndelTotal(o)<=0?'已完成':'执行中';
+    if(o.status!==target){changed.push({id:o.id,from:o.status,to:target});o.status=target;}
+  });
+  if(changed.length){
+    save('orders',orders);
+    if(!silent)changed.forEach(c=>logOp('状态变更','订单管理','订单「'+c.id+'」'+c.from+' → '+c.to+'（系统自动）'));
+  }
+  return changed.length;
+}
+/* 迁移（2026-08-25.3）：存量订单状态对齐——旧「待排产」→「执行中」；
+   并按自动规则初始化存量执行中/已完成订单（全部交付完成的旧单直接标已完成，幂等）。 */
+function migrateOrderStatusData(){
+  let changed=false;
+  orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
+  if(changed){
+    save('orders',orders);
+    logOp('系统','订单管理','系统迁移：存量「待排产」订单状态改为「执行中」');
+  }
+  const n=syncOrderAutoStatus(true);
+  if(n)logOp('系统','订单管理','系统迁移：按交付情况初始化订单状态，'+n+' 单自动调整为已完成');
+}
 /* 迁移：交付计划字段配置清理（删除交付频率/批次/每批量，新增本批计划，最终交付期改非必填；.17 起字段改名「本批计划交付数量」→「本批计划」） */
 function migrateDeliveryFields(){
   if(!Array.isArray(fields.delivery))return;
@@ -2080,7 +2134,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const plannedUndel=(orderTypeOf(o)==='库存订单')?pSum:Math.max(0,pSum-dq);
     const today=todayStr();
     const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
-    const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':'tag-gray';
+    const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':o.status==='已暂停'?'tag-amber':'tag-gray';
     /* 库存订单：已交付数量 < 最小库存量 → 已交付单元格前置红色警告三角；> 最大库存量 → 黄色警告三角 */
     const warnLow=(formKey==='order_inv')&&(it.stockMin!=null&&it.stockMin!==''&&num(it.stockMin)>0)&&num(dq)<num(it.stockMin);
     const warnHigh=(formKey==='order_inv')&&(it.stockMax!=null&&it.stockMax!==''&&num(it.stockMax)>0)&&num(dq)>num(it.stockMax);
@@ -2174,20 +2228,33 @@ function orderModal(idx,prefill){
   const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'销售订单',startDate:todayStr(),items:[]};
   // 新增订单：按订单类型自动预填单号（库存订单 KCDD- / 销售订单 XSDD-），用户可手动修改
   if(idx==null && !o.id){o.id=nextOrderNo(todayStr(),o.orderType);}
+  /* 2026-08-25.3：审核状态状态机编辑限制——
+     locked：已取消/已暂停订单仅「审核状态」可改（只能改回执行中），其余字段只读；
+     statusLocked：已完成订单状态禁用（系统自动判定）。 */
+  const locked=idx!=null&&(o.status==='已取消'||o.status==='已暂停');
+  const statusLocked=idx!=null&&o.status==='已完成';
   const headCols=fields.order.filter(f=>!isLineField(f));
   let body='<div class="form-row">';
   headCols.forEach((f,i)=>{
     if(i>0&&i%2===0)body+='</div><div class="form-row">';
     const val=o[f.key]!=null?o[f.key]:'';
-    const ctrl=genControl(f,'of_',val,'order');
+    let ctrl;
+    if(f.key==='status'){
+      /* 状态机选项：执行中/新增→可改已取消/已暂停（不提供已完成，系统自动判定）；
+         已取消/已暂停→仅可改回执行中；已完成→禁用（不可手动更改） */
+      const stOpts=statusLocked?['已完成']:((o.status==='已取消'||o.status==='已暂停')?[o.status,'执行中']:['执行中','已取消','已暂停']);
+      ctrl='<select id="of_status"'+(statusLocked?' disabled':'')+'>'+stOpts.map(x=>'<option '+(x===o.status?'selected':'')+'>'+esc(x)+'</option>').join('')+'</select>';
+    }else{
+      ctrl=genControl(f,'of_',val,'order',locked);
+    }
     body+='<div><label>'+esc(f.label)+(f.required?' *':'')+'</label>'+ctrl+'</div>';
   });
   body+='</div>';
-  body+='<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">订单明细</b><span style="font-size:12px;color:var(--muted)">每行一种产品，一单可含多种开关</span><button class="btn btn-sm" style="margin-left:auto" onclick="batchPickProducts()">批量选择产品</button><button class="btn btn-sm btn-primary" onclick="addOrderItemRow()">+ 添加产品行</button></div>';
+  body+='<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">订单明细</b><span style="font-size:12px;color:var(--muted)">每行一种产品，一单可含多种开关</span>'+(locked?'':'<button class="btn btn-sm" style="margin-left:auto" onclick="batchPickProducts()">批量选择产品</button><button class="btn btn-sm btn-primary" onclick="addOrderItemRow()">+ 添加产品行</button>')+'</div>';
   body+='<div class="table-wrap"><table id="orderItemsTbl"><thead><tr>'+
     orderLineFields().map(f=>'<th>'+esc(f.label)+(f.required?' *':'')+'</th>').join('')+
     '<th style="width:56px">操作</th></tr></thead><tbody>';
-  orderItems(o).forEach(it=>body+=orderItemRow(it));
+  orderItems(o).forEach(it=>body+=orderItemRow(it,locked));
   body+='</tbody></table></div>';
   showModal(idx!=null?'编辑订单':'新增订单',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveOrder('+(idx!=null?idx:-1)+')">保存</button>'
@@ -2196,13 +2263,13 @@ function orderModal(idx,prefill){
 
 /* 明细行渲染（按字段设置中的行级字段动态生成） */
 function orderLineCols(){return orderLineFields();}
-function orderItemRow(it){
+function orderItemRow(it,locked){
   let h='<tr>';
   const refKeys=refKeysOf('order');
   orderLineCols().forEach(f=>{
     const v=it[f.key]!=null?it[f.key]:'';
     if(f.key==='productId'){
-      h+='<td style="display:flex;gap:4px;align-items:center"><input type="text" class="oi_field" data-key="productId" value="'+esc(v)+'" placeholder="产品编码" style="flex:1;min-width:80px" onchange="orderItemIdChange(this)" onblur="orderItemIdChange(this)"><button type="button" class="btn btn-sm" onclick="openProductPicker(this)" title="从产品库选择">选</button></td>';
+      h+='<td style="display:flex;gap:4px;align-items:center"><input type="text" class="oi_field" data-key="productId" value="'+esc(v)+'" placeholder="产品编码" style="flex:1;min-width:80px"'+(locked?' readonly':'')+' onchange="orderItemIdChange(this)" onblur="orderItemIdChange(this)">'+(locked?'':'<button type="button" class="btn btn-sm" onclick="openProductPicker(this)" title="从产品库选择">选</button>')+'</td>';
     }else if(f.key==='spec'||f.key==='model'){
       /* 由产品编码联动写入，不可编辑 */
       h+='<td><input type="text" class="oi_field" data-key="'+f.key+'" value="'+esc(v)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>';
@@ -2210,10 +2277,10 @@ function orderItemRow(it){
       h+='<td><input type="text" class="oi_field ref-field" data-key="'+f.key+'" data-ref-form="'+esc(f.refForm||'')+'" data-ref-match="'+esc(f.refMatch||'')+'" data-ref-field="'+esc(f.refField||'')+'" data-ref-key="'+esc(f.refKey||'')+'" value="'+esc(v)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>';
     }else{
       const tp=f.type==='number'?'number':(f.type==='date'?'date':'text');
-      h+='<td><input type="'+tp+'" class="oi_field" data-key="'+f.key+'" value="'+esc(f.type==='date'?fmtDate(v):v)+'" style="width:100%"></td>';
+      h+='<td><input type="'+tp+'" class="oi_field" data-key="'+f.key+'" value="'+esc(f.type==='date'?fmtDate(v):v)+'"'+(locked?' readonly':'')+' style="width:100%"></td>';
     }
   });
-  h+='<td style="text-align:center"><button class="btn btn-sm btn-danger" onclick="removeOrderItemRow(this)" title="删除此行">✕</button></td></tr>';
+  h+='<td style="text-align:center">'+(locked?'':'<button class="btn btn-sm btn-danger" onclick="removeOrderItemRow(this)" title="删除此行">✕</button>')+'</td></tr>';
   return h;
 }
 function addOrderItemRow(){
@@ -2480,6 +2547,15 @@ function saveOrder(idx){
   if(!o.id){alert('请填写订单编号');return;}
   if(!o.customer){alert('请填写客户名称');return;}
   if(o.orderType==='销售订单'&&(!o.contractNo||!String(o.contractNo).trim())){alert('销售订单请填写合同号');return;}
+  /* 2026-08-25.3：审核状态状态机校验（弹窗选项已限制，此处兜底防篡改）：
+     已完成不可手动改；已取消/已暂停仅可改回执行中；执行中不可手动设已完成（由系统自动判定） */
+  if(idx>=0){
+    const oldStatus=orders[idx]&&orders[idx].status;
+    const newStatus=o.status;
+    if(oldStatus==='已完成'&&newStatus!=='已完成'){alert('订单已「已完成」，状态由系统自动判定（全部交付完成），不可手动更改');return;}
+    if((oldStatus==='已取消'||oldStatus==='已暂停')&&newStatus!=='执行中'&&newStatus!==oldStatus){alert('订单已「'+oldStatus+'」，仅可改回「执行中」');return;}
+    if(oldStatus==='执行中'&&newStatus==='已完成'){alert('「已完成」由系统自动判定（整单未交付数量为 0），不可手动设置');return;}
+  }
   const items=[];
   document.querySelectorAll('#orderItemsTbl tbody tr').forEach(tr=>{
     const it={};
@@ -2519,6 +2595,7 @@ function saveOrder(idx){
     logOp('新增','订单管理','新增订单「'+o.id+'」('+esc(o.customer)+')，'+items.length+' 行明细');
   }
   save('orders',orders);
+  syncOrderAutoStatus();   // 2026-08-25.3：按未交付合计自动判定状态（已完成不可手动设，此处兜底校正）
   if(o.orderType==='库存订单')syncStockFromInvOrders();   // 库存订单已交付数量 → 产品库存
   closeModal();
   renderContent();
@@ -2630,6 +2707,7 @@ function openCallStock(){
   const o=orders[Number([...s][0])];
   if(!o){alert('未找到订单');return;}
   if(orderTypeOf(o)!=='销售订单'){alert('「调用库存」仅适用于销售订单');return;}
+  if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法调用库存');return;}
   const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
     .filter(function(l){return (l.orderQty-l.deliveredQty)>0;});
   if(!lines.length){alert('该销售订单所有明细均已交付，无可调用库存');return;}
@@ -2698,6 +2776,7 @@ function openReturnStock(){
   const o=orders[Number([...s][0])];
   if(!o){alert('未找到订单');return;}
   if(orderTypeOf(o)!=='销售订单'){alert('「退回库存」仅适用于销售订单');return;}
+  if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法退回库存');return;}
   const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
     .filter(function(l){return l.deliveredQty>0;});
   if(!lines.length){alert('该销售订单所有明细已交付量为 0，无可供退回的库存');return;}
@@ -2770,6 +2849,7 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
   });
   save('orders',orders);
   syncStockFromInvOrders();
+  syncOrderAutoStatus();   // 2026-08-25.3：调拨后按未交付合计自动判定状态（全部交付→已完成 / 未交付>0→执行中）
   const ts=new Date().toLocaleString('zh-CN',{hour12:false});
   const user=(currentUser&&currentUser.name)||(currentUser&&currentUser.username)||'未知';
   salesUpdates.forEach(function(su,idx){
@@ -2808,6 +2888,7 @@ function reverseTransfer(id){
   salesIt.deliveredQty=Math.max(0,num(salesIt.deliveredQty)+(t.type==='call'?-t.qty:+t.qty));
   save('orders',orders);
   syncStockFromInvOrders();
+  syncOrderAutoStatus();   // 2026-08-25.3：冲销后按未交付合计自动判定状态
   t.reversed=true;
   transfers.unshift({
     id:'TR'+Date.now(), type:revType,
@@ -5416,7 +5497,7 @@ function kdDoImport(){
   var pm=R.pm;
   var unkMap={};R.unknown.forEach(function(u){unkMap[u.o.id+'#'+u.li]=u.idx;});
   var confByOrderId={};R.conflict.forEach(function(c){confByOrderId[c.id]=c.idx;});
-  var newOrders=[],newProducts=[],skipCount=0,overwriteLog=[],totalLines=0,ignoredLines=0;
+  var newOrders=[],newProducts=[],skipCount=0,overwriteLog=[],blockedCancel=[],totalLines=0,ignoredLines=0;
   R.list.forEach(function(o){
     if(!o.startDate||!o.deadline)return; // 日期缺失（理论上已被 blocked 拦截）
     var ci=confByOrderId[o.id];
@@ -5445,17 +5526,24 @@ function kdDoImport(){
     var no={orderType:'销售订单',status:'执行中',src:'kingdee',srcFile:R.filename,id:finalId,customer:String(o.customer||'空'),startDate:o.startDate,deadline:o.deadline,contractNo:String(o.contractNo||'空'),items:items};
     if(decision==='overwrite'){
       var exIdx=orders.findIndex(function(x){return x.id===o.id;});
-      if(exIdx>=0){overwriteLog.push(o.id);orders.splice(exIdx,1);}
+      if(exIdx>=0){
+        var _ex=orders[exIdx];
+        /* 2026-08-25.3：已取消/已暂停订单禁止被导入覆盖（避免绕过状态机恢复已终止订单） */
+        if(_ex.status==='已取消'||_ex.status==='已暂停'){blockedCancel.push(o.id);skipCount++;return;}
+        overwriteLog.push(o.id);orders.splice(exIdx,1);
+      }
     }
     newOrders.push(no);
   });
   orders.push.apply(orders,newOrders);
   if(newProducts.length){products.push.apply(products,newProducts);save('products',products);}
   save('orders',orders);
+  syncOrderAutoStatus();   // 2026-08-25.3：导入后按未交付合计自动判定状态（Excel 已交付全量→已完成）
   var detail='从金蝶导入 '+newOrders.length+' 单 / '+totalLines+' 行';
   if(overwriteLog.length)detail+='（覆盖 '+overwriteLog.length+' 单）';
   if(ignoredLines)detail+='，忽视 '+ignoredLines+' 行';
   if(newProducts.length)detail+='，新建产品 '+newProducts.length+' 个（库存/产能为0，请补全）';
+  if(blockedCancel.length)detail+='，跳过已取消/已暂停不可覆盖 '+blockedCancel.length+' 单';
   if(skipCount)detail+='，跳过 '+skipCount+' 单';
   logOp('导入','订单管理',detail+'（来源文件：'+R.filename+'）');
   closeModal();renderContent();
@@ -5595,6 +5683,7 @@ function genDeliveryPlan(m){
   const oi=Number([...s][0]);
   const o=orders[oi];
   if(!o){alert('未找到该订单');return;}
+  if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法生成交付计划');return;}
   switchTab('delivery');
   deliveryModal(-1,{orderId:o.id,customer:o.customer});
 }
@@ -5643,7 +5732,7 @@ function suggestCopyId(baseId,exists){
   return baseId+'_'+i;
 }
 function copyProduct(i){const c={...products[i]};c.id=suggestCopyId(c.id,id=>products.some(p=>p.id===id));productModal(-1,c);}
-function copyOrder(i){const c=JSON.parse(JSON.stringify(orders[i]));c.id=suggestCopyId(c.id,id=>orders.some(o=>o.id===id));orderModal(-1,c);}
+function copyOrder(i){const c=JSON.parse(JSON.stringify(orders[i]));c.status='执行中';c.id=suggestCopyId(c.id,id=>orders.some(o=>o.id===id));orderModal(-1,c);}
 function copyPlan(type,i){
   if(type==='stockup'){const c={...dailyPlans[i]};c.date=planDate;planModal('stockup',-1,c);}
   else{const c={...dailyPkgs[i]};c.date=planDate;planModal('packaging',-1,c);}
@@ -5867,6 +5956,8 @@ async function initApp(){
   migrateOrderTypeField();
   // 订单管理：字段配置补齐并锁定「合同号」系统字段（销售订单必填）
   migrateOrderContractNo();
+  // 订单管理：审核状态选项改为 执行中/已完成/已取消/已暂停（持久化 fields 配置同步，2026-08-25.3）
+  migrateOrderStatusField();
   // 交付计划：字段配置清理（删废弃字段、加本批计划）
   migrateDeliveryFields();
   // 交付计划：老数据回填「单据时间」createdAt（2026-08-24.17，统一 2026-08-23）
@@ -5878,6 +5969,8 @@ async function initApp(){
   // 库存打通：先把产品现有库存反填到库存订单的已交付数量，再同步 库存=Σ(已交付)（含历史数据一次性对齐）
   backfillInvDeliveredFromStock();
   syncStockFromInvOrders();
+  // 订单管理：存量状态对齐（待排产→执行中）+ 按未交付合计初始化自动状态（2026-08-25.3，须在反填之后）
+  migrateOrderStatusData();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -5937,6 +6030,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.2</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.3</div>
 </body>
 </html>
