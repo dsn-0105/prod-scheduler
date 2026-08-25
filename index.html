@@ -1006,8 +1006,19 @@ function saveLayout(){DB.set('tblLayout',tblLayout);}
 /* 渲染后调用：按已保存的顺序/宽度重排 DOM 中所有带 data-m 的表格 */
 function applyTableLayout(){
   document.querySelectorAll('#content table').forEach(function(tbl){
-    var thead=tbl.tHead;if(!thead||!thead.rows.length)return;
-    var headCells=[...thead.rows[0].cells];
+    var thead=tbl.tHead;
+    var headCells=null,fromBody=false;
+    if(thead&&thead.rows.length){
+      headCells=[...thead.rows[0].cells];
+    }else{
+      /* 2026-08-25.9：表体表（body-tbl 无 thead）→ 取同区块表头表（sticky-head）的列顺序，仅重排列、不设宽度（宽度由 syncHeadBody 对齐） */
+      var hd=tbl.closest('.table-wrap');
+      var prev=hd?hd.previousElementSibling:null;
+      if(!prev||!prev.classList.contains('sticky-head'))return;
+      var ht=prev.querySelector('table.head-tbl');
+      if(!ht||!ht.tHead||!ht.tHead.rows.length)return;
+      headCells=[...ht.tHead.rows[0].cells];fromBody=true;
+    }
     var firstM=null;
     headCells.forEach(function(th){if(!firstM&&th.getAttribute&&th.getAttribute('data-m'))firstM=th.getAttribute('data-m');});
     if(!firstM)return;
@@ -1020,7 +1031,7 @@ function applyTableLayout(){
     /* 目标顺序 = 已存顺序(过滤仍存在的) + 新增列按当前顺序 */
     var order=(lo.order||[]).filter(function(k){return curKeys.indexOf(k)>=0;});
     curKeys.forEach(function(k){if(order.indexOf(k)<0)order.push(k);});
-    /* 重排所有行（含表头）：
+    /* 重排所有行（含表头/表体）：
        优先按 data-key 匹配重排（支持订单表格 rowspan 合并行——每行只移动该行实际存在的列，数据跟随表头移动）；
        无 data-key 的行（其他表格）退化为按物理索引重排，仅当列数与表头一致时执行。 */
     [...tbl.rows].forEach(function(row){
@@ -1048,6 +1059,7 @@ function applyTableLayout(){
         if(row.cells[slot]!==keyedCells[src])row.replaceChild(keyedCells[src],row.cells[slot]);
       });
     });
+    if(fromBody)return;   /* 2026-08-25.9：表体表只重排列，宽度由 syncHeadBody 从表头表对齐 */
     /* 先记录 auto 布局下的内容宽度，作为未拖过列的默认宽度（须在切换 fixed 之前读取） */
     var curW=headCells.map(function(th){return th.offsetWidth||0;});
     /* 切换 fixed 布局：列宽完全由表头决定（auto 布局下列宽下限=最宽单元格内容宽，
@@ -1329,6 +1341,7 @@ function renderContent(){
   }
   applyTableLayout();
   syncHeadBody();   // 2026-08-25.8：订单表头/表体列宽对齐（renderContent 后）
+  fixStickyHeadTop();   // 2026-08-25.9：表头吸附位置避开操作栏
   syncBottomScrollbar();
   /* 渲染后同步选中态：恢复复选框勾选与选中行高亮（row-sel，含 rowspan 合并组） */
   ['product','order_frame','order_inv','dp_stockup','dp_pkg','delivery','prodPlan'].forEach(function(m){
@@ -1409,7 +1422,23 @@ document.addEventListener('scroll',function(e){
     sb._sync=false;
   }
 },true);
-window.addEventListener('resize',function(){syncBottomScrollbar();syncHeadBody();});
+window.addEventListener('resize',function(){syncBottomScrollbar();syncHeadBody();fixStickyHeadTop();});
+
+/* 2026-08-25.9：sticky-head 吸附位置 = 顶栏 + 操作栏实际高度（避免与 bulk-bar 同 top:58 重叠被盖住；操作栏换行时自适应） */
+function fixStickyHeadTop(){
+  var base=window.innerWidth<=768?48:58;
+  document.querySelectorAll('#content .sticky-head').forEach(function(hd){
+    var bb=hd.previousElementSibling;
+    while(bb&&!bb.classList.contains('bulk-bar'))bb=bb.previousElementSibling;
+    var top=base;
+    if(bb){
+      var mT=parseFloat(getComputedStyle(bb).marginTop)||0;
+      var mB=parseFloat(getComputedStyle(bb).marginBottom)||0;
+      top+=mT+bb.offsetHeight+mB+6;
+    }
+    hd.style.top=top+'px';
+  });
+}
 
 /* 2026-08-25.8：订单表头/表体列宽同步——表头表 th 实际宽度写入表体表 colgroup，
    并令表体表总宽=表头表总宽（table-layout:fixed 下两表列宽一致，保证滚动对齐） */
@@ -6119,6 +6148,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.8</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.9</div>
 </body>
 </html>
