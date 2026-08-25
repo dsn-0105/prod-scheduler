@@ -105,9 +105,6 @@ label{font-size:12px;color:var(--muted);display:block;margin-bottom:3px}
 .form-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .form-row>div{flex:1;min-width:120px}
 table{width:100%;border-collapse:collapse;font-size:13px}
-/* 2026-08-25.6：内容区表格启用 separate 布局，使 thead 可 sticky 吸附（collapse 模式下 sticky th 无效）；无垂直边框，视觉不变 */
-#content .table-wrap table{border-collapse:separate;border-spacing:0}
-#content .table-wrap thead th{position:sticky;top:0;z-index:12}   /* 表头随操作栏一起吸附顶部（top 由 stickyHeads 动态计算） */
 th{background:var(--primary-light);color:var(--primary);font-weight:600;text-align:left;padding:8px 10px;white-space:nowrap;border-bottom:2px solid var(--border)}
 td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 /* 页面主区表格单元格：超出行宽不换行，超出部分省略号 */
@@ -256,7 +253,7 @@ body.col-dragging{cursor:grabbing;user-select:none}
 .filt-pop .fp-opt{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:12px}
 .filt-pop .fp-opt:hover{color:var(--primary)}
 .filt-pop .fp-btns{display:flex;gap:6px;justify-content:flex-end;margin-top:4px}
-.tbl-fbar{display:flex;align-items:center;gap:6px;margin:8px 0;flex-wrap:wrap;font-size:12px;position:sticky;z-index:35;background:var(--card);border-radius:8px;padding:2px 4px}   /* 2026-08-25.6：筛选条随操作栏一起吸附（top 由 stickyHeads 动态计算） */
+.tbl-fbar{display:flex;align-items:center;gap:6px;margin:8px 0;flex-wrap:wrap;font-size:12px}
 .fchip{display:inline-flex;align-items:center;gap:4px;background:var(--primary-light);color:var(--primary);border-radius:12px;padding:3px 10px;font-weight:600}
 .fchip b{cursor:pointer;font-weight:700;margin-left:2px}
 .fchip b:hover{color:var(--red)}
@@ -1322,7 +1319,6 @@ function renderContent(){
     showBackupWarn();
   }
   applyTableLayout();
-  stickyHeads();   // 2026-08-25.6：表头/筛选条随操作栏吸附顶部（top 动态计算）
   syncBottomScrollbar();
   /* 渲染后同步选中态：恢复复选框勾选与选中行高亮（row-sel，含 rowspan 合并组） */
   ['product','order_frame','order_inv','dp_stockup','dp_pkg','delivery','prodPlan'].forEach(function(m){
@@ -1397,28 +1393,7 @@ document.addEventListener('scroll',function(e){
     sb._sync=false;
   }
 },true);
-window.addEventListener('resize',function(){stickyHeads();syncBottomScrollbar();});
-
-/* 2026-08-25.6：表单表头/筛选条随操作栏一起吸附页面顶部。
-   操作栏 .bulk-bar 已 sticky（CSS top:58/48px）；此处按上方 sticky 元素的实际 margin box 高度，
-   动态计算 筛选条 .tbl-fbar 与表头 thead th 的 sticky top（适配操作栏换行、筛选条出现/消失、移动端顶栏）。 */
-function stickyHeads(){
-  const base=window.innerWidth<=768?48:58;   // 顶栏高度（桌面 .topbar / 移动 .mobile-header）
-  const mT=function(el){return parseFloat(getComputedStyle(el).marginTop)||0;};
-  const mB=function(el){return parseFloat(getComputedStyle(el).marginBottom)||0;};
-  document.querySelectorAll('#content .bulk-bar').forEach(function(bb){
-    var off=base+bb.offsetHeight+mB(bb);     // bb 的 margin box 底
-    var nb=bb.nextElementSibling;
-    if(nb&&nb.classList.contains('tbl-fbar')){
-      nb.style.top=off+'px';
-      off+=mT(nb)+nb.offsetHeight+mB(nb);
-      nb=nb.nextElementSibling;
-    }
-    if(nb&&nb.classList.contains('table-wrap')){
-      nb.querySelectorAll('thead th').forEach(function(th){th.style.top=off+'px';});
-    }
-  });
-}
+window.addEventListener('resize',function(){syncBottomScrollbar();});
 
 function showBackupWarn(){
   const c=document.getElementById('content');
@@ -6100,6 +6075,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.6</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.7</div>
 </body>
 </html>
