@@ -5991,7 +5991,14 @@ bootstrap();
 (function(){
   var tip=document.createElement('div');tip.className='cell-tip';document.body.appendChild(tip);
   function truncated(el){
-    var txt=(el.innerText||el.textContent||'').trim();
+    /* 2026-08-25.4：select 取「当前选中项」文本测量（innerText||textContent 会拼出全部 option，误判截断） */
+    var txt='';
+    if(el.tagName==='SELECT'){
+      var _o=el.options[el.selectedIndex];
+      txt=(_o?_o.textContent||'':'').trim();
+    }else{
+      txt=(el.innerText||el.textContent||'').trim();
+    }
     if(!txt)return false;
     var cs=getComputedStyle(el);
     var probe=document.createElement('span');
@@ -6010,8 +6017,22 @@ bootstrap();
     return avail>0 && full>avail+0.5;
   }
   document.addEventListener('mouseover',function(e){
+    /* 2026-08-25.4：下拉框（select）特判——内容=当前选中项文本；仅选中项超宽且未展开（非 focus）时显示，
+       避免 td.innerText 拼出全部 option 文本的大悬浮框（调用库存弹窗 cs-inv 误命中 td） */
+    var sel=e.target.closest('select');
+    if(sel){
+      if(sel===document.activeElement){tip.style.display='none';return;}
+      var stxt='';
+      var _o=sel.options[sel.selectedIndex];
+      if(_o)stxt=(_o.textContent||'').trim();
+      if(!stxt||!truncated(sel)){tip.style.display='none';return;}
+      tip.textContent=stxt;tip.style.display='block';
+      return;
+    }
     var td=e.target.closest('.table-wrap table td, .table-wrap table .th-label');
     if(!td){tip.style.display='none';return;}
+    /* 2026-08-25.4：控件单元格（含 select/input/textarea/button）不显示 tip（如调用库存弹窗「下拉框+警告」单元格） */
+    if(td.querySelector&&td.querySelector('select,input,textarea,button')){tip.style.display='none';return;}
     var txt=(td.innerText||td.textContent||'').replace(/\s+/g,' ').trim();
     if(!txt||!truncated(td)){tip.style.display='none';return;}
     tip.textContent=txt;tip.style.display='block';
@@ -6030,6 +6051,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.3</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.4</div>
 </body>
 </html>
