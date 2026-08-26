@@ -4208,7 +4208,7 @@ function prodPlanModal(idx,prefill){
   });
   const srcTxt=(p.deliveryIdx!=null)?('#'+(p.deliveryIdx+1)+' · 订单 '+esc(p.orderId)):'';
   const body='<div class="form-row">'+
-    '<div><label>排产单号 *</label><input type="text" id="pp_id" value="'+esc(p.id)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '<div><label>排产单号'+(isNew?'（保存后自动生成）':'')+' *</label><input type="text" id="pp_id" value="'+(isNew?'待生成':esc(p.id))+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '<div><label>来源交付计划</label><input type="text" value="'+srcTxt+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '<div><label>客户</label><input type="text" value="'+esc(p.customer)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '</div><div class="form-row">'+
@@ -4218,7 +4218,7 @@ function prodPlanModal(idx,prefill){
     '</div><div class="form-row">'+
     '<div style="flex:1"><label>备注</label><input type="text" id="pp_notes" value="'+esc(p.notes)+'"></div>'+
     '</div>'+
-    '<div style="margin-bottom:6px;font-size:12px;color:var(--muted)">本次排产数量可修改（留空或 0 = 该行本次不排）；同一交付计划多次排产合计不能超过「未排产」数</div>'+
+    '<div style="margin-bottom:6px;font-size:12px;color:var(--muted)">本次排产数量可修改（留空或 0 = 该行本次不排）；同一交付计划多次排产合计不能超过「未排产」数<br><b style="color:var(--primary)">下推保存后：每个「本次排产数量>0」的明细行将生成一张独立排产单（单号自动区分）</b></div>'+
     '<div class="table-wrap" style="max-height:300px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>单位</th>'+
       '<th style="text-align:right">总计划数</th><th style="text-align:right">已排产</th><th style="text-align:right">未排产</th><th style="text-align:center">本次排产数量</th><th style="text-align:right">累计完成</th>'+
       (items.length?stepsDefOf(p,items[0]).map(x=>'<th style="text-align:right;font-size:12px">'+esc(x.label)+'<br>完成</th>').join(''):'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -4285,10 +4285,22 @@ function saveProdPlan(idx){
     logFieldDiffs('排产计划',HARD_FIELDS.prodPlan,old,p,p.id);
     logOp('编辑','排产计划','排产单「'+p.id+'」调整排产数量/信息');
   }else{
-    p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;p.items=finalItems;
-    productionPlans.push(p);
+    /* 2026-08-25.25：下推拆单——每个「本次排产数量>0」的明细行生成一张独立排产单（单号连续递增区分） */
+    p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;
+    const today=todayStr().replace(/-/g,'');
+    const re=new RegExp('^PSCD-'+today+'-(\\d+)$');
+    let maxSeq=0;
+    productionPlans.forEach(pp=>{const m=String(pp.id||'').match(re);if(m)maxSeq=Math.max(maxSeq,parseInt(m[1],10));});
+    finalItems.forEach(it=>{
+      maxSeq++;
+      const np={id:'PSCD-'+today+'-'+String(maxSeq).padStart(3,'0'),
+        deliveryIdx:p.deliveryIdx,orderId:p.orderId,customer:p.customer||'',
+        finalDate:fmtDate(finalDate),planDate:fmtDate(planDate),status:status,notes:notes,
+        items:[it]};
+      productionPlans.push(np);
+      logOp('新增','排产计划','新增「'+np.id+'」（订单'+p.orderId+'）');
+    });
     window.__ppPending=null;
-    logOp('新增','排产计划','新增「'+p.id+'」（订单'+p.orderId+'）');
   }
   save('productionPlans',productionPlans);
   closeModal();
@@ -6353,6 +6365,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.24</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.25</div>
 </body>
 </html>
