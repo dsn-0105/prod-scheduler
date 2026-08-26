@@ -2081,6 +2081,34 @@ function migrateDeliveryCreatedAt(){
   });
   if(changed){save('deliveries',deliveries);logOp('系统','交付计划','系统迁移：交付计划老数据回填单据时间 2026-08-23');}
 }
+/* 2026-08-25.34：存量交付计划行回填 orderLine（来源订单行索引，幂等，initApp 自动跑）。
+   策略：①索引直配（交付计划行 li ↔ 订单 items[li]，productId 一致）；②同 productId 顺序消费匹配（订单/交付计划行曾增删场景）；
+   ③仍不匹配不设（保持回退产品级）；已有 orderLine 不覆盖。解决存量同产品多行订单「已计划未交付」显示总数问题。 */
+function migrateDeliveryOrderLine(){
+  let changed=false;
+  deliveries.forEach(d=>{
+    if(!Array.isArray(d.items)||!d.items.length)return;
+    const o=orders.find(x=>x.id===d.orderId);
+    if(!o||!Array.isArray(o.items)||!o.items.length)return;
+    const oItems=orderItems(o);
+    const cnt={};
+    d.items.forEach((it,li)=>{
+      if(it.orderLine!=null&&it.orderLine!=='')return;   /* 已有不覆盖 */
+      let ol=null;
+      if(oItems[li]&&(oItems[li].productId||'')===(it.productId||''))ol=li;   /* ① 索引直配 */
+      if(ol==null){                                                             /* ② 同 productId 顺序消费 */
+        const pid=it.productId||'';
+        const n=cnt[pid]=(cnt[pid]||0)+1;
+        let seen=0;
+        for(let k=0;k<oItems.length;k++){
+          if((oItems[k].productId||'')===pid){seen++;if(seen===n){ol=k;break;}}
+        }
+      }
+      if(ol!=null){it.orderLine=ol;changed=true;}
+    });
+  });
+  if(changed){save('deliveries',deliveries);logOp('系统','交付计划','系统迁移：存量交付计划行回填来源订单行索引 orderLine');}
+}
 /* 旧数据迁移：平铺字段 → items[] */
 function migrateOrders(){
   let changed=false;
@@ -6370,6 +6398,8 @@ async function initApp(){
   migrateDeliveryFields();
   // 交付计划：老数据回填「单据时间」createdAt（2026-08-24.17，统一 2026-08-23）
   migrateDeliveryCreatedAt();
+  // 存量交付计划行回填 orderLine（订单管理「已计划未交付」按明细行区分，2026-08-25.34）
+  migrateDeliveryOrderLine();
   // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突
   migrateInventoryOrderIds();
   // 订单类型改名：存量「框架订单」→「销售订单」（含历史数据一次性对齐）
@@ -6459,6 +6489,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.33</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.34</div>
 </body>
 </html>
