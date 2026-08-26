@@ -6019,11 +6019,13 @@ function bulkBar(m){
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
     if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
-    /* 2026-08-25.30：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；下拉等宽于按钮组；下拉项与主按钮同款 btn-primary */
-    if(m==='prodPlan')btns.push('<span id="ppLaunchWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;overflow:hidden;vertical-align:middle">'+
-      '<button class="btn btn-sm" style="border:none;border-radius:0;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="ppLaunch()" title="投产选中的排产计划（多选，待排产→生产中，投产后才能报工）">投产</button>'+
+    /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
+       下拉等宽于按钮组、下拉项与主按钮同款 btn-primary。
+       .31 修复：容器**不能加 overflow:hidden**（会裁剪 absolute 定位的下拉菜单，点击▾无反应）——按钮直角改由按钮自身圆角承担 */
+    if(m==='prodPlan')btns.push('<span id="ppLaunchWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
+      '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="ppLaunch()" title="投产选中的排产计划（多选，待排产→生产中，投产后才能报工）">投产</button>'+
       '<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
-      '<button class="btn btn-sm" style="border:none;border-radius:0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();ppToggleLaunchMenu()" title="更多投产操作">▾</button>'+
+      '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();ppToggleLaunchMenu()" title="更多投产操作">▾</button>'+
       '<div id="ppLaunchMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
       '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleLaunchMenu();ppReverseLaunch()" title="将选中的「生产中」排产计划转回「待排产」（已报工的无法反投产）">反投产</button>'+
       '</div></span>');
@@ -6444,6 +6446,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.30</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.31</div>
 </body>
 </html>
