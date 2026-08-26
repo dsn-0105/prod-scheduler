@@ -3499,9 +3499,10 @@ function renderDelivery(){
   }else{
     /* 2026-08-25.22：列表改订单管理式多行明细——一单 N 明细 → N 行，单据级列 rowspan 合并。
        明细行只显示「本批计划(planQty)>0」的行（本批不交付的行不展示）；全为 0 时兜底显示全部行（兼容存量老数据无 planQty）。 */
-    const dlListRows=(d)=>{const its=deliveryItems(d);const pos=its.filter(i=>num(i.planQty)>0);return pos.length>0?pos:its;};
+    /* 2026-08-25.24：列表行保留交付计划 items 原索引 li（同产品多行时行级已排产按 li 区分） */
+    const dlListRows=(d)=>{const its=deliveryItems(d).map((it,li)=>({it,li}));const pos=its.filter(x=>num(x.it.planQty)>0);return pos.length>0?pos:its;};
     const rows=[];
-    deliveries.forEach(d=>dlListRows(d).forEach(it=>rows.push({d,it,di:deliveries.indexOf(d)})));
+    deliveries.forEach(d=>dlListRows(d).forEach(x=>rows.push({d,it:x.it,li:x.li,di:deliveries.indexOf(d)})));
     /* 2026-08-25.23：单据级汇总字段（订单总量/本批计划/已排产）拆到明细行——单据级仅保留单据属性 6 列；
        明细级新增「已排产」行级字段（ppPlannedOf 该单据+该产品已排产，排除已取消，不落库实时计算） */
     TBL_SCHEMAS.delivery=[
@@ -3519,7 +3520,7 @@ function renderDelivery(){
       {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.it.deliveredQty},
       {key:'_undel',label:'未交付',type:'number',get:r=>num(r.it.orderQty)-num(r.it.deliveredQty)},
       {key:'_planQty',label:'本批计划',type:'number',get:r=>r.it.planQty},
-      {key:'_ppPlanned',label:'已排产',type:'number',get:r=>ppPlannedOf(r.di,r.it.productId)},
+      {key:'_ppPlanned',label:'已排产',type:'number',get:r=>ppPlannedOfLine(r.di,r.li!=null?r.li:null,r.it.productId)},
       {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.it.lineNotes}
     ];
     TBL_ROWS.delivery=rows;
@@ -3543,7 +3544,7 @@ function renderDelivery(){
     html+='<div class="table-wrap"><table class="body-tbl">'+_dColg+'<tbody>';
     if(shown.length===0){html+=noMatchRow('delivery',_dColN);}
     shown.forEach((r,i)=>{
-      const di=r.di, d=r.d, it=r.it;
+      const di=r.di, d=r.d, it=r.it, li=r.li!=null?r.li:null;
       const grp=groupMap.get(di);
       const isFirst=grp.start===i;
       const rs=grp.count;
@@ -3572,7 +3573,7 @@ function renderDelivery(){
         '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(it.deliveredQty)+'</td>'+
         '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
         '<td data-key="_planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.planQty!=null?money(it.planQty):'')+'</td>'+
-        '<td data-key="_ppPlanned" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlannedOf(di,it.productId))+'</td>'+
+        '<td data-key="_ppPlanned" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlannedOfLine(di,li,it.productId))+'</td>'+
         '<td data-key="lineNotes">'+esc(it.lineNotes||'')+'</td></tr>';
     });
     html+='</tbody></table></div>';
@@ -3710,6 +3711,32 @@ function ppTotalOf(deliveryIdx,productId){
   if(!d)return null;
   const it=deliveryItems(d).find(x=>(x.productId||'')===(productId||''));
   return it?num(it.planQty):null;
+}
+/* 2026-08-25.24：行级聚合（同产品多行明细时按交付计划行区分，修复下推数量被取首行/聚合的错误）。
+   排产单行带 dlLine（交付计划 items 原索引）→ 按行计算；无 dlLine（存量排产单）→ 回退产品级聚合，行为不变 */
+function ppTotalOfLine(deliveryIdx,dlLine,productId){
+  if(deliveryIdx==null)return null;
+  if(dlLine!=null&&deliveries[deliveryIdx]){
+    const lineItems=deliveryItems(deliveries[deliveryIdx]);
+    if(lineItems[dlLine]!=null)return num(lineItems[dlLine].planQty);
+  }
+  return ppTotalOf(deliveryIdx,productId);
+}
+function ppPlannedOfLine(deliveryIdx,dlLine,productId,excludeIdx){
+  if(deliveryIdx==null)return 0;
+  if(dlLine==null)return ppPlannedOf(deliveryIdx,productId,excludeIdx);
+  /* 同单存在无 dlLine 的存量行（老格式）时无法按行区分 → 回退产品级聚合 */
+  const hasLegacy=productionPlans.some((p,idx)=>{
+    if(idx===excludeIdx||p.deliveryIdx!==deliveryIdx||p.status==='已取消')return false;
+    return ppItems(p).some(it=>it.dlLine==null);
+  });
+  if(hasLegacy)return ppPlannedOf(deliveryIdx,productId,excludeIdx);
+  let s=0;
+  productionPlans.forEach((p,idx)=>{
+    if(idx===excludeIdx||p.deliveryIdx!==deliveryIdx||p.status==='已取消')return;
+    ppItems(p).forEach(it=>{ if(it.dlLine===dlLine)s+=num(it.planQty); });
+  });
+  return s;
 }
 /* 交付计划已下推排产数量合计（build 2026-08-24.17）：Σ 名下排产单 items.planQty（排除已取消，同状态口径） */
 function ppPlannedTotal(deliveryIdx){
@@ -4117,7 +4144,9 @@ function genProdPlan(){
   const di=Number([...s][0]);
   const d=deliveries[di];
   if(!d){alert('未找到该交付计划');return;}
-  const items=deliveryItems(d).filter(it=>num(it.planQty)>0).map(it=>{
+  /* 2026-08-25.24：逐行记录 dlLine（交付计划 items 原索引）——同产品多行明细下推时按行区分，数量不再被聚合/取首行 */
+  const items=deliveryItems(d).map((it,li)=>({it,li})).filter(x=>num(x.it.planQty)>0).map(x=>{
+    const it=x.it,li=x.li;
     const prod=products.find(p=>p.id===it.productId)||{};
     const q=num(it.planQty);
     /* 工序模板（.11）：按产品主数据 processTplId 取模板，固化工序快照 stepsDef + 初始化 steps */
@@ -4126,7 +4155,7 @@ function genProdPlan(){
     const stepsDef=def.map(x=>({key:x.key,label:x.label,plan:!!x.plan,mandatory:!!x.mandatory}));
     const steps={};
     def.forEach(x=>{steps[x.key]=x.plan?{plan:q,done:0}:0;});
-    return {productId:it.productId||'',productName:it.productName||'',spec:it.spec||prod.spec||'',model:it.model||prod.model||'',unit:prod.unit||'',planQty:q,doneQty:0,lineNotes:it.lineNotes||'',stepsDef:stepsDef,steps:steps};
+    return {productId:it.productId||'',productName:it.productName||'',spec:it.spec||prod.spec||'',model:it.model||prod.model||'',unit:prod.unit||'',planQty:q,doneQty:0,lineNotes:it.lineNotes||'',dlLine:li,stepsDef:stepsDef,steps:steps};
   });
   if(items.length===0){alert('该交付计划无「本批计划>0」的明细行，无法下推');return;}
   const existing=productionPlans.filter(p=>p.deliveryIdx===di).length;
@@ -4159,8 +4188,10 @@ function prodPlanModal(idx,prefill){
   let rows='';
   items.forEach((it,i)=>{
     const stepsDef=stepsDefOf(p,it);
-    const total=ppTotalOf(p.deliveryIdx,it.productId);
-    const already=ppPlannedOf(p.deliveryIdx,it.productId,idx>=0?idx:null);
+    /* 2026-08-25.24：同产品多行明细时按行级 dlLine 计算总计划/已排产（存量无 dlLine 自动回退产品级） */
+    const dlLine=it.dlLine!=null?it.dlLine:null;
+    const total=ppTotalOfLine(p.deliveryIdx,dlLine,it.productId);
+    const already=ppPlannedOfLine(p.deliveryIdx,dlLine,it.productId,idx>=0?idx:null);
     const remain=(total!=null)?Math.max(0,total-already):null;
     let defVal;
     if(!isNew)defVal=ppPlanOf(it);                      // 编辑已有单：当前数量
@@ -4214,8 +4245,10 @@ function saveProdPlan(idx){
     if(raw==='')continue;
     const q=parseFloat(raw);
     if(isNaN(q)||q<=0)continue;
-    const total=ppTotalOf(p.deliveryIdx,it.productId);
-    const already=ppPlannedOf(p.deliveryIdx,it.productId,idx>=0?idx:null);
+    /* 2026-08-25.24：同产品多行明细时按行级 dlLine 校验（存量无 dlLine 自动回退产品级） */
+    const dlLine=it.dlLine!=null?it.dlLine:null;
+    const total=ppTotalOfLine(p.deliveryIdx,dlLine,it.productId);
+    const already=ppPlannedOfLine(p.deliveryIdx,dlLine,it.productId,idx>=0?idx:null);
     const remain=(total!=null)?Math.max(0,total-already):null;
     if(remain!=null&&q>remain){
       alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 超过未排产 '+money(remain)+'，请调整（同一交付计划多次排产合计不能超过总计划数）。');
@@ -6320,6 +6353,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.23</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.24</div>
 </body>
 </html>
