@@ -1144,11 +1144,8 @@ function startColDrag(e,th){
       saveLayout();
       applyTableLayout();
       syncHeadBody();   /* 2026-08-25.8：拖拽调序后同步表体列宽 */
-      /* rAF：布局稳定后恢复滚动位置 + 刷新底部滚动条（先恢复再对位） */
-      requestAnimationFrame(function(){
-        scPos.forEach(function(s){s.el.scrollLeft=s.left;});
-        syncBottomScrollbar();
-      });
+      /* 2026-08-25.38：统一恢复滚动位置（双 rAF + 150ms 兜底，替代 .37 单 rAF——布局完全稳定后精确设回） */
+      restoreTableScroll(scPos);
     }
     if(colDrag){
       colDrag.targets.forEach(function(t){t.classList.remove('th-drop-before','th-drop-after');});
@@ -1222,10 +1219,8 @@ function startColResize(e,th){
     layoutOf(m).widths[key]=Math.round(th.getBoundingClientRect().width);
     saveLayout();
     if(tbl&&tbl.style.tableLayout==='fixed'){syncHeadBody();}   /* 2026-08-25.8：调宽后同步表体列宽 */
-    requestAnimationFrame(function(){
-      scPos.forEach(function(s){s.el.scrollLeft=s.left;});
-      if(tbl&&tbl.style.tableLayout==='fixed'){syncBottomScrollbar();}   /* 布局稳定后恢复滚动，再刷新底部滚动条 */
-    });
+    /* 2026-08-25.38：统一恢复滚动位置（双 rAF + 150ms 兜底，替代 .37 单 rAF——布局完全稳定后精确设回） */
+    restoreTableScroll(scPos);
   };
   document.addEventListener('mousemove',move);
   document.addEventListener('mouseup',up);
@@ -1373,10 +1368,8 @@ function renderContent(){
     default:c.innerHTML='<div class="empty">未知模块</div>';
   }
   if(restoreScroll){
-    var wraps=Array.prototype.slice.call(c.querySelectorAll('.table-wrap'));
-    savedScroll.forEach(function(r,i){
-      if(wraps[i]){wraps[i].scrollLeft=r[0];wraps[i].scrollTop=r[1];}
-    });
+    /* .38：记录保存，恢复统一移到 applyTableLayout 之后（原位置在布局重算前恢复会被切 fixed/重设列宽二次钳制跳最前） */
+    var _scWraps=Array.prototype.slice.call(c.querySelectorAll('.table-wrap'));
   }
   if(products.length+orders.length>=30){
     showBackupWarn();
@@ -1385,6 +1378,11 @@ function renderContent(){
   syncHeadBody();   // 2026-08-25.8：订单表头/表体列宽对齐（renderContent 后）
   fixStickyHeadTop();   // 2026-08-25.9：表头吸附位置避开操作栏
   syncBottomScrollbar();
+  /* 2026-08-25.38：布局重算完成后恢复滚动位置（双 rAF + 150ms 兜底，布局稳定后精确设回不再被钳制） */
+  if(restoreScroll&&_scWraps){
+    var scRecs=savedScroll.map(function(r,i){return {el:_scWraps[i],left:r[0],top:r[1]};}).filter(function(r){return !!r.el;});
+    restoreTableScroll(scRecs);
+  }
   /* 渲染后同步选中态：恢复复选框勾选与选中行高亮（row-sel，含 rowspan 合并组） */
   ['product','order_frame','order_inv','dp_stockup','dp_pkg','delivery','prodPlan'].forEach(function(m){
     if(document.querySelector('#content input[data-sel-form="'+m+'"]'))updateSelUI(m);
@@ -1445,6 +1443,28 @@ function syncBottomScrollbar(){
   sb.scrollLeft=ar>0?(active.scrollLeft/ar)*range:0;
   sb._sync=false;
 }
+/* 2026-08-25.38：统一恢复表格横向/纵向滚动位置——双 rAF + 150ms 兜底（布局完全稳定后精确设回，
+   避免 applyTableLayout 切 fixed/重设列宽后 scrollWidth 未稳定导致浏览器提前钳制 scrollLeft 跳最前；
+   程序设回触发 scroll 事件自动联动表头/表体/底部条）。records=[{el,left,top}] */
+function restoreTableScroll(records){
+  if(!records||!records.length)return;
+  const apply=function(){
+    records.forEach(function(r){
+      if(!r.el)return;
+      if(r.left!=null)r.el.scrollLeft=r.left;
+      if(r.top!=null)r.el.scrollTop=r.top;
+    });
+    syncBottomScrollbar();
+  };
+  requestAnimationFrame(function(){
+    apply();
+    requestAnimationFrame(function(){
+      apply();
+      setTimeout(apply,150);   /* 兜底：字体/图片/悬停态等延迟 reflow 后再校正一次 */
+    });
+  });
+}
+
 /* 任一表格自身横向滚动（capture 捕获不冒泡的 scroll）→ 回写底部滚动条 */
 document.addEventListener('scroll',function(e){
   const t=e.target;
@@ -6538,6 +6558,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.37</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.38</div>
 </body>
 </html>
