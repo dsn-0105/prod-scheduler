@@ -4218,7 +4218,7 @@ function prodPlanModal(idx,prefill){
     '</div><div class="form-row">'+
     '<div><label>计划生产日期 *</label><input type="date" id="pp_planDate" value="'+fmtDate(p.planDate)+'"></div>'+
     '<div><label>交付期</label><input type="date" id="pp_finalDate" value="'+fmtDate(p.finalDate)+'"></div>'+
-    '<div><label>状态</label><select id="pp_status">'+['待排产','生产中','已完成','已取消'].map(x=>'<option value="'+x+'" '+(p.status===x?'selected':'')+'>'+x+'</option>').join('')+'</select></div>'+
+    '<div><label>状态（系统自动）</label><input type="text" value="'+esc(p.status)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '</div><div class="form-row">'+
     '<div style="flex:1"><label>备注</label><input type="text" id="pp_notes" value="'+esc(p.notes)+'"></div>'+
     '</div>'+
@@ -4235,10 +4235,10 @@ function saveProdPlan(idx){
   const planDate=document.getElementById('pp_planDate').value;
   if(!planDate){alert('请填写计划生产日期');return;}
   const finalDate=document.getElementById('pp_finalDate').value;
-  const status=document.getElementById('pp_status').value;
   const notes=document.getElementById('pp_notes').value;
   const p=(idx>=0)?productionPlans[idx]:(window.__ppPending||null);
   if(!p){alert('下推数据缺失，请重新操作');return;}
+  const status=p.status;   /* 2026-08-25.27：状态不可手动编辑，由系统自动转变（投产/报工完工） */
   const srcItems=ppItems(p);
   /* 逐行读取本次排产数量：留空/0=该行本次不排；校验 ≤ 未排产、且不能低于已完成数 */
   const finalItems=[];
@@ -4327,6 +4327,7 @@ function copyProdPlan(i){
   window.__ppPending=c;
   prodPlanModal(-1,c);
 }
+/* 2026-08-25.27：排产计划禁止复制/新增，只能从交付计划下推——copyProdPlan 保留定义无入口（FORM_ACTIONS 无 copy 映射、批量栏无复制按钮） */
 function delProdPlan(i){
   if(!confirm('确认删除该排产计划「'+productionPlans[i].id+'」？'))return;
   const p=productionPlans[i];
@@ -4335,6 +4336,21 @@ function delProdPlan(i){
   logOp('删除','排产计划','删除「'+p.id+'」');
   productionPlans.splice(i,1);
   save('productionPlans',productionPlans);
+  renderContent();
+}
+
+/* 2026-08-25.27：投产——选中 1 条「待排产」排产计划 → 状态置「生产中」（投产后才能报工；生产中是报工前提） */
+function ppLaunch(){
+  const s=selSet('prodPlan');
+  if(s.size===0){alert('请先勾选 1 条排产计划');return;}
+  if(s.size>1){alert('「投产」一次只能选择 1 条排产计划，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
+  const pi=Number([...s][0]);
+  const p=productionPlans[pi];
+  if(!p){alert('未找到该排产计划');return;}
+  if(p.status!=='待排产'){alert('仅「待排产」的排产计划可以投产（当前：'+p.status+'）');return;}
+  p.status='生产中';
+  save('productionPlans',productionPlans);
+  logOp('投产','排产计划','排产单「'+p.id+'」投产（待排产→生产中）');
   renderContent();
 }
 
@@ -4349,6 +4365,8 @@ function reportProdPlan(){
   const p=productionPlans[pi];
   if(!p){alert('未找到该排产计划');return;}
   if(p.status==='已取消'){alert('已取消的排产计划不能报工');return;}
+  /* 2026-08-25.27：待排产（未投产）禁止报工 */
+  if(p.status==='待排产'){alert('该排产计划尚未投产，请先在操作栏点「投产」后再报工');return;}
   const items=ppItems(p);
   /* 工序列 = 各产品行 stepsDef 的并集（不同产品模板列一致展示，缺工序行显示 —） */
   const union=[];
@@ -5937,7 +5955,8 @@ var FORM_ACTIONS={
   order_inv:{formKey:'order',get:function(i){return orders[i];},edit:function(i){orderModal(i);},del:function(i){delOrder(i);},copy:function(i){copyOrder(i);}},
   dp_stockup:{formKey:'dailyPlan',get:function(i){return dailyPlans[i];},edit:function(i){planModal('stockup',i);},del:function(i){delPlan(i);},copy:function(i){copyPlan('stockup',i);}},
   dp_pkg:{formKey:'dailyPkg',get:function(i){return dailyPkgs[i];},edit:function(i){planModal('packaging',i);},del:function(i){delPkg(i);},copy:function(i){copyPkg('packaging',i);}},
-  prodPlan:{formKey:'prodPlan',get:function(i){return productionPlans[i];},edit:function(i){prodPlanModal(i);},del:function(i){delProdPlan(i);},copy:function(i){copyProdPlan(i);}},
+  /* 2026-08-25.27：排产计划禁止复制（只能从交付计划下推），FORM_ACTIONS 无 copy 映射 */
+  prodPlan:{formKey:'prodPlan',get:function(i){return productionPlans[i];},edit:function(i){prodPlanModal(i);},del:function(i){delProdPlan(i);}},
   processTpl:{formKey:'processTpl',get:function(i){return processTemplates[i];},edit:function(i){tplModal(i);},del:function(i){delTpl(i);},copy:function(i){copyTpl(i);}},
   /* 2026-08-25.21：交付计划禁止复制（只能从订单管理下推），FORM_ACTIONS 无 copy 映射 */
   delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);}}
@@ -5953,12 +5972,13 @@ function bulkBar(m){
   btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' data-sel-all="'+m+'" onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   if(writable){
     btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
-    /* 2026-08-25.21：交付计划只能从订单下推，禁止复制 */
-    if(m!=='delivery')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
+    /* 2026-08-25.21/.27：交付计划、排产计划只能由上游下推生成，禁止复制 */
+    if(m!=='delivery'&&m!=='prodPlan')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的订单生成交付计划（仅限 1 条）">生成交付计划</button>');
     if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
-    if(m==='prodPlan')btns.push('<button class="btn btn-sm btn-primary" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条）">报工</button>');
+    if(m==='prodPlan')btns.push('<button class="btn btn-sm btn-primary" onclick="ppLaunch()" title="投产选中的排产计划（仅限 1 条，待排产→生产中，投产后才能报工）">投产</button>');
+    if(m==='prodPlan')btns.push('<button class="btn btn-sm btn-primary" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
@@ -6369,6 +6389,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.26</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.27</div>
 </body>
 </html>
