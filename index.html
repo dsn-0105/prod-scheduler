@@ -4031,7 +4031,8 @@ function renderProdPlanDay(writable,all){
     {key:'planQty',label:'计划数量',type:'number',get:r=>ppPlanOf(r.it)},
     {key:'doneQty',label:'累计完成',type:'number',get:r=>ppDoneOf(r.it)},
     {key:'_pct',label:'进度%',type:'number',get:r=>{const t=ppPlanOf(r.it);return t>0?Math.round(ppDoneOf(r.it)/t*100):0;}},
-    {key:'notes',label:'备注',type:'text',get:r=>r.p.notes}
+    {key:'notes',label:'备注',type:'text',get:r=>r.p.notes},
+    {key:'lineNotes',label:'行备注',type:'text',get:r=>r.it.lineNotes}
   ];
   TBL_ROWS.prodPlan=rows;
   let shown=applyTable('prodPlan',rows);
@@ -4091,7 +4092,8 @@ function renderProdPlanDay(writable,all){
         '<td data-key="planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(t)+'</td>'+
         '<td data-key="doneQty" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(d)+'</td>'+
         '<td data-key="_pct" style="font-variant-numeric:tabular-nums;text-align:right">'+(allDone?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
-        '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
+        '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td>'+
+        '<td data-key="lineNotes" style="font-size:12px;color:var(--muted)">'+esc(it.lineNotes||'')+'</td></tr>';
       sumPlan+=t;sumDone+=d;
     });
     if(planExpand[pid]){
@@ -4099,7 +4101,7 @@ function renderProdPlanDay(writable,all){
       if(gp)html+=ppExpandRow(gp);
     }
   });
-  html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td class="exp-col"></td><td colspan="10">小计</td><td style="text-align:right">'+money(sumPlan)+'</td><td style="text-align:right">'+money(sumDone)+'</td><td colspan="2"></td></tr>';
+  html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td class="exp-col"></td><td colspan="10">小计</td><td style="text-align:right">'+money(sumPlan)+'</td><td style="text-align:right">'+money(sumDone)+'</td><td colspan="3"></td></tr>';
   html+='</tbody></table></div>';
   return html;
 }
@@ -4208,7 +4210,8 @@ function prodPlanModal(idx,prefill){
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+(remain!=null?money(remain):'—')+'</td>'+
       '<td style="text-align:center"><input type="number" class="pp_qty" data-li="'+i+'" min="0" '+(remain!=null?('max="'+remain+'"'):'')+' value="'+defVal+'" style="width:88px"></td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
-      stepsDef.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+'</tr>';
+      stepsDef.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+
+      '<td style="font-size:12px;color:var(--muted);max-width:160px">'+esc(it.lineNotes||'')+'</td></tr>';
   });
   const srcTxt=(p.deliveryIdx!=null)?('#'+(p.deliveryIdx+1)+' · 订单 '+esc(p.orderId)):'';
   const body='<div class="form-row">'+
@@ -4225,7 +4228,7 @@ function prodPlanModal(idx,prefill){
     '<div style="margin-bottom:6px;font-size:12px;color:var(--muted)">本次排产数量可修改（留空或 0 = 该行本次不排）；同一交付计划多次排产合计不能超过「未排产」数<br><b style="color:var(--primary)">下推保存后：每个「本次排产数量>0」的明细行将生成一张独立排产单（单号自动区分）</b></div>'+
     '<div class="table-wrap" style="max-height:300px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>单位</th>'+
       '<th style="text-align:right">总计划数</th><th style="text-align:right">已排产</th><th style="text-align:right">未排产</th><th style="text-align:center">本次排产数量</th><th style="text-align:right">累计完成</th>'+
-      (items.length?stepsDefOf(p,items[0]).map(x=>'<th style="text-align:right;font-size:12px">'+esc(x.label)+'<br>完成</th>').join(''):'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+      (items.length?stepsDefOf(p,items[0]).map(x=>'<th style="text-align:right;font-size:12px">'+esc(x.label)+'<br>完成</th>').join(''):'')+'<th style="text-align:left;font-size:12px">行备注</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal(isNew?'下推排产计划（确认）':'编辑排产计划',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveProdPlan('+(idx!=null?idx:-1)+')">保存</button>');
 }
@@ -4426,14 +4429,15 @@ function reportProdPlan(){
         const isMand=!!stepDef.mandatory;
         return '<td style="text-align:center"><div style="font-size:11px;color:var(--muted)">'+(plan>0?('计划'+money(plan)):'—')+'<br>已报 '+money(done)+'</div>'+
           '<input type="number" class="rp_qty" data-li="'+i+'" data-step="'+x.key+'" min="0" placeholder="本次" style="width:72px">'+(isMand?' <span style="color:var(--red)">*</span>':'')+'</td>';
-      }).join('')+'</tr>';
+      }).join('')+
+      '<td style="font-size:12px;color:var(--muted);max-width:140px">'+esc(it.lineNotes||'')+'</td></tr>';
   });
   const body='<div class="form-row">'+
     '<div><label>报工人 *</label><input type="text" id="rp_worker" placeholder="请输入报工人姓名" maxlength="20"></div>'+
     '<div style="flex:1"><span style="font-size:12px;color:var(--muted)">报工人为手动必填，将记录到报工明细中</span></div>'+
     '</div>'+
     '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（未填写的工序默认为 0；* 为关键工序提示；本次数量为增量，且不能超过本次排产数；「入库」工序报工后将自动回写订单已交付数量）</div>'+
-    '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+union.map(x=>'<th style="text-align:center">'+esc(x.label)+(x.mandatory?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+union.map(x=>'<th style="text-align:center">'+esc(x.label)+(x.mandatory?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'<th style="text-align:left">行备注</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal('生产报工（'+esc(p.id)+'）',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
 }
@@ -6446,6 +6450,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.31</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.32</div>
 </body>
 </html>
