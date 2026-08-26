@@ -670,6 +670,7 @@ const defaultFields={
     {key:'stockMax',label:'最大库存量',type:'number',required:false,locked:false,level:'line'},
     {key:'stockMin',label:'最小库存量',type:'number',required:false,locked:false,level:'line'},
     {key:'deliveredQty',label:'已交付数量',type:'number',required:true,locked:false,level:'line'},
+    {key:'calledQty',label:'已调用',type:'number',required:false,locked:true,level:'line'},   /* 2026-08-25.35：调用库存累计（操作产生，只读） */
     {key:'lineNotes',label:'商品行备注',type:'text',required:false,locked:false,level:'line'},
     {key:'startDate',label:'开始日期',type:'date',required:false,locked:false,level:'head'},
     {key:'deadline',label:'截止日期',type:'date',required:true,locked:true,level:'head'},
@@ -2046,8 +2047,31 @@ function syncOrderAutoStatus(silent){
 }
 /* 迁移（2026-08-25.3）：存量订单状态对齐——旧「待排产」→「执行中」；
    并按自动规则初始化存量执行中/已完成订单（全部交付完成的旧单直接标已完成，幂等）。 */
-function migrateOrderStatusData(){
+/* 2026-08-25.35：存量销售订单明细行回填 calledQty（已调用=调用库存累计）。
+   从调拨台账（未冲销 reversed=false 记录）统计：type=call 累加、type=return 扣减，下限 0；幂等（已有 calledQty 的行跳过）。 */
+function migrateOrderCalledQty(){
+  if(!Array.isArray(transfers)||!transfers.length)return;
+  const map={};   // orderId|lineIdx → qty
+  transfers.forEach(t=>{
+    if(t.reversed)return;                       /* 已冲销原记录不计；冲销生成的反向记录（revType）正常参与 */
+    if(t.type!=='call'&&t.type!=='return')return;
+    if(!t.salesOrderId||t.salesLineIdx==null)return;
+    const k=t.salesOrderId+'|'+t.salesLineIdx;
+    map[k]=(map[k]||0)+(t.type==='call'?num(t.qty):-num(t.qty));
+  });
   let changed=false;
+  orders.forEach(o=>{
+    if(!Array.isArray(o.items))return;
+    o.items.forEach((it,li)=>{
+      if(it.calledQty!=null&&it.calledQty!=='')return;      /* 已有不覆盖 */
+      const v=Math.max(0,map[o.id+'|'+li]||0);
+      if(v>0){it.calledQty=v;changed=true;}
+      else if(it.deliveredQty!=null){it.calledQty=0;changed=true;}   /* 无调拨记录也补 0 兜底（已交付行为主） */
+    });
+  });
+  if(changed){save('orders',orders);logOp('系统','订单管理','系统迁移：销售订单明细回填已调用数量 calledQty');}
+}
+function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
   if(changed){
     save('orders',orders);
@@ -2260,6 +2284,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'stockMax',label:'最大库存量',type:'number',get:r=>r.item.stockMax},
     {key:'stockMin',label:'最小库存量',type:'number',get:r=>r.item.stockMin},
     {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
+    {key:'calledQty',label:'已调用',type:'number',get:r=>r.item.calledQty},   /* 2026-08-25.35：调用库存累计 */
     {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
     {key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>{
        /* 2026-08-25.17 新口径：Σ交付计划.planQty − Σ名下排产单入库累计(排除已取消)，只跟生产入库走（调拨/导入初始不参与）。
@@ -2347,6 +2372,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="stockMax" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
       '<td data-key="stockMin" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
       '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(warnLow?WARN_LOW_SVG:(warnHigh?WARN_HIGH_SVG:''))+money(dq)+'</td>'+
+      '<td data-key="calledQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(num(it.calledQty)>0?money(it.calledQty):'')+'</td>'+
       '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
       '<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>'+
       '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
@@ -2444,9 +2470,9 @@ function orderItemRow(it,locked){
     const v=it[f.key]!=null?it[f.key]:'';
     if(f.key==='productId'){
       h+='<td style="display:flex;gap:4px;align-items:center"><input type="text" class="oi_field" data-key="productId" value="'+esc(v)+'" placeholder="产品编码" style="flex:1;min-width:80px"'+(locked?' readonly':'')+' onchange="orderItemIdChange(this)" onblur="orderItemIdChange(this)">'+(locked?'':'<button type="button" class="btn btn-sm" onclick="openProductPicker(this)" title="从产品库选择">选</button>')+'</td>';
-    }else if(f.key==='spec'||f.key==='model'){
-      /* 由产品编码联动写入，不可编辑 */
-      h+='<td><input type="text" class="oi_field" data-key="'+f.key+'" value="'+esc(v)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>';
+    }else if(f.key==='spec'||f.key==='model'||f.key==='calledQty'){
+      /* 由系统联动写入（规格/型号←产品编码；已调用←调用库存操作），不可编辑 */
+      h+='<td><input type="'+(f.key==='calledQty'?'number':'text')+'" class="oi_field" data-key="'+f.key+'" value="'+esc(v)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>';
     }else if(f.type==='ref'){
       h+='<td><input type="text" class="oi_field ref-field" data-key="'+f.key+'" data-ref-form="'+esc(f.refForm||'')+'" data-ref-match="'+esc(f.refMatch||'')+'" data-ref-field="'+esc(f.refField||'')+'" data-ref-key="'+esc(f.refKey||'')+'" value="'+esc(v)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>';
     }else{
@@ -3036,6 +3062,8 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
     if(!it)return;
     const delta=type==='call'?u.qty:-u.qty;
     it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);   /* 销售订单已交付保持非负（发货量不为负） */
+    /* 2026-08-25.35：已调用=调用库存累计（调用 +、退回 −，下限 0） */
+    it.calledQty=Math.max(0,num(it.calledQty)+delta);
   });
   save('orders',orders);
   syncStockFromInvOrders();
@@ -3084,6 +3112,8 @@ function reverseTransfer(id){
   /* 2026-08-25.20：库存订单已交付允许负数（冲销时负欠货向 0 恢复）；销售订单保持非负 */
   invIt.deliveredQty=num(invIt.deliveredQty)+(t.type==='call'?t.qty:-t.qty);
   salesIt.deliveredQty=Math.max(0,num(salesIt.deliveredQty)+(t.type==='call'?-t.qty:+t.qty));
+  /* 2026-08-25.35：已调用同步冲销（冲销 call → 减、冲销 return → 加，下限 0） */
+  salesIt.calledQty=Math.max(0,num(salesIt.calledQty)+(t.type==='call'?-t.qty:+t.qty));
   save('orders',orders);
   syncStockFromInvOrders();
   syncOrderAutoStatus();   // 2026-08-25.3：冲销后按未交付合计自动判定状态
@@ -6409,6 +6439,8 @@ async function initApp(){
   syncStockFromInvOrders();
   // 订单管理：存量状态对齐（待排产→执行中）+ 按未交付合计初始化自动状态（2026-08-25.3，须在反填之后）
   migrateOrderStatusData();
+  // 销售订单明细回填已调用数量 calledQty（2026-08-25.35，从调拨台账统计）
+  migrateOrderCalledQty();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -6489,6 +6521,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.34</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.35</div>
 </body>
 </html>
