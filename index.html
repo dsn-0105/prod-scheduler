@@ -2186,18 +2186,25 @@ function orderSection(k,formKey,title,sub,prodMap){
    已计划未交付 = Σ(该订单该产品交付计划.planQty) − Σ(名下排产单该产品入库累计 doneQty，排除已取消)。
    只跟「生产入库」走：调拨/导入初始的订单行 deliveredQty 不再参与减数；独立单（deliveryIdx=null）不占交付计划额度不计入；
    排产单删除/取消后其入库自动移出减数（与 .16 全链路反向同步自洽）。返回 orderId|productId → {plan,done} */
+/* 2026-08-25.17 新口径：已计划未交付 = Σ交付计划.planQty − Σ名下排产单入库累计（排除已取消，只跟生产入库走）。
+   .33 行级化：交付计划行带 orderLine（来源订单行索引）→ key=orderId|L{orderLine} 按明细行区分（同产品多行各自正确）；
+   交付计划行无 orderLine（存量）→ 回退产品级 key（orderId|productId），行为不变。
+   排产单行经 dlLine → 交付计划行 orderLine 归行级；无 dlLine/无 orderLine → 产品级。
+   已知风险（同 .24 dlLine 同款）：订单编辑增删行后订单行索引漂移，orderLine 可能错位。 */
 function buildPlannedUndelMap(){
   const m={};
   deliveries.forEach((d,di)=>{
     deliveryItems(d).forEach(x=>{
-      const k=d.orderId+'|'+(x.productId||'');
+      const k=x.orderLine!=null&&x.orderLine!==''?(d.orderId+'|L'+x.orderLine):(d.orderId+'|'+(x.productId||''));
       if(!m[k])m[k]={plan:0,done:0};
       m[k].plan+=num(x.planQty);
     });
     productionPlans.forEach(pp=>{
       if(pp.deliveryIdx!==di||pp.status==='已取消')return;
       ppItems(pp).forEach(y=>{
-        const k=d.orderId+'|'+(y.productId||'');
+        const dlLine=y.dlLine!=null?y.dlLine:null;
+        const dlRow=(dlLine!=null&&deliveryItems(d)[dlLine])?deliveryItems(d)[dlLine]:null;
+        const k=dlRow&&dlRow.orderLine!=null&&dlRow.orderLine!==''?(d.orderId+'|L'+dlRow.orderLine):(d.orderId+'|'+(y.productId||''));
         if(!m[k])m[k]={plan:0,done:0};
         m[k].done+=ppDoneOf(y);
       });
@@ -2207,7 +2214,7 @@ function buildPlannedUndelMap(){
 }
 function renderOrderTable(formKey,typeOrders,prodMap){
   const rows=[];
-  typeOrders.forEach(({o,i})=>{orderItems(o).forEach(it=>rows.push({order:o,item:it,orderIdx:i}));});
+  typeOrders.forEach(({o,i})=>{orderItems(o).forEach((it,li)=>rows.push({order:o,item:it,orderIdx:i,__li:li}));});
   const puMap=buildPlannedUndelMap();          // 2026-08-25.17：新口径已计划未交付预计算
   TBL_SCHEMAS[formKey]=[
     {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
@@ -2227,8 +2234,9 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
     {key:'_undel',label:'未交付',type:'number',get:r=>num(r.item.orderQty)-num(r.item.deliveredQty)},
     {key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>{
-       /* 2026-08-25.17 新口径：Σ交付计划.planQty − Σ名下排产单入库累计(排除已取消)，只跟生产入库走（调拨/导入初始不参与） */
-       const pu=puMap[r.order.id+'|'+(r.item.productId||'')];
+       /* 2026-08-25.17 新口径：Σ交付计划.planQty − Σ名下排产单入库累计(排除已取消)，只跟生产入库走（调拨/导入初始不参与）。
+          .33 行级：优先按订单行索引 orderLine 查行级 key，无则回退产品级 */
+       const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
        return pu?Math.max(0,pu.plan-pu.done):0; }},
     {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
     {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.item.lineNotes!=null?r.item.lineNotes:(r.item.notes||'')}
@@ -2267,8 +2275,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const oq=num(it.orderQty), dq=num(it.deliveredQty);
     const undel=oq-dq;
     const pct=oq>0?Math.round(dq/oq*100):0;
-    /* 已计划未交付（2026-08-25.17 新口径）= Σ交付计划.planQty − Σ名下排产单入库累计，排除已取消（与 schema 计算列同口径） */
-    const pu=puMap[o.id+'|'+(it.productId||'')];
+    /* 已计划未交付（2026-08-25.17 新口径，.33 行级）= Σ交付计划.planQty − Σ名下排产单入库累计，排除已取消（与 schema 计算列同口径） */
+    const pu=puMap[o.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[o.id+'|'+(it.productId||'')];
     const plannedUndel=pu?Math.max(0,pu.plan-pu.done):0;
     const today=todayStr();
     const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
@@ -4573,8 +4581,8 @@ function deliveryItems(d){
 /* 交付明细行渲染：产品/规格/型号/订单数量/已交付数量由订单带出（只读），本批计划可编辑（留空=本批不交付），商品行备注可编辑 */
 function deliveryItemRow(it){
   return '<tr>'+
-    '<td><input type="text" class="di_field" data-key="productId" value="'+esc(it.productId||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
-    '<td><input type="text" class="di_field" data-key="productName" value="'+esc(it.productName||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
+    '<td style="display:none"><input type="hidden" class="di_field" data-key="orderLine" value="'+(it.orderLine!=null?it.orderLine:'')+'"></td>'+ /* 2026-08-25.33：来源订单行索引，隐藏随保存落库 */
+    '<td><input type="text" class="di_field" data-key="productId" value="'+esc(it.productId||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+    '<td><input type="text" class="di_field" data-key="productName" value="'+esc(it.productName||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="text" class="di_field" data-key="spec" value="'+esc(it.spec||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="text" class="di_field" data-key="model" value="'+esc(it.model||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="number" class="di_field" data-key="orderQty" value="'+num(it.orderQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
@@ -4602,7 +4610,7 @@ function deliveryOrderChange(){
     const o=orders.find(x=>x.id===opt.value);
     if(o&&tb){
       tb.innerHTML='';
-      orderItems(o).forEach(it=>{
+      orderItems(o).forEach((it,li)=>{
         /* 产品名称/规格/型号为空时按产品主数据回填（金蝶导入的订单仅存 productId） */
         const p=products.find(x=>String(x.id)===String(it.productId));
         tb.insertAdjacentHTML('beforeend',deliveryItemRow({
@@ -4611,7 +4619,8 @@ function deliveryOrderChange(){
           spec:it.spec||(p?p.spec:'')||'',
           model:it.model||(p?p.model:'')||'',
           orderQty:it.orderQty,deliveredQty:it.deliveredQty,
-          lineNotes:(it.lineNotes!=null?it.lineNotes:(it.notes||''))
+          lineNotes:(it.lineNotes!=null?it.lineNotes:(it.notes||'')),
+          orderLine:li   /* 2026-08-25.33：来源订单行索引（订单管理「已计划未交付」按行区分） */
         }));
       });
     }
@@ -6450,6 +6459,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.32</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.33</div>
 </body>
 </html>
