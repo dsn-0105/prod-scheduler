@@ -4339,19 +4339,26 @@ function delProdPlan(i){
   renderContent();
 }
 
-/* 2026-08-25.27：投产——选中 1 条「待排产」排产计划 → 状态置「生产中」（投产后才能报工；生产中是报工前提） */
+/* 2026-08-25.27/28：投产——支持多选批量投产（选中多条「待排产」排产计划 → 置「生产中」）；
+   非待排产（生产中/已完成）自动跳过并在完成后提示；全部不可投产则拦截 */
 function ppLaunch(){
   const s=selSet('prodPlan');
-  if(s.size===0){alert('请先勾选 1 条排产计划');return;}
-  if(s.size>1){alert('「投产」一次只能选择 1 条排产计划，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
-  const pi=Number([...s][0]);
-  const p=productionPlans[pi];
-  if(!p){alert('未找到该排产计划');return;}
-  if(p.status!=='待排产'){alert('仅「待排产」的排产计划可以投产（当前：'+p.status+'）');return;}
-  p.status='生产中';
+  if(s.size===0){alert('请先勾选要投产的排产计划');return;}
+  const idxs=[...s].map(Number);
+  let launched=0,skipped=0;
+  const skippedIds=[];
+  idxs.forEach(pi=>{
+    const p=productionPlans[pi];
+    if(!p)return;
+    if(p.status!=='待排产'){skipped++;skippedIds.push(p.id);return;}
+    p.status='生产中';
+    launched++;
+    logOp('投产','排产计划','排产单「'+p.id+'」投产（待排产→生产中）');
+  });
+  if(launched===0){alert('所选排产计划均不可投产（需为「待排产」状态）'+(skippedIds.length?('：\n'+skippedIds.join('、')):''));return;}
   save('productionPlans',productionPlans);
-  logOp('投产','排产计划','排产单「'+p.id+'」投产（待排产→生产中）');
   renderContent();
+  if(skipped>0)alert('已投产 '+launched+' 条；跳过 '+skipped+' 条（非待排产）：'+skippedIds.join('、'));
 }
 
 /* 生产报工：选中 1 条排产计划 → 按产品工序模板（stepsDef）填本次完成数（增量累计）；
@@ -6389,6 +6396,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.27</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.28</div>
 </body>
 </html>
