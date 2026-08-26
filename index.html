@@ -1126,7 +1126,9 @@ function startColDrag(e,th){
     document.removeEventListener('mousemove',move);
     document.removeEventListener('mouseup',up);
     if(colDrag&&colDrag.moved&&colDrag.marker){
-      /* 2026-08-25.36：记录布局应用前横向滚动位置（防 applyTableLayout 重排后浏览器钳制 scrollLeft 跳到最前） */
+      /* 2026-08-25.36/.37：记录布局应用前横向滚动位置。
+         .37：恢复改 requestAnimationFrame 延迟执行——applyTableLayout 切 fixed/重设列宽后 scrollWidth 需 reflow 才稳定，
+         同步设回会被浏览器按未稳定宽度提前钳制（跳到最前）；rAF 等布局稳定后再设回，精确复原。 */
       var scPos=[];
       document.querySelectorAll('#content .table-wrap,#content .head-scroll').forEach(function(sc){if(sc.scrollLeft>0)scPos.push({el:sc,left:sc.scrollLeft});});
       var mk=colDrag.marker;
@@ -1142,9 +1144,11 @@ function startColDrag(e,th){
       saveLayout();
       applyTableLayout();
       syncHeadBody();   /* 2026-08-25.8：拖拽调序后同步表体列宽 */
-      /* 恢复横向滚动位置（程序设回 scrollLeft 触发 scroll 事件 → 表头/表体联动自动对齐） */
-      scPos.forEach(function(s){s.el.scrollLeft=s.left;});
-      syncBottomScrollbar();   /* 2026-08-25.36：重算底部滚动条范围并按恢复后位置对位 */
+      /* rAF：布局稳定后恢复滚动位置 + 刷新底部滚动条（先恢复再对位） */
+      requestAnimationFrame(function(){
+        scPos.forEach(function(s){s.el.scrollLeft=s.left;});
+        syncBottomScrollbar();
+      });
     }
     if(colDrag){
       colDrag.targets.forEach(function(t){t.classList.remove('th-drop-before','th-drop-after');});
@@ -1212,14 +1216,16 @@ function startColResize(e,th){
     document.removeEventListener('mouseup',up);
     document.body.classList.remove('col-resizing');
     window.__colDragTS=Date.now();
-    /* 2026-08-25.36：记录并恢复横向滚动位置（调宽改变列宽→scrollLeft 可能被浏览器钳制跳到最前；恢复后被钳制到新 max 属合理） */
+    /* 2026-08-25.36/.37：记录并 rAF 延迟恢复横向滚动位置（调宽改变列宽→scrollWidth 变化，布局稳定后再设回，避免早钳制跳最前） */
     var scPos=[];
     document.querySelectorAll('#content .table-wrap,#content .head-scroll').forEach(function(sc){if(sc.scrollLeft>0)scPos.push({el:sc,left:sc.scrollLeft});});
     layoutOf(m).widths[key]=Math.round(th.getBoundingClientRect().width);
     saveLayout();
     if(tbl&&tbl.style.tableLayout==='fixed'){syncHeadBody();}   /* 2026-08-25.8：调宽后同步表体列宽 */
-    scPos.forEach(function(s){s.el.scrollLeft=s.left;});
-    if(tbl&&tbl.style.tableLayout==='fixed'){syncBottomScrollbar();}   /* 2026-08-25.36：刷新底部滚动条（在恢复滚动后重算对位） */
+    requestAnimationFrame(function(){
+      scPos.forEach(function(s){s.el.scrollLeft=s.left;});
+      if(tbl&&tbl.style.tableLayout==='fixed'){syncBottomScrollbar();}   /* 布局稳定后恢复滚动，再刷新底部滚动条 */
+    });
   };
   document.addEventListener('mousemove',move);
   document.addEventListener('mouseup',up);
@@ -6532,6 +6538,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.36</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.37</div>
 </body>
 </html>
