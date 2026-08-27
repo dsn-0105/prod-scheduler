@@ -3077,6 +3077,32 @@ function csAutoFill(){
   });
   document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
 }
+/* 2026-08-25.57：自动填充展开框——按库存可用量（原逻辑）/ 按订单数量（全部行填未交付） */
+function csToggleFillMenu(btn){
+  const old=document.getElementById('csFillMenu');
+  if(old){old.remove();return;}
+  const m=document.createElement('div');
+  m.id='csFillMenu';
+  m.style.cssText='position:fixed;z-index:260;background:var(--bg,#fff);border:1px solid #d1d5db;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);min-width:150px;padding:4px;font-size:13px';
+  m.innerHTML='<div class="cs-fill-opt" style="padding:6px 10px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,.06)\'" onmouseout="this.style.background=\'\'" onclick="csAutoFill();csToggleFillMenu()">按库存可用量填充</div>'
+    +'<div class="cs-fill-opt" style="padding:6px 10px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,.06)\'" onmouseout="this.style.background=\'\'" onclick="csFillByOrder();csToggleFillMenu()">按订单数量填充</div>';
+  const r=btn.getBoundingClientRect();
+  m.style.left=Math.max(8,r.left)+'px';
+  m.style.top=(r.bottom+4)+'px';
+  document.body.appendChild(m);
+}
+/* 按订单数量填充：所有行的调用数量填为该行未交付数量（超库存可用量=欠货，.20 已放开） */
+function csFillByOrder(){
+  if(!__csLines)return;
+  document.querySelectorAll('.cs-qty').forEach(function(inp){
+    const li=Number(inp.dataset.li);
+    const line=__csLines.find(function(l){return l.i===li;});
+    if(!line)return;
+    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
+    inp.value=Math.max(0,cap);
+  });
+  document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
+}
 function openCallStock(){
   const s=selSet('order_frame');
   if(s.size===0){alert('请先勾选 1 张销售订单');return;}
@@ -3119,7 +3145,9 @@ function openCallStock(){
     +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>调用库存订单</th><th>调用数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   __csOrder=o;
   showModal('调用库存 - '+esc(o.id),body,
-    '<button class="btn" onclick="csAutoFill()">自动填充</button>'+
+    /* 2026-08-25.57：自动填充 + 右侧展开框（按库存可用量 / 按订单数量=填未交付） */
+    '<span style="position:relative"><button class="btn" onclick="csAutoFill()">自动填充</button>'+
+    '<button class="btn" onclick="csToggleFillMenu(this)" title="更多填充方式" style="padding:2px 7px">▾</button></span>'+
     '<button class="btn btn-primary" onclick="doCallStock(__csOrder)">确认调用</button>'+
     '<button class="btn" onclick="closeModal()">取消</button>');
   csAttach();
@@ -6772,6 +6800,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.56</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.57</div>
 </body>
 </html>
