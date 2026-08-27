@@ -3967,29 +3967,31 @@ function ppSaveReportEdits(planId){
       if(!isFinite(q)||q<1||Math.round(q)!==q){alert('第 '+(i+1)+' 条报工的工序数量无效（须为正整数，且不能改为 0）');return;}
     }
   }
-  /* 按产品行×工序聚合新累计，并检查是否超过本次排产数 */
+  /* 按产品行×工序聚合新累计，并检查是否超过本次排产数。
+     2026-08-25.40：行级化——key=productId(+#dlLine)，同产品多行各自聚合（依赖 .40 起报工记录带 dlLine；存量记录回退产品级） */
+  const lineKey=x=>(x.productId||'')+(x.dlLine!=null?'#'+x.dlLine:'');
   const itMap={};
-  ppItems(p).forEach(it=>{itMap[it.productId||'']=it;});
+  ppItems(p).forEach(it=>{itMap[lineKey(it)]=it;});
   const oldInbound={};                         // 2026-08-25.16：应用前各产品行旧入库累计（doneQty=唯一完成口径）
-  ppItems(p).forEach(it=>{oldInbound[it.productId||'']=ppDoneOf(it);});
+  ppItems(p).forEach(it=>{oldInbound[lineKey(it)]=ppDoneOf(it);});
   const agg={};
   updates.forEach(u=>{
     const rec=productionReports[u.idx];
     (rec.items||[]).forEach(x=>{
-      const pid=x.productId||'';
-      if(!agg[pid])agg[pid]={};
-      agg[pid][x.step]=(agg[pid][x.step]||0)+num(u.qtyMap[x.step]);
+      const k=lineKey(x);
+      if(!agg[k])agg[k]={};
+      agg[k][x.step]=(agg[k][x.step]||0)+num(u.qtyMap[x.step]);
     });
   });
   const overMsg=[];
-  for(const pid in agg){
-    const it=itMap[pid];
+  for(const k in agg){
+    const it=itMap[k];
     if(!it)continue;
     const def=stepsDefOf(p,it);
-    for(const step in agg[pid]){
+    for(const step in agg[k]){
       const stepDef=def.find(s=>s.key===step);
       const limit=(stepDef&&!stepDef.plan)?ppPlanOf(it):ppStepPlan(it,step);
-      if(limit>0&&agg[pid][step]>limit)overMsg.push('「'+(it.productName||pid)+'」'+(stepDef?stepDef.label:step)+'：修改后累计 '+agg[pid][step]+' / 本次排产 '+limit);
+      if(limit>0&&agg[k][step]>limit)overMsg.push('「'+(it.productName||it.productId)+'」'+(stepDef?stepDef.label:step)+'：修改后累计 '+agg[k][step]+' / 本次排产 '+limit);
     }
   }
   if(overMsg.length>0){
@@ -3997,17 +3999,20 @@ function ppSaveReportEdits(planId){
     return;
   }
   /* 应用：覆盖累计 + 更新记录 */
-  const inboundDelta={};                       // 2026-08-25.16：入库累计 新−旧 → 回写订单
-  for(const pid in agg){
-    const it=itMap[pid];
+  const inboundDelta=[];                       // 2026-08-25.16：入库累计 新−旧 → 回写订单；.40 行级化
+  for(const k in agg){
+    const it=itMap[k];
     if(!it)continue;
     const st=ppSteps(it);
-    for(const step in agg[pid]){
+    for(const step in agg[k]){
       if(st[step]===undefined)ppEnsureSteps(it,stepsDefOf(p,it));
-      if(typeof st[step]==='object')st[step].done=agg[pid][step];else st[step]=agg[pid][step];
+      if(typeof st[step]==='object')st[step].done=agg[k][step];else st[step]=agg[k][step];
       if(step==='inbound'||step==='finInbound'){
-        it.doneQty=agg[pid][step];
-        inboundDelta[pid]=(inboundDelta[pid]||0)+(agg[pid][step]-num(oldInbound[pid]));
+        it.doneQty=agg[k][step];
+        const dlLine=it.dlLine!=null?it.dlLine:null;
+        let rec=dlLine!=null?inboundDelta.find(x=>x.productId===it.productId&&x.dlLine===dlLine):inboundDelta.find(x=>x.productId===it.productId&&x.dlLine==null);
+        if(!rec){rec={productId:it.productId,dlLine:dlLine,qty:0,orderLine:ppOrderLineOf(p,it)};inboundDelta.push(rec);}
+        rec.qty+=(agg[k][step]-num(oldInbound[k]));
       }
     }
   }
@@ -4020,8 +4025,8 @@ function ppSaveReportEdits(planId){
   if(p.status==='已完成'&&!allDone)p.status='生产中';
   save('productionPlans',productionPlans);
   save('productionReports',productionReports);
-  /* 2026-08-25.16：编辑报工后入库累计变化 → 回写订单 */
-  for(const pid in inboundDelta){ if(inboundDelta[pid])writebackInbound(p.orderId,pid,inboundDelta[pid]); }
+  /* 2026-08-25.16：编辑报工后入库累计变化 → 回写订单（.40 行级回写） */
+  inboundDelta.forEach(r=>{ if(r.qty)writebackInbound(p.orderId,r.productId,r.qty,r.orderLine); });
   logOp('编辑报工','排产计划','编辑排产单「'+p.id+'」报工明细（报工人/数量）');
   closeModal();
   renderContent();
@@ -4390,7 +4395,7 @@ function saveProdPlan(idx){
       const cancelTo=(status==='已取消'),cancelFrom=(old.status==='已取消');
       ppItems(old).forEach(it=>{
         const d=ppDoneOf(it);
-        if(d>0&&(cancelTo||cancelFrom))writebackInbound(p.orderId,it.productId,cancelTo?-d:d);
+        if(d>0&&(cancelTo||cancelFrom))writebackInbound(p.orderId,it.productId,cancelTo?-d:d,ppOrderLineOf(p,it));
       });
     }
     p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;p.items=finalItems;
@@ -4441,8 +4446,8 @@ function delProdPlan(i){
   if(productionPlans[i].status!=='待排产'){alert('仅「待排产」的排产计划可以删除（当前：'+productionPlans[i].status+'）');return;}
   if(!confirm('确认删除该排产计划「'+productionPlans[i].id+'」？'))return;
   const p=productionPlans[i];
-  /* 2026-08-25.16：删除已报工（有入库累计）的排产单 → 扣回已回写的订单交付（防虚增交付） */
-  ppItems(p).forEach(it=>{const d=ppDoneOf(it);if(d>0)writebackInbound(p.orderId,it.productId,-d);});
+  /* 2026-08-25.16：删除已报工（有入库累计）的排产单 → 扣回已回写的订单交付（防虚增交付）；.40 行级扣回 */
+  ppItems(p).forEach(it=>{const d=ppDoneOf(it);if(d>0)writebackInbound(p.orderId,it.productId,-d,ppOrderLineOf(p,it));});
   logOp('删除','排产计划','删除「'+p.id+'」');
   productionPlans.splice(i,1);
   save('productionPlans',productionPlans);
@@ -4582,16 +4587,29 @@ function saveReport(pi){
   }
   applyReport(pi,entries,items,worker);
 }
+/* 2026-08-25.40：排产单行 → 来源订单行索引（经 交付计划行 orderLine；.24 dlLine → .33/.34 orderLine 链路）。
+   无 dlLine（存量排产单）/ 独立单（deliveryIdx=null）/ 交付计划行无 orderLine → 返回 null（回退产品级首行） */
+function ppOrderLineOf(p,it){
+  if(p.deliveryIdx==null||it.dlLine==null)return null;
+  const dl=deliveries[p.deliveryIdx];
+  if(!dl)return null;
+  const drow=deliveryItems(dl)[it.dlLine];
+  return (drow&&drow.orderLine!=null)?drow.orderLine:null;
+}
 /* 报工入库回写订单（2026-08-25.16 二期口径）：排产单「入库」工序报工增量 → 订单对应明细行 deliveredQty。
    匹配：排产单.orderId + 产品行 productId → 订单行；delta 可为负（编辑/删除报工、删除/取消排产单回退）；
    deliveredQty 下限 0、允许超过订单数量 orderQty（用户拍板 2026-08-25.16，进度% 可 >100%）；
    销售订单 → syncOrderAutoStatus（整单未交付=0 自动「已完成」）；库存订单 → syncStockFromInvOrders（产品库存=Σ库存订单已交付自动跟随）；
-   独立单（deliveryIdx=null）保留 orderId 照常回写。 */
-function writebackInbound(orderId,productId,delta){
+   独立单（deliveryIdx=null）保留 orderId 照常回写。
+   2026-08-25.40：加可选 orderLine 参数——同产品多行订单精确回写对应明细行；无/不匹配回退 productId 首行（存量兼容） */
+function writebackInbound(orderId,productId,delta,orderLine){
   if(!orderId||!productId||!delta)return;
   const o=orders.find(x=>x.id===orderId);
   if(!o)return;
-  const it=orderItems(o).find(x=>String(x.productId)===String(productId));
+  const oi=orderItems(o);
+  let it=null;
+  if(orderLine!=null&&oi[orderLine]&&String(oi[orderLine].productId)===String(productId))it=oi[orderLine];
+  if(!it)it=oi.find(x=>String(x.productId)===String(productId));
   if(!it)return;
   /* 2026-08-25.20：库存订单已交付允许负数（欠货向 0 恢复）；销售订单保持非负 */
   it.deliveredQty=orderTypeOf(o)==='库存订单'?num(it.deliveredQty)+delta:Math.max(0,num(it.deliveredQty)+delta);
@@ -4605,7 +4623,8 @@ function applyReport(pi,entries,items,worker){
   if(!p)return;
   const logParts=[];
   const repItems=[];
-  const inboundDelta={};                       // 2026-08-25.16：入库工序增量 → 回写订单已交付
+  /* 2026-08-25.16：入库工序增量 → 回写订单已交付；.40 行级化——同产品多行各自记录 dlLine/orderLine，不再按 productId 合并 */
+  const inboundDelta=[];
   entries.forEach(e=>{
     if(e.qty<=0)return;                        // 填 0 的工序无增量、不进日志/明细
     const it=items[e.li];
@@ -4615,17 +4634,21 @@ function applyReport(pi,entries,items,worker){
     if(typeof v==='object')v.done=num(v.done)+e.qty;else st[e.step]=num(v)+e.qty;
     if(e.step==='inbound'||e.step==='finInbound'){
       it.doneQty=num(it.doneQty||0)+e.qty;
-      inboundDelta[it.productId]=(inboundDelta[it.productId]||0)+e.qty;
+      const dlLine=it.dlLine!=null?it.dlLine:null;
+      let rec=dlLine!=null?inboundDelta.find(x=>x.productId===it.productId&&x.dlLine===dlLine):inboundDelta.find(x=>x.productId===it.productId&&x.dlLine==null);
+      if(!rec){rec={productId:it.productId,dlLine:dlLine,qty:0,orderLine:null};inboundDelta.push(rec);}
+      rec.qty+=e.qty;
+      if(rec.orderLine==null)rec.orderLine=ppOrderLineOf(p,it);
     }
     const stepLabel=(stepsDefOf(p,it).find(x=>x.key===e.step)||{}).label||e.step;
     logParts.push((it.productName||it.productId)+'·'+stepLabel+'+'+e.qty);
-    repItems.push({productId:it.productId,productName:it.productName,step:e.step,label:stepLabel,qty:e.qty});
+    repItems.push({productId:it.productId,productName:it.productName,step:e.step,label:stepLabel,qty:e.qty,dlLine:it.dlLine!=null?it.dlLine:null});
   });
   if(p.status==='待排产')p.status='生产中';
   const allDone=items.every(x=>ppPlanOf(x)>0&&ppDoneOf(x)>=ppPlanOf(x));
   save('productionPlans',productionPlans);
-  /* 2026-08-25.16：报工入库 → 回写订单已交付（销售/库存订单都回写；库存订单联动产品库存） */
-  for(const pid in inboundDelta){ if(inboundDelta[pid])writebackInbound(p.orderId,pid,inboundDelta[pid]); }
+  /* 2026-08-25.16：报工入库 → 回写订单已交付（销售/库存订单都回写；库存订单联动产品库存）；.40 行级回写 */
+  inboundDelta.forEach(r=>{ if(r.qty)writebackInbound(p.orderId,r.productId,r.qty,r.orderLine); });
   /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序；报工人为弹窗必填输入（.9） */
   if(repItems.length>0){
     const now=new Date();
@@ -6560,6 +6583,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.39</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.40</div>
 </body>
 </html>
