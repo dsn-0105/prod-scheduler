@@ -834,7 +834,7 @@ function filterRows(m,rows){
       const f=s.filters[key];if(!f)continue;
       const hasVals=f.vals&&f.vals.length>0;
       const hasVal=f.val!==''&&f.val!=null;
-      const isEmptyMode=f.mode==='is_empty'||f.mode==='not_empty';   /* 2026-08-25.42：为空/不为空模式 val 恒空，须绕过 hasVal 判定 */
+      const isEmptyMode=f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f);   /* 2026-08-25.42/.43：为空/不为空/日期快捷模式 val 恒空，须绕过 hasVal 判定 */
       if(!hasVals&&!hasVal&&!isEmptyMode)continue;
       const col=schema.find(c=>c.key===key);if(!col)continue;
       const v=colVal(col,r);
@@ -856,6 +856,15 @@ function filterRows(m,rows){
           if(f.mode==='lte'&&!(dv<=f.val))return false;
           if(f.mode==='eq'&&dv!==f.val)return false;
           if(f.mode==='neq'&&dv===f.val)return false;
+          /* 2026-08-25.43：金蝶日期快捷模式（order_frame）——今天/本周/本月/上月/过去一月/过去三月/从…到… */
+          const t=todayStr();
+          if(f.mode==='today'&&dv!==t)return false;
+          if(f.mode==='this_week'&&getWeekStart(dv)!==getWeekStart(t))return false;
+          if(f.mode==='this_month'&&dv.slice(0,7)!==t.slice(0,7))return false;
+          if(f.mode==='last_month'&&dv.slice(0,7)!==addMonthsStr(t,-1).slice(0,7))return false;
+          if(f.mode==='last_1m'&&dv<addMonthsStr(t,-1))return false;
+          if(f.mode==='last_3m'&&dv<addMonthsStr(t,-3))return false;
+          if(f.mode==='range'&&(dv<f.from||dv>f.to))return false;
         }
       }else{
         const sv=String(v);
@@ -929,11 +938,32 @@ function closeFiltPop(){if(filtPop){filtPop.remove();filtPop=null;}}
 /* 2026-08-25.42：金蝶式 8 模式筛选（对齐金蝶表单筛选框）——目前仅订单管理·销售订单表单（order_frame）启用，其余模块保持原模式 */
 const ENHANCED_FILT_MODES={order_frame:true};
 const ENH_FILT_MODES_LIST=[['contains','包含'],['not_contains','不包含'],['eq','等于'],['neq','不等于'],['startswith','以…开始'],['endswith','以…结束'],['is_empty','为空'],['not_empty','不为空']];
+/* 2026-08-25.43：日期列金蝶快捷模式（今天/本周/本月/上月/过去一月/过去三月/从…到…/等于） */
+const ENH_DATE_MODES_LIST=[['today','今天'],['this_week','本周'],['this_month','本月'],['last_month','上月'],['last_1m','过去一个月'],['last_3m','过去三个月'],['range','从…到…'],['eq','等于']];
+/* 日期加减月（返回 YYYY-MM-DD；目标月天数不足钳到月末） */
+function addMonthsStr(dateStr,n){
+  const d=new Date(dateStr);
+  if(isNaN(d.getTime()))return dateStr;
+  const y=d.getFullYear(),m=d.getMonth(),day=d.getDate();
+  const last=new Date(y,m+n+1,0).getDate();
+  const r=new Date(y,m+n,Math.min(day,last));
+  return r.getFullYear()+'-'+String(r.getMonth()+1).padStart(2,'0')+'-'+String(r.getDate()).padStart(2,'0');
+}
+/* 日期快捷模式（val 恒空/range 用 from/to，须绕过 hasVal 判定） */
+function dateQuickMode(f){return f&&(f.mode==='today'||f.mode==='this_week'||f.mode==='this_month'||f.mode==='last_month'||f.mode==='last_1m'||f.mode==='last_3m'||f.mode==='range');}
 /* 为空/不为空模式：隐藏关键字输入框 */
 function fpModeChange(){
   const m=document.getElementById('fp_mode'),v=document.getElementById('fp_val');
   if(!m||!v)return;
   v.style.display=(m.value==='is_empty'||m.value==='not_empty')?'none':'';
+}
+/* 2026-08-25.43：日期筛选模式显隐——快捷模式（今天/本周/…）无输入；从…到… 双日期；等于 单日期 */
+function fpDateModeChange(){
+  const s=document.getElementById('fp_mode'),v=document.getElementById('fp_val'),dr=document.getElementById('fp_drange');
+  if(!s)return;
+  if(s.value==='range'){if(dr)dr.style.display='inline-flex';if(v)v.style.display='none';}
+  else if(s.value==='eq'){if(dr)dr.style.display='none';if(v)v.style.display='';}
+  else{if(dr)dr.style.display='none';if(v)v.style.display='none';}
 }
 function openFilter(el,m,key){
   closeFiltPop();
@@ -953,8 +983,15 @@ function openFilter(el,m,key){
     inner+='<select id="fp_mode">'+[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
       '<input type="number" id="fp_val" value="'+(f.val!=null?f.val:'')+'" placeholder="输入数值">';
   }else if(col.type==='date'){
-    inner+='<select id="fp_mode">'+[['gte','晚于等于'],['lte','早于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
-      '<input type="date" id="fp_val" value="'+(f.val!=null?f.val:'')+'">';
+    /* 2026-08-25.43：order_frame 日期列对齐金蝶快捷模式（今天/本周/本月/上月/过去一月/过去三月/从…到…/等于）；其余模块保持原 4 模式 */
+    if(ENHANCED_FILT_MODES[m]){
+      inner+='<select id="fp_mode" onchange="fpDateModeChange()">'+ENH_DATE_MODES_LIST.map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+        '<span id="fp_drange" style="display:none;align-items:center;gap:4px"><input type="date" id="fp_from" value="'+(f.from||'')+'" style="width:auto"><span style="color:var(--muted)">~</span><input type="date" id="fp_to" value="'+(f.to||'')+'" style="width:auto" onkeydown="if(event.key===\'Enter\'){event.preventDefault();applyFilt(\''+m+'\',\''+key+'\',false);}"></span>'+
+        '<input type="date" id="fp_val" value="'+(f.val!=null?f.val:'')+'" style="display:none">';
+    }else{
+      inner+='<select id="fp_mode">'+[['gte','晚于等于'],['lte','早于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+        '<input type="date" id="fp_val" value="'+(f.val!=null?f.val:'')+'">';
+    }
   }else{
     /* 2026-08-25.42：order_frame 文本列用金蝶式 8 模式（含回车确认、为空/不为空隐藏输入框）；其余模块保持原 3 模式 */
     const modes=ENHANCED_FILT_MODES[m]?ENH_FILT_MODES_LIST:[['contains','包含'],['eq','等于'],['neq','不等于']];
@@ -975,6 +1012,7 @@ function openFilter(el,m,key){
   pop.style.top=(r.bottom+6+window.scrollY)+'px';
   filtPop=pop;
   fpModeChange();   /* 2026-08-25.42：重新打开面板时按当前模式初始化输入框显隐 */
+  fpDateModeChange();   /* 2026-08-25.43：日期列按当前模式初始化输入区显隐 */
   const inp=pop.querySelector('#fp_val');
   if(inp&&inp.style.display!=='none')inp.focus();
 }
@@ -991,8 +1029,22 @@ function applyFilt(m,key,useChecks){
     filtPop.querySelectorAll('input[type=checkbox]:checked').forEach(c=>vals.push(c.value));
     f.vals=vals;f.mode='in';
   }else{
-    f.mode=document.getElementById('fp_mode').value;
-    f.val=document.getElementById('fp_val').value;
+    const fm=document.getElementById('fp_mode');
+    if(fm){
+      f.mode=fm.value;
+      /* 2026-08-25.43：日期「从…到…」模式收集 from/to（其余模式取 fp_val，含为空/不为空/快捷模式 display:none 时值为空） */
+      const dr=document.getElementById('fp_drange');
+      if(dr&&dr.style.display!=='none'){
+        f.from=document.getElementById('fp_from').value;
+        f.to=document.getElementById('fp_to').value;
+        if(!f.from||!f.to){alert('请选择「从…到…」的起止日期');return;}
+      }else{
+        const fv=document.getElementById('fp_val');
+        f.val=fv?fv.value:'';
+      }
+    }else{
+      f.val=document.getElementById('fp_val').value;
+    }
   }
   tState(m).filters[key]=f;
   closeFiltPop();renderContent();
@@ -1002,13 +1054,13 @@ function applyFilt(m,key,useChecks){
 function filterBar(m){
   const s=tState(m);
   const schema=TBL_SCHEMAS[m]||[];
-  const MODE_NAME={contains:'包含',not_contains:'不包含',eq:'=',neq:'≠',startswith:'以…开始',endswith:'以…结束',is_empty:'为空',not_empty:'不为空',gte:'≥',lte:'≤',in:''};
-  const keys=Object.keys(s.filters).filter(k=>{const f=s.filters[k];return f&&(f.vals&&f.vals.length>0||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty');});
+  const MODE_NAME={contains:'包含',not_contains:'不包含',eq:'=',neq:'≠',startswith:'以…开始',endswith:'以…结束',is_empty:'为空',not_empty:'不为空',gte:'≥',lte:'≤',today:'今天',this_week:'本周',this_month:'本月',last_month:'上月',last_1m:'过去一个月',last_3m:'过去三个月',range:'从…到…',in:''};
+  const keys=Object.keys(s.filters).filter(k=>{const f=s.filters[k];return f&&(f.vals&&f.vals.length>0||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f));});
   if(!keys.length)return '';
   const chips=keys.map(k=>{
     const col=schema.find(c=>c.key===k);if(!col)return '';
     const f=s.filters[k];
-    const txt=(f.vals&&f.vals.length)?col.label+'：'+f.vals.length+'项':col.label+' '+(MODE_NAME[f.mode]||'')+f.val;
+    const txt=(f.vals&&f.vals.length)?col.label+'：'+f.vals.length+'项':(f.mode==='range'?col.label+' '+f.from+'~'+f.to:col.label+' '+(MODE_NAME[f.mode]||'')+f.val);
     return '<span class="fchip">'+esc(txt)+' <b onclick="clearFilt(\''+m+'\',\''+k+'\')" title="移除该筛选">×</b></span>';
   }).join('');
   return '<div class="tbl-fbar">'+chips+'<button class="btn btn-sm" onclick="clearAllFilt(\''+m+'\')">清除全部</button></div>';
@@ -2883,7 +2935,7 @@ function orderRowVisibleInDom(id){
 function maybeWarnHiddenOrder(formKey,id){
   if(orderRowVisibleInDom(id))return;   // 仍在列表（含跨区块移动）→ 无需提示
   const s=tState(formKey);
-  const hasFilt=Object.keys(s.filters).some(k=>{const f=s.filters[k];return f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty');});
+  const hasFilt=Object.keys(s.filters).some(k=>{const f=s.filters[k];return f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f));});
   const hasSort=!!s.sort;
   if(!hasFilt&&!hasSort)return;
   showSaveNotice('订单「'+esc(id)+'」已保存，但因当前'+(hasFilt&&hasSort?'筛选/排序':hasFilt?'筛选':'排序')+'条件未显示在列表中（数据未丢失，刷新后会重置视图）。',
@@ -6606,6 +6658,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.42</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.43</div>
 </body>
 </html>
