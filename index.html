@@ -2373,8 +2373,14 @@ function buildPlannedUndelMap(){
     productionPlans.forEach(pp=>{
       if(pp.deliveryIdx!==di||pp.status==='已取消')return;
       ppItems(pp).forEach(y=>{
-        const dlLine=y.dlLine!=null?y.dlLine:null;
-        const dlRow=(dlLine!=null&&deliveryItems(d)[dlLine])?deliveryItems(d)[dlLine]:null;
+        /* 2026-08-25.54：存量排产单（无 dlLine）按 productId 反查该交付计划行（唯一匹配时取 orderLine 归行级，多行歧义保持产品级）——
+           修复：交付计划行带 orderLine（.33）而存量排产单 done 归产品级，两侧 key 不匹配导致「已计划未交付」不减少 */
+        let dlRow=null;
+        if(y.dlLine!=null&&deliveryItems(d)[y.dlLine])dlRow=deliveryItems(d)[y.dlLine];
+        if(!dlRow){
+          const _rows=deliveryItems(d).filter(function(x){return String(x.productId)===String(y.productId);});
+          if(_rows.length===1)dlRow=_rows[0];
+        }
         const k=dlRow&&dlRow.orderLine!=null&&dlRow.orderLine!==''?(d.orderId+'|L'+dlRow.orderLine):(d.orderId+'|'+(y.productId||''));
         if(!m[k])m[k]={plan:0,done:0};
         m[k].done+=ppDoneOf(y);
@@ -6765,6 +6771,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.53</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.54</div>
 </body>
 </html>
