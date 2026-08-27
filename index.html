@@ -966,13 +966,14 @@ function fpModeChange(){
   if(!m||!v)return;
   v.style.display=(m.value==='is_empty'||m.value==='not_empty')?'none':'';
 }
-/* 2026-08-25.43：日期筛选模式显隐——快捷模式（今天/本周/…）无输入；从…到… 双日期；等于 单日期 */
+/* 2026-08-25.43：日期筛选模式显隐——快捷模式（今天/本周/…）无输入；从…到… 双日期；等于 单日期。
+   2026-08-25.48：加 fp_drange 守卫——仅日期增强面板执行，文本/数字面板不被误隐藏（此前 contains 落入 else 分支隐藏文本输入框） */
 function fpDateModeChange(){
   const s=document.getElementById('fp_mode'),v=document.getElementById('fp_val'),dr=document.getElementById('fp_drange');
-  if(!s)return;
-  if(s.value==='range'){if(dr)dr.style.display='inline-flex';if(v)v.style.display='none';}
-  else if(s.value==='eq'){if(dr)dr.style.display='none';if(v)v.style.display='';}
-  else{if(dr)dr.style.display='none';if(v)v.style.display='none';}
+  if(!s||!dr)return;
+  if(s.value==='range'){dr.style.display='inline-flex';if(v)v.style.display='none';}
+  else if(s.value==='eq'){dr.style.display='none';if(v)v.style.display='';}
+  else{dr.style.display='none';if(v)v.style.display='none';}
 }
 function openFilter(el,m,key){
   closeFiltPop();
@@ -6668,6 +6669,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.47</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.48</div>
 </body>
 </html>
