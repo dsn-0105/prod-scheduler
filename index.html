@@ -5179,7 +5179,17 @@ function renderTransfers(){
       const isCall=t.type==='call';
       const typeCls=isCall?'tag-green':'tag-amber';
       const cross=t.invProductId&&t.productId&&t.invProductId!==t.productId;
-      const prodHtml=esc(t.productId||'')+(cross?' <span style="color:var(--red)">←替代 '+esc(t.invProductId||'')+'</span>':'');
+      /* 2026-08-25.50：替代产品编码后补 名称/型号/规格（库存订单行优先，产品主数据兜底，格式同调用库存弹窗 [型号 / 规格]） */
+      let prodHtml=esc(t.productId||'');
+      if(cross){
+        const _io=orders.find(function(o){return o.id===t.invOrderId;});
+        const _iit=_io&&(_io.items||[])[t.invLineIdx];
+        const _ii=(_iit&&String(_iit.productId)===String(t.invProductId))?_iit:null;   /* 订单行编码须与替代编码一致，否则走主数据兜底 */
+        const _ip=products.find(function(p){return p.id===t.invProductId;});
+        const _nm=(_ii&&_ii.productName)||(_ip?_ip.name:_ip?_ip.id:'')||'';
+        const _pm=[(_ii&&_ii.model)||(_ip?_ip.model:''),(_ii&&_ii.spec)||(_ip?_ip.spec:'')].filter(Boolean).join(' / ');
+        prodHtml+=' <span style="color:var(--red)">←替代 '+esc(t.invProductId||'')+(_nm?' '+esc(_nm):'')+(_pm?' ['+esc(_pm)+']':'')+'</span>';
+      }
       const btn=t.reversed?'<span style="color:var(--muted)">已冲销</span>'
         :'<button class="btn btn-sm" onclick="reverseTransfer(\''+esc(t.id)+'\')">冲销</button>';
       html+='<tr>'+TBL_SCHEMAS.transfers.map(function(c){
@@ -6714,6 +6724,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.49</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.50</div>
 </body>
 </html>
