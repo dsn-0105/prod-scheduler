@@ -2706,6 +2706,8 @@ function productPickerModal(opts){
     +'<div class="modal-foot"><button class="btn" onclick="ppCancel()">取消</button><button class="btn btn-primary" onclick="ppConfirm()">确定</button></div>'
     +'</div>';
   document.body.appendChild(ov);
+  /* 2026-08-25.53：选择器浮层内滚轮不穿透主界面（弹窗内列表滚动正常，仅阻断冒泡） */
+  ov.addEventListener('wheel',function(e){e.stopPropagation();},{passive:false});
   requestAnimationFrame(function(){ov.classList.add('show');});
   ppRenderRows();
 }
@@ -3086,7 +3088,8 @@ function openCallStock(){
     if(orderTypeOf(inv)!=='库存订单')return;
     (inv.items||[]).forEach(function(it,ii){
       const av=num(it.deliveredQty);
-      if(av>0){const prod=prodMap[it.productId]||{};cands.push({uid:inv.id+'#'+ii,invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});}
+      /* 2026-08-25.53：负数（欠货，已交付为负）库存订单行也显示并可选——调用后向 0 恢复欠货；av=0 无意义排除 */
+      if(av!==0){const prod=prodMap[it.productId]||{};cands.push({uid:inv.id+'#'+ii,invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});}
     });
   });
   __csCands=cands;__csLines=lines;__csMode='call';
@@ -5344,6 +5347,12 @@ async function savePwd(){
    Modal
 ================================================================ */
 function showModal(title,body,foot){
+  /* 2026-08-25.53：弹窗内滚轮不穿透主界面（scroll chaining）——阻断冒泡到 body，弹窗内滚动区正常滚动 */
+  const bg=document.getElementById('modalBg');
+  if(bg&&!bg.__wheelBound){
+    bg.addEventListener('wheel',function(e){e.stopPropagation();},{passive:false});
+    bg.__wheelBound=true;
+  }
   const m=document.getElementById('modal');
   m.innerHTML='<div class="modal-head"><h3>'+title+'</h3><div class="close-x" onclick="closeModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M18 6L6 18M6 6l12 12"/></svg></div></div><div class="modal-body">'+body+'</div><div class="modal-foot">'+foot+'</div>';
   document.getElementById('modalBg').classList.add('show');
@@ -6756,6 +6765,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.52</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.53</div>
 </body>
 </html>
