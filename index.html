@@ -2681,10 +2681,10 @@ function productPickerModal(opts){
   /* 2026-08-25.51：数据源/列定义参数化——调用/退回库存弹窗复用本选择器（rows=cands、schema=库存候选列） */
   window.__ppRows=opts.rows||products;
   window.__ppSchema=opts.schema||PP_SCHEMA;
-  /* 收集各列唯一值，供筛选弹窗用 */
+  /* 收集各列唯一值，供筛选弹窗用（2026-08-25.51 补丁：兼容无 get 的列，取值回退 p[key]） */
   window.__ppUniques={};
   window.__ppSchema.forEach(function(col){
-    window.__ppUniques[col.key]=[...new Set(window.__ppRows.map(function(p){return String(col.get(p));}))].filter(function(v){return v!=='';}).sort();
+    window.__ppUniques[col.key]=[...new Set(window.__ppRows.map(function(p){return String(col.get?col.get(p):(p[col.key]!=null?p[col.key]:''));}))].filter(function(v){return v!=='';}).sort();
   });
   const mode=opts.mode||'multi';
   /* 表头：单/复选 + 各列名（带筛选漏斗） */
@@ -2781,7 +2781,7 @@ function ppRenderRows(){
     for(const k in fs){
       const f=fs[k];if(!f)continue;
       const col=schema.find(function(c){return c.key===k;});if(!col)continue;
-      const v=String(col.get(p));
+      const v=String(col.get?col.get(p):(p[col.key]!=null?p[col.key]:''));
       if(f.mode==='in' && f.vals && f.vals.length){
         if(f.vals.indexOf(v)<0)return false;
       }else if(f.val!=='' && f.val!=null){
@@ -2813,7 +2813,7 @@ function ppRenderRows(){
       :'<input type="checkbox" class="pp_chk" data-id="'+esc(uid)+'" '+(checked?'checked':'')+'>';
     html+='<tr data-id="'+esc(uid)+'"><td>'+inputCtrl+'</td>';
     schema.forEach(function(col){
-      const v=col.get(p);
+      const v=col.get?col.get(p):(p[col.key]!=null?p[col.key]:'');
       html+='<td>'+esc(v)+'</td>';
     });
     html+='</tr>';
@@ -6756,6 +6756,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.51</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.52</div>
 </body>
 </html>
