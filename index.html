@@ -3744,7 +3744,7 @@ function renderDelivery(){
       {key:'createdAt',label:'单据时间',type:'date',get:r=>r.d.createdAt},
       {key:'orderId',label:'订单编号',type:'text',get:r=>r.d.orderId},
       {key:'customer',label:'客户',type:'text',get:r=>r.d.customer},
-      {key:'ppStatus',label:'状态',type:'text',get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},
+      {key:'ppStatus',label:'状态',type:'text',select:true,get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},   /* 2026-08-25.55：状态列恢复复选框多选（select 类列） */
       {key:'finalDate',label:'最终交付期',type:'date',get:r=>r.d.finalDate},
       {key:'firstDate',label:'首次交付日',type:'date',get:r=>r.d.firstDate},
       {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
@@ -6771,6 +6771,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.54</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.55</div>
 </body>
 </html>
