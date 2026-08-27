@@ -945,7 +945,7 @@ document.addEventListener('mouseup',function(e){
 
 /* 2026-08-25.42~.46：金蝶式增强筛选（对齐金蝶表单筛选框）——2026-08-25.46 起全量启用（product/订单/备货/包装/交付/排产/报表/日志）；
    口径：文本列 8 模式文本交互 + 日期列 8 快捷模式 + select 类列复选多选 + 数字列原 4 模式；ppOpenFilter（排产计划独立体系）不受影响 */
-const ENHANCED_FILT_MODES={product:true,order_frame:true,order_inv:true,dp_stockup:true,dp_pkg:true,delivery:true,prodPlan:true,report:true,logs:true};
+const ENHANCED_FILT_MODES={product:true,order_frame:true,order_inv:true,dp_stockup:true,dp_pkg:true,delivery:true,prodPlan:true,report:true,logs:true,transfers:true};
 const ENH_FILT_MODES_LIST=[['contains','包含'],['not_contains','不包含'],['eq','等于'],['neq','不等于'],['startswith','以…开始'],['endswith','以…结束'],['is_empty','为空'],['not_empty','不为空']];
 /* 2026-08-25.43：日期列金蝶快捷模式（今天/本周/本月/上月/过去一月/过去三月/从…到…/等于） */
 const ENH_DATE_MODES_LIST=[['today','今天'],['this_week','本周'],['this_month','本月'],['last_month','上月'],['last_1m','过去一个月'],['last_3m','过去三个月'],['range','从…到…'],['eq','等于']];
@@ -3201,7 +3201,11 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
       salesOrderId:salesOrder.id, salesLineIdx:su.lineIdx,
       invOrderId:iu.invOrderId, invLineIdx:iu.invLineIdx,
       productId:salesIt?salesIt.productId:null, invProductId:invIt?invIt.productId:null,
-      qty:su.qty, ts:ts, user:user, reversed:false, reverseOf:null
+      qty:su.qty, ts:ts, user:user, reversed:false, reverseOf:null,
+      /* 2026-08-25.49：台账快照 客户/合同/商品名称/规格/型号（历史记录不随订单后续编辑变化；存量单渲染反查兜底） */
+      customer:salesOrder.customer||'', contractNo:salesOrder.contractNo||'',
+      productName:salesIt?(salesIt.productName||''):'',
+      spec:salesIt?(salesIt.spec||''):'', model:salesIt?(salesIt.model||''):''
     });
   });
   DB.set('transfers',transfers,true).then(function(ok){
@@ -3245,7 +3249,10 @@ function reverseTransfer(id){
     invOrderId:t.invOrderId, invLineIdx:t.invLineIdx,
     productId:t.productId, invProductId:t.invProductId,
     qty:t.qty, ts:new Date().toLocaleString('zh-CN',{hour12:false}),
-    user:(currentUser&&currentUser.name)||'未知', reversed:false, reverseOf:t.id
+    user:(currentUser&&currentUser.name)||'未知', reversed:false, reverseOf:t.id,
+    /* 2026-08-25.49：冲销单复制原单快照（存量原单无快照 → 空，渲染反查兜底） */
+    customer:t.customer||'', contractNo:t.contractNo||'',
+    productName:t.productName||'', spec:t.spec||'', model:t.model||''
   });
   DB.set('transfers',transfers,true).then(function(ok){
     if(ok===false)alert('调拨台账保存失败：冲销已生效，但台账记录未保存，请刷新后核对调拨台账。');
@@ -4682,6 +4689,17 @@ function ppOrderLineOf(p,it){
   const drow=deliveryItems(dl)[it.dlLine];
   return (drow&&drow.orderLine!=null)?drow.orderLine:null;
 }
+/* 2026-08-25.49：订单管理「调拨查询」——跳转调拨台账并预设 salesOrderId=本订单筛选（调用+退回+冲销全包含），时间倒序 */
+function queryTransfersOfOrder(){
+  const s=selSet('order_frame');
+  if(s.size===0){alert('请先勾选 1 张销售订单');return;}
+  if(s.size>1){alert('「调拨查询」只能选择 1 张销售订单，当前已选 '+s.size+' 张。');return;}
+  const o=orders[Number([...s][0])];
+  if(!o){alert('未找到订单');return;}
+  tState('transfers').filters={salesOrderId:{mode:'eq',val:o.id}};
+  tState('transfers').sort={key:'ts',dir:-1};
+  switchTab('transfers');
+}
 /* 报工入库回写订单（2026-08-25.16 二期口径）：排产单「入库」工序报工增量 → 订单对应明细行 deliveredQty。
    匹配：排产单.orderId + 产品行 productId → 订单行；delta 可为负（编辑/删除报工、删除/取消排产单回退）；
    deliveredQty 下限 0、允许超过订单数量 orderQty（用户拍板 2026-08-25.16，进度% 可 >100%）；
@@ -5117,36 +5135,62 @@ function delTpl(i){
 }
 
 /* 调拨台账：只读流水，逐条可冲销 */
-function renderTransfers(){  let html='<div class="page">';
+/* 2026-08-25.49：调拨单 客户/合同/商品名称/规格/型号 —— 已快照直接取；存量无快照反查订单兜底 */
+function trSnapshot(t){
+  if(!t)return {customer:'',contractNo:'',productName:'',spec:'',model:''};
+  if(t.customer!=null&&t.productName!=null)return t;
+  const o=orders.find(x=>x.id===t.salesOrderId);
+  const it=o&&(o.items||[])[t.salesLineIdx];
+  return {
+    customer:o?(o.customer||''):'', contractNo:o?(o.contractNo||''):'',
+    productName:it?(it.productName||it.productId||''):'',
+    spec:it?(it.spec||''):'', model:it?(it.model||''):''
+  };
+}
+/* 2026-08-25.49：调拨台账改可筛选结构（TBL_SCHEMAS + thCol 表头 + filterBar + applyTable）；
+   保留行内「冲销」按钮；金蝶式筛选随 ENHANCED_FILT_MODES.transfers 生效 */
+function renderTransfers(){
+  TBL_SCHEMAS.transfers=[
+    {key:'ts',label:'时间',type:'text'},
+    {key:'type',label:'类型',type:'text',select:true,get:r=>r.type==='call'?'调用':'退回'},
+    {key:'salesOrderId',label:'销售订单',type:'text'},
+    {key:'invOrderId',label:'库存订单',type:'text'},
+    {key:'customer',label:'客户',type:'text',get:r=>trSnapshot(r).customer},
+    {key:'contractNo',label:'合同',type:'text',get:r=>trSnapshot(r).contractNo},
+    {key:'productName',label:'商品名称',type:'text',get:r=>trSnapshot(r).productName},
+    {key:'spec',label:'规格',type:'text',get:r=>trSnapshot(r).spec},
+    {key:'model',label:'型号',type:'text',get:r=>trSnapshot(r).model},
+    {key:'productId',label:'产品/料号',type:'text'},
+    {key:'qty',label:'数量',type:'number'},
+    {key:'user',label:'操作人',type:'text'}
+  ];
+  TBL_ROWS.transfers=transfers||[];
+  const shown=applyTable('transfers',TBL_ROWS.transfers);
+  let html='<div class="page">';
   html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录每次「调用库存 / 退回库存」及冲销。记录不可修改，仅可逐条冲销。</span></div>';
+  html+=filterBar('transfers');
   html+='<div class="table-wrap"><table><thead><tr>'
-    +'<th style="min-width:140px">时间</th>'
-    +'<th style="width:70px">类型</th>'
-    +'<th style="width:140px">销售订单</th>'
-    +'<th style="width:140px">库存订单</th>'
-    +'<th>产品/料号</th>'
-    +'<th style="width:70px">数量</th>'
-    +'<th style="width:90px">操作人</th>'
+    +TBL_SCHEMAS.transfers.map(c=>thCol('transfers',c)).join('')
     +'<th style="width:80px">操作</th>'
     +'</tr></thead><tbody>';
-  if(!transfers||transfers.length===0){html+='<tr><td colspan="8" class="empty">暂无调拨记录</td></tr>';}
+  if(!shown.length){html+='<tr><td colspan="13" class="empty">暂无调拨记录</td></tr>';}
   else{
-    transfers.forEach(function(t){
+    shown.forEach(function(t){
       const isCall=t.type==='call';
       const typeCls=isCall?'tag-green':'tag-amber';
-      const typeLabel=isCall?'调用':'退回';
       const cross=t.invProductId&&t.productId&&t.invProductId!==t.productId;
       const prodHtml=esc(t.productId||'')+(cross?' <span style="color:var(--red)">←替代 '+esc(t.invProductId||'')+'</span>':'');
       const btn=t.reversed?'<span style="color:var(--muted)">已冲销</span>'
         :'<button class="btn btn-sm" onclick="reverseTransfer(\''+esc(t.id)+'\')">冲销</button>';
-      html+='<tr><td style="font-size:12px;color:var(--muted);white-space:nowrap">'+esc(t.ts)+'</td>'
-        +'<td><span class="tag '+typeCls+'">'+typeLabel+'</span></td>'
-        +'<td>'+esc(t.salesOrderId||'')+'</td>'
-        +'<td>'+esc(t.invOrderId||'')+'</td>'
-        +'<td>'+prodHtml+'</td>'
-        +'<td>'+num(t.qty)+'</td>'
-        +'<td style="font-size:12px">'+esc(t.user||'')+'</td>'
-        +'<td>'+btn+'</td></tr>';
+      html+='<tr>'+TBL_SCHEMAS.transfers.map(function(c){
+        const v=colVal(c,t);
+        let txt;
+        if(c.key==='type')txt='<span class="tag '+typeCls+'">'+(v||'')+'</span>';
+        else if(c.key==='productId')txt=prodHtml;   /* 含替代料提示 */
+        else txt=esc(v);
+        const st=c.type==='number'?' style="font-variant-numeric:tabular-nums;text-align:right"':'';
+        return '<td data-key="'+c.key+'"'+st+'>'+txt+'</td>';
+      }).join('')+'<td>'+btn+'</td></tr>';
     });
   }
   html+='</tbody></table></div>';
@@ -6252,6 +6296,7 @@ function bulkBar(m){
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
+    if(m==='order_frame')btns.push('<button class="btn btn-sm" onclick="queryTransfersOfOrder()" title="跳转到调拨台账并筛选本订单关联的调拨单（仅限 1 张）">调拨查询</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
@@ -6669,6 +6714,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.48</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.49</div>
 </body>
 </html>
