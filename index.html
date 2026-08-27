@@ -988,7 +988,9 @@ function openFilter(el,m,key){
   const useChecks=ENHANCED_FILT_MODES[m]?!!col.select:(col.type!=='number'&&col.type!=='date'&&(col.select||uniques.length<=15));
   if(useChecks){
     const sel=f.vals||[];
-    inner+='<div class="fp-opts">'+uniques.map(v=>'<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>').join('')+'</div>'+
+    /* 2026-08-25.58：选择类列复选选项 = schema.options 全部选项优先（表体未出现的值也显示可勾选），uniques 兜底 */
+    const opts=(col.options&&col.options.length)?col.options:uniques;
+    inner+='<div class="fp-opts">'+opts.map(v=>'<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>').join('')+'</div>'+
       '<div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="filtCheckAll(this,true)">全选</button><button class="btn btn-sm" onclick="filtCheckAll(this,false)">全不选</button></div>';
   }else if(col.type==='number'){
     inner+='<select id="fp_mode">'+[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
@@ -2398,7 +2400,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
     {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
     {key:'customer',label:'客户',type:'text',get:r=>r.order.customer},
-    {key:'status',label:'审核状态',type:'text',select:true,get:r=>r.order.status},
+    {key:'status',label:'审核状态',type:'text',select:true,options:ORDER_STATUS,get:r=>r.order.status},   /* 2026-08-25.58：筛选显示全部审核状态 */
     {key:'contractNo',label:'合同号',type:'text',get:r=>r.order.contractNo},
     {key:'productId',label:'商品编码',type:'text',get:r=>r.item.productId},
     {key:'productName',label:'商品名称',type:'text',get:r=>r.item.productName||(r.item.productId&&prodMap[r.item.productId]?prodMap[r.item.productId].name:'')},
@@ -2679,7 +2681,7 @@ var PP_SCHEMA=[
   {key:'unit',label:'单位',type:'text',get:function(p){return p.unit||'';}},
   {key:'dailyCap',label:'日产能',type:'number',get:function(p){return p.dailyCap==null?'':p.dailyCap;}},
   {key:'stock',label:'库存/已交付数量',type:'number',get:function(p){return p.stock==null?'':p.stock;}},
-  {key:'status',label:'状态',type:'select',get:function(p){return p.status||'';}}
+  {key:'status',label:'状态',type:'select',options:['启用','停用'],get:function(p){return p.status||'';}}
 ];
 function productPickerModal(opts){
   window.__ppOpts=opts;
@@ -2735,7 +2737,9 @@ function ppOpenFilter(btn,key){
   const useChecks=col.type!=='number'&&(col.select||uniques.length<=15);
   if(useChecks){
     const sel=f.vals||[];
-    inner+='<div class="fp-opts">'+uniques.map(function(v){return '<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>';}).join('')+'</div>'+
+    /* 2026-08-25.58：选择器弹窗筛选同口径——options 全部选项优先，uniques 兜底 */
+    const opts=(col.options&&col.options.length)?col.options:uniques;
+    inner+='<div class="fp-opts">'+opts.map(function(v){return '<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>';}).join('')+'</div>'+
       '<div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="ppFiltCheckAll(this,true)">全选</button><button class="btn btn-sm" onclick="ppFiltCheckAll(this,false)">全不选</button></div>';
   }else if(col.type==='number'){
     inner+='<select id="fp_mode">'+[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].map(function(x){return '<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select>'+
@@ -3773,7 +3777,7 @@ function renderDelivery(){
       {key:'createdAt',label:'单据时间',type:'date',get:r=>r.d.createdAt},
       {key:'orderId',label:'订单编号',type:'text',get:r=>r.d.orderId},
       {key:'customer',label:'客户',type:'text',get:r=>r.d.customer},
-      {key:'ppStatus',label:'状态',type:'text',select:true,get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},   /* 2026-08-25.55：状态列恢复复选框多选（select 类列） */
+      {key:'ppStatus',label:'状态',type:'text',select:true,options:['未排产','部分排产','全部排产'],get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},   /* 2026-08-25.55/.58：状态列恢复复选框多选（select 类列）+ 筛选显示全部状态 */
       {key:'finalDate',label:'最终交付期',type:'date',get:r=>r.d.finalDate},
       {key:'firstDate',label:'首次交付日',type:'date',get:r=>r.d.firstDate},
       {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
@@ -4296,7 +4300,7 @@ function renderProdPlanDay(writable,all){
     {key:'finalDate',label:'交付期',type:'date',get:r=>r.p.finalDate},
     {key:'orderId',label:'订单',type:'text',get:r=>r.p.orderId},
     {key:'customer',label:'客户',type:'text',get:r=>r.p.customer},
-    {key:'status',label:'状态',type:'text',select:true,get:r=>r.p.status},
+    {key:'status',label:'状态',type:'text',select:true,options:['待排产','生产中','已完成','已取消'],get:r=>r.p.status},   /* 2026-08-25.58：筛选显示全部排产状态 */
     {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
     {key:'productName',label:'产品名称',type:'text',get:r=>r.it.productName},
     {key:'model',label:'型号',type:'text',get:r=>r.it.model},
@@ -5222,7 +5226,7 @@ function trSnapshot(t){
 function renderTransfers(){
   TBL_SCHEMAS.transfers=[
     {key:'ts',label:'时间',type:'text'},
-    {key:'type',label:'类型',type:'text',select:true,get:r=>r.type==='call'?'调用':'退回'},
+    {key:'type',label:'类型',type:'text',select:true,options:['调用','退回'],get:r=>r.type==='call'?'调用':'退回'},
     {key:'salesOrderId',label:'销售订单',type:'text'},
     {key:'invOrderId',label:'库存订单',type:'text'},
     {key:'customer',label:'客户',type:'text',get:r=>trSnapshot(r).customer},
@@ -6800,6 +6804,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.57</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.58</div>
 </body>
 </html>
