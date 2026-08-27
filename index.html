@@ -3094,8 +3094,9 @@ function openCallStock(){
     if(orderTypeOf(inv)!=='库存订单')return;
     (inv.items||[]).forEach(function(it,ii){
       const av=num(it.deliveredQty);
-      /* 2026-08-25.53：负数（欠货，已交付为负）库存订单行也显示并可选——调用后向 0 恢复欠货；av=0 无意义排除 */
-      if(av!==0){const prod=prodMap[it.productId]||{};cands.push({uid:inv.id+'#'+ii,invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});}
+      /* 2026-08-25.53/.56：只要存在库存订单行即显示可选（可用量 0/负/正均可选）——0 可用=手动调用后从 0 转正（.20 已放开超可用量校验）；负数=欠货调用后向 0 恢复 */
+      const prod=prodMap[it.productId]||{};
+      cands.push({uid:inv.id+'#'+ii,invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});
     });
   });
   __csCands=cands;__csLines=lines;__csMode='call';
@@ -6771,6 +6772,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.55</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.56</div>
 </body>
 </html>
