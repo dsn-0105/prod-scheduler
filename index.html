@@ -934,6 +934,14 @@ function toggleSort(m,key){
 /* 筛选面板（点击外部不关闭，通过「确定/清除/取消」按钮关闭） */
 var filtPop=null;
 function closeFiltPop(){if(filtPop){filtPop.remove();filtPop=null;}}
+/* 2026-08-25.47：筛选面板外部关闭——mousedown 与 mouseup 均在面板外才关闭（点击在面板内、松开在面板外则不关闭）；
+   capture 先于面板内 stopPropagation 处理；openFilter/ppOpenFilter 共用 filtPop 一并生效 */
+let __filtStartOutside=false;
+document.addEventListener('mousedown',function(e){__filtStartOutside=!!(filtPop&&!filtPop.contains(e.target));},true);
+document.addEventListener('mouseup',function(e){
+  if(filtPop&&__filtStartOutside&&!filtPop.contains(e.target))closeFiltPop();
+  __filtStartOutside=false;
+},true);
 
 /* 2026-08-25.42~.46：金蝶式增强筛选（对齐金蝶表单筛选框）——2026-08-25.46 起全量启用（product/订单/备货/包装/交付/排产/报表/日志）；
    口径：文本列 8 模式文本交互 + 日期列 8 快捷模式 + select 类列复选多选 + 数字列原 4 模式；ppOpenFilter（排产计划独立体系）不受影响 */
@@ -6660,6 +6668,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.46</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.47</div>
 </body>
 </html>
