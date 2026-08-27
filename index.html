@@ -935,8 +935,9 @@ function toggleSort(m,key){
 var filtPop=null;
 function closeFiltPop(){if(filtPop){filtPop.remove();filtPop=null;}}
 
-/* 2026-08-25.42：金蝶式 8 模式筛选（对齐金蝶表单筛选框）——目前仅订单管理·销售订单表单（order_frame）启用，其余模块保持原模式 */
-const ENHANCED_FILT_MODES={order_frame:true};
+/* 2026-08-25.42~.46：金蝶式增强筛选（对齐金蝶表单筛选框）——2026-08-25.46 起全量启用（product/订单/备货/包装/交付/排产/报表/日志）；
+   口径：文本列 8 模式文本交互 + 日期列 8 快捷模式 + select 类列复选多选 + 数字列原 4 模式；ppOpenFilter（排产计划独立体系）不受影响 */
+const ENHANCED_FILT_MODES={product:true,order_frame:true,order_inv:true,dp_stockup:true,dp_pkg:true,delivery:true,prodPlan:true,report:true,logs:true};
 const ENH_FILT_MODES_LIST=[['contains','包含'],['not_contains','不包含'],['eq','等于'],['neq','不等于'],['startswith','以…开始'],['endswith','以…结束'],['is_empty','为空'],['not_empty','不为空']];
 /* 2026-08-25.43：日期列金蝶快捷模式（今天/本周/本月/上月/过去一月/过去三月/从…到…/等于） */
 const ENH_DATE_MODES_LIST=[['today','今天'],['this_week','本周'],['this_month','本月'],['last_month','上月'],['last_1m','过去一个月'],['last_3m','过去三个月'],['range','从…到…'],['eq','等于']];
@@ -6659,6 +6660,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.45</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.46</div>
 </body>
 </html>
