@@ -3918,7 +3918,7 @@ function ppExpandRow(p){
     '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">编辑</button></div>'+
     inner+'</div></td></tr>';
 }
-/* 方案 B：报工明细编辑弹窗（.13 起可改报工人与各工序数量；.15 起每行恢复删除按钮、数量最小 1 不可改 0） */
+/* 方案 B：报工明细编辑弹窗（.13 起可改报工人与各工序数量；.15 起每行恢复删除按钮；.41 起单道工序数量可改 0（min=0），仅不允许全部工序为 0） */
 function ppReportsModal(planId){
   const p=productionPlans.find(x=>x.id===planId);
   const reps=ppReportsOf(planId);
@@ -3930,7 +3930,7 @@ function ppReportsModal(planId){
     inner='<div style="max-height:420px;overflow:auto">'+reps.map((r,i)=>{
       const qtyInputs=(r.items||[]).map((x,j)=>
         '<div style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;margin:2px 8px 2px 0"><span style="font-size:12px;color:var(--muted)">'+esc(x.label)+'</span>'+
-        '<input type="number" id="rp_q_'+i+'_'+j+'" value="'+num(x.qty)+'" min="1" step="1" style="width:70px"></div>').join('');
+        '<input type="number" id="rp_q_'+i+'_'+j+'" value="'+num(x.qty)+'" min="0" step="1" style="width:70px"></div>').join('');
       return '<div class="rep-edit-row">'+
         '<span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
         '<span class="pp-rep-worker" title="报工人"><input type="text" id="rp_w_'+i+'" value="'+esc(r.worker||'')+'" style="width:110px" placeholder="报工人"></span>'+
@@ -3962,10 +3962,14 @@ function ppSaveReportEdits(planId){
   });
   for(let i=0;i<updates.length;i++){
     if(!updates[i].worker){alert('第 '+(i+1)+' 条报工缺少报工人');return;}
+    /* 2026-08-25.41：单道工序数量可改 0（≥0 整数）；一条报工至少保留一道工序 >0（全 0=删除该条，走删除按钮） */
+    let anyQ=0;
     for(const step in updates[i].qtyMap){
       const q=updates[i].qtyMap[step];
-      if(!isFinite(q)||q<1||Math.round(q)!==q){alert('第 '+(i+1)+' 条报工的工序数量无效（须为正整数，且不能改为 0）');return;}
+      if(!isFinite(q)||q<0||Math.round(q)!==q){alert('第 '+(i+1)+' 条报工的工序数量无效（须为不小于 0 的整数）');return;}
+      if(q>0)anyQ=1;
     }
+    if(!anyQ){alert('第 '+(i+1)+' 条报工不能所有工序都为 0（如需撤销该条报工，请点击该行的「删除」按钮）');return;}
   }
   /* 按产品行×工序聚合新累计，并检查是否超过本次排产数。
      2026-08-25.40：行级化——key=productId(+#dlLine)，同产品多行各自聚合（依赖 .40 起报工记录带 dlLine；存量记录回退产品级） */
@@ -6583,6 +6587,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.40</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.41</div>
 </body>
 </html>
