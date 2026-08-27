@@ -2678,16 +2678,18 @@ var PP_SCHEMA=[
 function productPickerModal(opts){
   window.__ppOpts=opts;
   window.__ppFilterState={};
-  window.__ppSchema=PP_SCHEMA;
+  /* 2026-08-25.51：数据源/列定义参数化——调用/退回库存弹窗复用本选择器（rows=cands、schema=库存候选列） */
+  window.__ppRows=opts.rows||products;
+  window.__ppSchema=opts.schema||PP_SCHEMA;
   /* 收集各列唯一值，供筛选弹窗用 */
   window.__ppUniques={};
-  PP_SCHEMA.forEach(function(col){
-    window.__ppUniques[col.key]=[...new Set(products.map(function(p){return String(col.get(p));}))].filter(function(v){return v!=='';}).sort();
+  window.__ppSchema.forEach(function(col){
+    window.__ppUniques[col.key]=[...new Set(window.__ppRows.map(function(p){return String(col.get(p));}))].filter(function(v){return v!=='';}).sort();
   });
   const mode=opts.mode||'multi';
   /* 表头：单/复选 + 各列名（带筛选漏斗） */
   let body='<div class="table-wrap" style="max-height:55vh;overflow:auto"><table id="pp_table"><thead><tr><th style="width:36px">'+(mode==='single'?'单选':'复选')+'</th>';
-  PP_SCHEMA.forEach(function(col){
+  window.__ppSchema.forEach(function(col){
     body+=ppTh(col);
   });
   body+='</tr></thead><tbody id="pp_tbody"></tbody></table></div>';
@@ -2699,7 +2701,7 @@ function productPickerModal(opts){
   ov.style.zIndex='250';
   ov.style.background='rgba(0,0,0,.35)';
   ov.innerHTML='<div class="modal">'
-    +'<div class="modal-head"><h3>'+(mode==='single'?'选择产品':'批量选择产品（可多选）')+'</h3><div class="close-x" onclick="ppCancel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M18 6L6 18M6 6l12 12"/></svg></div></div>'
+    +'<div class="modal-head"><h3>'+(opts.title||(mode==='single'?'选择产品':'批量选择产品（可多选）'))+'</h3><div class="close-x" onclick="ppCancel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M18 6L6 18M6 6l12 12"/></svg></div></div>'
     +'<div class="modal-body">'+body+'</div>'
     +'<div class="modal-foot"><button class="btn" onclick="ppCancel()">取消</button><button class="btn btn-primary" onclick="ppConfirm()">确定</button></div>'
     +'</div>';
@@ -2718,7 +2720,7 @@ function ppTh(col){
 /* 筛选弹窗（参考产品主数据 openFilter：复选 ≤15项 / 关键字 + 模式 / 数值 + 模式） */
 function ppOpenFilter(btn,key){
   closeFiltPop();
-  const col=PP_SCHEMA.find(function(c){return c.key===key;});if(!col)return;
+  const col=(window.__ppSchema||PP_SCHEMA).find(function(c){return c.key===key;});if(!col)return;
   const uniques=window.__ppUniques[key]||[];
   const f=window.__ppFilterState[key]||{mode:'contains',val:'',vals:[]};
   let inner='';
@@ -2773,10 +2775,12 @@ function ppUpdateHeader(){
 function ppRenderRows(){
   const tbody=document.getElementById('pp_tbody');if(!tbody)return;
   const fs=window.__ppFilterState;
-  const visible=products.filter(function(p){
+  const rows=window.__ppRows||[];
+  const schema=window.__ppSchema||PP_SCHEMA;
+  const visible=rows.filter(function(p){
     for(const k in fs){
       const f=fs[k];if(!f)continue;
-      const col=PP_SCHEMA.find(function(c){return c.key===k;});if(!col)continue;
+      const col=schema.find(function(c){return c.key===k;});if(!col)continue;
       const v=String(col.get(p));
       if(f.mode==='in' && f.vals && f.vals.length){
         if(f.vals.indexOf(v)<0)return false;
@@ -2794,18 +2798,21 @@ function ppRenderRows(){
   const opts=window.__ppOpts||{};
   const mode=opts.mode||'multi';
   const preSet=new Set(opts.preselected||[]);
+  /* 2026-08-25.51：行标识 uid||id——库存候选用 invOrderId#invLineIdx 唯一键 */
+  const uidOf=function(p){return p.uid!=null?p.uid:p.id;};
   if(!visible.length){
-    tbody.innerHTML='<tr><td colspan="'+(PP_SCHEMA.length+1)+'" style="text-align:center;padding:18px;color:var(--muted)">无匹配产品</td></tr>';
+    tbody.innerHTML='<tr><td colspan="'+(schema.length+1)+'" style="text-align:center;padding:18px;color:var(--muted)">无匹配记录</td></tr>';
     return;
   }
   let html='';
   visible.forEach(function(p){
-    const checked=preSet.has(p.id);
+    const uid=uidOf(p);
+    const checked=preSet.has(uid);
     const inputCtrl=mode==='single'
-      ?'<input type="radio" class="pp_radio" name="pp_single" value="'+esc(p.id)+'" '+(checked?'checked':'')+'>'
-      :'<input type="checkbox" class="pp_chk" data-id="'+esc(p.id)+'" '+(checked?'checked':'')+'>';
-    html+='<tr data-id="'+esc(p.id)+'"><td>'+inputCtrl+'</td>';
-    PP_SCHEMA.forEach(function(col){
+      ?'<input type="radio" class="pp_radio" name="pp_single" value="'+esc(uid)+'" '+(checked?'checked':'')+'>'
+      :'<input type="checkbox" class="pp_chk" data-id="'+esc(uid)+'" '+(checked?'checked':'')+'>';
+    html+='<tr data-id="'+esc(uid)+'"><td>'+inputCtrl+'</td>';
+    schema.forEach(function(col){
       const v=col.get(p);
       html+='<td>'+esc(v)+'</td>';
     });
@@ -2992,18 +2999,45 @@ function delOrder(idx){
    冲销：生成一条反向补偿记录，不删原记录
 ================================================================ */
 let __csCands=[],__csLines=[],__csMode='call',__csOrder=null;
-function csAttach(){
-  document.querySelectorAll('.cs-inv').forEach(function(sel){
-    sel.addEventListener('change',function(){csWarn(Number(sel.dataset.li));});
-    csWarn(Number(sel.dataset.li));
+/* 2026-08-25.51：打开库存订单选择弹窗（单选，复用 productPickerModal 参数化版，列表可筛选） */
+function csPickInv(li){
+  const schema=[
+    {key:'invOrderId',label:'库存订单',type:'text'},
+    {key:'productId',label:'编码',type:'text'},
+    {key:'productName',label:'名称',type:'text'},
+    {key:'model',label:'型号',type:'text'},
+    {key:'spec',label:'规格',type:'text'},
+    {key:'available',label:'可用量',type:'number'}
+  ];
+  productPickerModal({
+    mode:'single', title:'选择库存订单',
+    rows:__csCands, schema:schema,
+    onConfirm:function(ids){
+      const c=ids&&ids.length?__csCands.find(function(x){return x.uid===ids[0];}):null;
+      csSetInv(li,c||null);
+    }
   });
 }
+/* 回填选择框：显示 库存订单号 · 编码 名称 [型号 / 规格] 可用 N */
+function csSetInv(li,c){
+  const box=document.querySelector('.cs-inv-box[data-li="'+li+'"]');
+  if(!box)return;
+  box.dataset.ci=c?String(__csCands.indexOf(c)):'';
+  box.innerHTML=c
+    ?('<b>'+esc(c.invOrderId)+'</b> · '+esc(c.productId||'')+(c.productName?' '+esc(c.productName):'')+((c.model||c.spec)?' ['+esc([c.model,c.spec].filter(Boolean).join(' / '))+']':'')+' <span style="color:var(--muted)">可用'+c.available+'</span>')
+    :'<span style="color:var(--muted)">'+(__csMode==='call'?'（不调用）':'（不退回）')+'</span>';
+  csWarn(li);
+}
+function csClearInv(li){csSetInv(li,null);}
+function csAttach(){
+  document.querySelectorAll('.cs-inv-box').forEach(function(box){csWarn(Number(box.dataset.li));});
+}
 function csWarn(li){
-  const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
+  const box=document.querySelector('.cs-inv-box[data-li="'+li+'"]');
   const warn=document.querySelector('.cs-warn[data-li="'+li+'"]');
   const qinp=document.querySelector('.cs-qty[data-li="'+li+'"]');
-  if(!sel)return;
-  const ci=sel.value==='' ? -1 : Number(sel.value);
+  if(!box)return;
+  const ci=box.dataset.ci==='' ? -1 : Number(box.dataset.ci);
   if(ci<0){if(warn)warn.textContent='';return;}
   const c=__csCands[ci];
   const line=__csLines.find(function(l){return l.i===li;});
@@ -3022,9 +3056,9 @@ function csAutoFill(){
   const used={};
   document.querySelectorAll('.cs-qty').forEach(function(inp){
     const li=Number(inp.dataset.li);
-    const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
-    if(!sel||sel.value===''){inp.value=0;return;}
-    const ci=Number(sel.value);
+    const box=document.querySelector('.cs-inv-box[data-li="'+li+'"]');
+    if(!box||box.dataset.ci===''){inp.value=0;return;}
+    const ci=Number(box.dataset.ci);
     const c=__csCands[ci];if(!c){inp.value=0;return;}
     const line=__csLines.find(function(l){return l.i===li;});if(!line){inp.value=0;return;}
     const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
@@ -3052,7 +3086,7 @@ function openCallStock(){
     if(orderTypeOf(inv)!=='库存订单')return;
     (inv.items||[]).forEach(function(it,ii){
       const av=num(it.deliveredQty);
-      if(av>0){const prod=prodMap[it.productId]||{};cands.push({invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});}
+      if(av>0){const prod=prodMap[it.productId]||{};cands.push({uid:inv.id+'#'+ii,invOrderId:inv.id,invLineIdx:ii,productId:it.productId,productName:it.productName,available:av,spec:it.spec||prod.spec||'',model:it.model||prod.model||''});}
     });
   });
   __csCands=cands;__csLines=lines;__csMode='call';
@@ -3061,15 +3095,14 @@ function openCallStock(){
     const undel=l.orderQty-l.deliveredQty;
     const pm=[l.model,l.spec].filter(Boolean).join(' / ');
     let def=cands.filter(function(c){return c.productId===l.productId;}).sort(function(a,b){return b.available-a.available;})[0];
-    let opts='<option value="">（不调用）</option>';
-    cands.forEach(function(c,ci){
-      const sel=(def&&c.invOrderId===def.invOrderId&&c.invLineIdx===def.invLineIdx)?' selected':'';
-      const tag=c.productId===l.productId?'':' ⚠替代料';
-      const cpm=[c.model,c.spec].filter(Boolean).join(' / ');
-      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+(cpm?' ['+esc(cpm)+']':'')+' 可用'+c.available+tag+'</option>';
-    });
+    /* 2026-08-25.51：下拉改选择框（单选弹窗+筛选）——显示 编码/名称/型号/规格/可用量，默认预填同料号最大可用 */
+    const boxHtml=def?('<b>'+esc(def.invOrderId)+'</b> · '+esc(def.productId||'')+(def.productName?' '+esc(def.productName):'')+((def.model||def.spec)?' ['+esc([def.model,def.spec].filter(Boolean).join(' / '))+']':'')+' <span style="color:var(--muted)">可用'+def.available+'</span>')
+      :'<span style="color:var(--muted)">（不调用）</span>';
     rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 未交付 '+undel+'</span></td>'
-      +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
+      +'<td style="min-width:260px"><div class="cs-inv-box" data-li="'+l.i+'" data-ci="'+(def?cands.indexOf(def):'')+'" style="background:var(--bg2,transparent);border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;font-size:12px;margin-bottom:4px">'+boxHtml+'</div>'
+      +'<div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="csPickInv('+l.i+')">选择</button>'
+      +'<button class="btn btn-sm" onclick="csClearInv('+l.i+')">清除</button></div>'
+      +'<div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
       +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" value="0" style="width:90px"></td></tr>';
   });
   const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过销售未交付量；可超出库存可用量，超出部分库存订单记欠货（已交付为负）。</p>'
@@ -3087,8 +3120,8 @@ function doCallStock(o){
     const li=Number(inp.dataset.li);
     const q=num(inp.value);
     if(q<=0)return;
-    const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
-    const ci=sel?(sel.value===''?-1:Number(sel.value)):-1;
+    const box=document.querySelector('.cs-inv-box[data-li="'+li+'"]');
+    const ci=box?(box.dataset.ci===''?-1:Number(box.dataset.ci)):-1;
     if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
     const c=__csCands[ci];
     const line=__csLines.find(function(l){return l.i===li;});
@@ -3128,15 +3161,14 @@ function openReturnStock(){
   lines.forEach(function(l){
     const pm=[l.model,l.spec].filter(Boolean).join(' / ');
     let def=cands.filter(function(c){return c.productId===l.productId;})[0];
-    let opts='<option value="">（不退回）</option>';
-    cands.forEach(function(c,ci){
-      const sel=(def&&c.invOrderId===def.invOrderId&&c.invLineIdx===def.invLineIdx)?' selected':'';
-      const tag=c.productId===l.productId?'':' ⚠替代料';
-      const cpm=[c.model,c.spec].filter(Boolean).join(' / ');
-      opts+='<option value="'+ci+'"'+sel+'>'+esc(c.invOrderId)+' / '+esc(c.productName||c.productId)+(cpm?' ['+esc(cpm)+']':'')+tag+'</option>';
-    });
+    /* 2026-08-25.51：退回弹窗同款选择框（单选弹窗+筛选） */
+    const boxHtml=def?('<b>'+esc(def.invOrderId)+'</b> · '+esc(def.productId||'')+(def.productName?' '+esc(def.productName):'')+((def.model||def.spec)?' ['+esc([def.model,def.spec].filter(Boolean).join(' / '))+']':'')+' <span style="color:var(--muted)">可用'+def.available+'</span>')
+      :'<span style="color:var(--muted)">（不退回）</span>';
     rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 已交付 '+l.deliveredQty+'</span></td>'
-      +'<td><select class="cs-inv" data-li="'+l.i+'">'+opts+'</select><div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
+      +'<td style="min-width:260px"><div class="cs-inv-box" data-li="'+l.i+'" data-ci="'+(def?cands.indexOf(def):'')+'" style="background:var(--bg2,transparent);border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;font-size:12px;margin-bottom:4px">'+boxHtml+'</div>'
+      +'<div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="csPickInv('+l.i+')">选择</button>'
+      +'<button class="btn btn-sm" onclick="csClearInv('+l.i+')">清除</button></div>'
+      +'<div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
       +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" max="'+l.deliveredQty+'" value="0" style="width:90px"></td></tr>';
   });
   const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条已交付明细选择退回目标库存订单（默认同料号，跨料号将提示）。退回数量不可超过销售已交付量。</p>'
@@ -3154,8 +3186,8 @@ function doReturnStock(o){
     const li=Number(inp.dataset.li);
     const q=num(inp.value);
     if(q<=0)return;
-    const sel=document.querySelector('.cs-inv[data-li="'+li+'"]');
-    const ci=sel?(sel.value===''?-1:Number(sel.value)):-1;
+    const box=document.querySelector('.cs-inv-box[data-li="'+li+'"]');
+    const ci=box?(box.dataset.ci===''?-1:Number(box.dataset.ci)):-1;
     if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
     const line=__csLines.find(function(l){return l.i===li;});
     if(q>line.deliveredQty){alert('退回数量 '+q+' 超过销售已交付 '+line.deliveredQty);return;}
@@ -6724,6 +6756,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.50</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.51</div>
 </body>
 </html>
