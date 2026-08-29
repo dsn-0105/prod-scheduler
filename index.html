@@ -3940,7 +3940,16 @@ function renderDelivery(){
     const sortKey=manualSort?manualSort.key:null;
     const lineKeys=TBL_SCHEMAS.delivery.slice(HEAD_COLS).map(c=>c.key);
     const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
-    if(shouldMerge) shown=[...shown].sort((a,b)=>a.di-b.di);   // 按交付计划顺序聚合（无手动排序时=原顺序；手动按单据级列排序时同订单管理：以单据聚合保序）
+    /* 2026-08-29.82：交付计划默认排序改单据时间（createdAt）降序，同日按单据顺序 di 降序兜底（新单在前）；
+       手动排序时保持原聚合行为（di 升序，历史不变）；聚合在分页前（对齐 .80 坑位：默认排序必须先于切片） */
+    if(shouldMerge){
+      if(!manualSort) shown=[...shown].sort((a,b)=>{
+        const da=fmtDate(a.d.createdAt),db=fmtDate(b.d.createdAt);
+        if(da!==db)return da<db?1:-1;
+        return b.di-a.di;
+      });
+      else shown=[...shown].sort((a,b)=>a.di-b.di);
+    }
     /* 2026-08-25.68：金蝶式分页（按交付计划分组整单不拆，groupKey=r.di） */
     if(PAGED_FORMS.delivery&&shown.length>0)shown=slicePaged('delivery',shown,pageSizeOf('delivery'),r=>r.di).rows;
     const groupMap=new Map();
@@ -7222,6 +7231,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.81</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.82</div>
 </body>
 </html>
