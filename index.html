@@ -5257,7 +5257,10 @@ function mdRender(md){
   let out='',listType='',inTable=false,tblHead=false;
   lines.forEach(line=>{
     const t=line.trim();
-    if(!t){listType='';inTable=false;tblHead=false;return;}
+    /* 2026-08-25.71：空行须先闭合当前列表/表格再重置（原直接清 listType/inTable → <ul>/<table> 悬空未闭合，浏览器容错嵌套缩进逐级加深） */
+    if(!t){if(listType){out+='</'+listType+'>';listType='';}if(inTable){out+='</table>';inTable=false;}tblHead=false;return;}
+    /* 2026-08-25.71：进入非列表行前先关闭上一个列表（列表被标题/表格/引用打断时同理闭合） */
+    if(listType&&!/^[-*]\s+/.test(t)&&!/^\d+\.\s+/.test(t)){out+='</'+listType+'>';listType='';}
     if(t.startsWith('|')){
       const cells=t.split('|').slice(1,-1).map(c=>c.trim());
       if(cells.length&&/^[-: ]+$/.test(cells.join('')))return;   // 表头分隔行 |---|---| 跳过（不置 tblHead）
@@ -7114,6 +7117,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.70</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.71</div>
 </body>
 </html>
