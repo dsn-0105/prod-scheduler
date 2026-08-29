@@ -5021,6 +5021,19 @@ function queryTransfersOfOrder(m){
   tState('transfers').sort={key:'ts',dir:-1};
   switchTab('transfers');
 }
+/* 2026-08-29.76：订单「计划查询」——跳转交付计划列表并预设 orderId=本订单筛选（销售/库存订单共用；
+   交付计划头带 orderId 单据级列，筛选后显示该订单全部交付计划明细） */
+function queryDeliveryOfOrder(m){
+  m=m||'order_frame';
+  const s=selSet(m);
+  const label=(m==='order_inv')?'库存订单':'销售订单';
+  if(s.size===0){alert('请先勾选 1 张'+label);return;}
+  if(s.size>1){alert('「计划查询」只能选择 1 张'+label+'，当前已选 '+s.size+' 张。');return;}
+  const o=orders[Number([...s][0])];
+  if(!o){alert('未找到订单');return;}
+  tState('delivery').filters={orderId:{mode:'eq',val:o.id}};
+  switchTab('delivery');
+}
 /* 报工入库回写订单（2026-08-25.16 二期口径）：排产单「入库」工序报工增量 → 订单对应明细行 deliveredQty。
    匹配：排产单.orderId + 产品行 productId → 订单行；delta 可为负（编辑/删除报工、删除/取消排产单回退）；
    deliveredQty 下限 0、允许超过订单数量 orderQty（用户拍板 2026-08-25.16，进度% 可 >100%）；
@@ -6783,6 +6796,8 @@ function bulkBar(m){
   }
   /* 2026-08-25.59：调拨查询为只读导航操作，置于写权限块外（只读账号也可用）——销售筛 salesOrderId、库存筛 invOrderId */
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryTransfersOfOrder(\''+m+'\')" title="跳转到调拨台账并筛选本订单关联的调拨单（仅限 1 张）">调拨查询</button>');
+  /* 2026-08-29.76：计划查询（只读导航，写权限块外）——跳转交付计划并筛选本订单 */
+  if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryDeliveryOfOrder(\''+m+'\')" title="跳转到交付计划并筛选本订单的交付计划（仅限 1 张）">计划查询</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
   if(m==='order_frame'||m==='order_inv'||m==='prodPlan'){
     /* 订单管理/排产计划：模板/导入按钮暂禁用（排产计划由交付计划下推生成，不手工导入） */
@@ -7200,6 +7215,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.75</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.76</div>
 </body>
 </html>
