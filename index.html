@@ -2549,10 +2549,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
   if(shouldMerge){
     if(manualSort) shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
-    else if(formKey==='order_frame') shown=[...shown].sort((a,b)=>{ // 销售订单默认：单据日期降序
-        const da=fmtDate(a.order.startDate), db=fmtDate(b.order.startDate);
-        if(da!==db) return da<db?1:-1;                              // 同日按单号降序兜底
-        return b.order.id.localeCompare(a.order.id,'zh-CN');});
+    else if(formKey==='order_frame') shown=[...shown].sort((a,b)=>b.order.id.localeCompare(a.order.id,'zh-CN',{numeric:true})); // 销售订单默认：单据编号降序（数字感知，.79：原按单据日期降序，金蝶单据日期为空/较早时新单被挤后）
     else shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 库存：保持原行为
   }
   const groupMap=new Map();
@@ -7216,6 +7213,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.78</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.79</div>
 </body>
 </html>
