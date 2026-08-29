@@ -5268,8 +5268,10 @@ function mdRender(md){
     }
     if(inTable){out+='</table>';inTable=false;tblHead=false;}
     if(/^###\s+/.test(t)){out+='<h4 style="margin:14px 0 6px;font-size:14px;color:var(--primary-dark)">'+mdInline(t.slice(4))+'</h4>';return;}
-    if(/^##\s+/.test(t)){out+='<h3 style="margin:18px 0 8px;font-size:15px;border-left:4px solid var(--primary);padding-left:8px">'+mdInline(t.slice(3))+'</h3>';return;}
+    /* 2026-08-25.70：h3 去 border-left+padding-left（标题 0 缩进与正文对齐，改下划线分隔）；引用块 > 常规引用样式 */
+    if(/^##\s+/.test(t)){out+='<h3 style="margin:18px 0 8px;font-size:15px;border-bottom:1px solid var(--border);padding-bottom:4px">'+mdInline(t.slice(3))+'</h3>';return;}
     if(/^#\s+/.test(t)){out+='<h2 style="margin:20px 0 8px;font-size:16px">'+mdInline(t.slice(2))+'</h2>';return;}
+    if(/^>\s+/.test(t)){out+='<blockquote style="margin:8px 0;padding:6px 12px;background:var(--primary-light);border-left:3px solid var(--primary);font-size:13px;color:var(--muted)">'+mdInline(t.slice(2))+'</blockquote>';return;}
     if(/^[-*]\s+/.test(t)){
       if(listType!=='ul'){listType='ul';out+='<ul style="margin:6px 0;padding-left:20px;font-size:13px;line-height:1.8">';}
       out+='<li>'+mdInline(t.slice(2))+'</li>';return;
@@ -7112,6 +7114,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.69</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.70</div>
 </body>
 </html>
