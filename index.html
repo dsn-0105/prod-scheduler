@@ -2538,8 +2538,6 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   ];
   TBL_ROWS[formKey]=rows;
   let shown=applyTable(formKey,rows);
-  /* 2026-08-25.66/.68：金蝶式分页（order_frame/order_inv）——整单不拆（groupKey=r.order.id）；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
-  if(PAGED_FORMS[formKey]&&shown.length>0)shown=slicePaged(formKey,shown,pageSizeOf(formKey),r=>r.order.id).rows;
   /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
      仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
   const HEAD_COLS=5;
@@ -2547,11 +2545,16 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   const sortKey=manualSort?manualSort.key:null;
   const lineKeys=TBL_SCHEMAS[formKey].slice(HEAD_COLS).map(c=>c.key);
   const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
-  if(shouldMerge){
-    if(manualSort) shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
-    else if(formKey==='order_frame') shown=[...shown].sort((a,b)=>b.order.id.localeCompare(a.order.id,'zh-CN',{numeric:true})); // 销售订单默认：单据编号降序（数字感知，.79：原按单据日期降序，金蝶单据日期为空/较早时新单被挤后）
-    else shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 库存：保持原行为
+  /* 2026-08-29.80 修复：无手动排序时的默认排序必须发生在分页之前——原逻辑在分页切片后排序只排当前页：
+     每页 1000 时新单在最上（一页全装下），切 100 条/页后新单先被原始顺序切片到第 2 页，排序不生效。
+     手动排序分支保持分页后原位（历史行为不变，不引入回归）。 */
+  if(shouldMerge&&!manualSort){
+    if(formKey==='order_frame') shown=[...shown].sort((a,b)=>b.order.id.localeCompare(a.order.id,'zh-CN',{numeric:true})); // 销售订单默认：单据编号降序（数字感知，.79）
+    else if(formKey==='order_inv') shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 库存：id 升序（保持原行为）
   }
+  /* 2026-08-25.66/.68：金蝶式分页（order_frame/order_inv）——整单不拆（groupKey=r.order.id）；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
+  if(PAGED_FORMS[formKey]&&shown.length>0)shown=slicePaged(formKey,shown,pageSizeOf(formKey),r=>r.order.id).rows;
+  if(shouldMerge&&manualSort) shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 手动排序后聚合保序（历史行为）
   const groupMap=new Map();
   shown.forEach((r,i)=>{if(!groupMap.has(r.order.id))groupMap.set(r.order.id,{start:i,count:0});groupMap.get(r.order.id).count++;});
   lastRowIds[formKey]=shown.map(r=>r.orderIdx);
@@ -7213,6 +7216,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.79</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.80</div>
 </body>
 </html>
