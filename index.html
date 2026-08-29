@@ -2425,7 +2425,13 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     ...(formKey==='order_inv'?[{key:'_balance',label:'结余',type:'number',get:r=>{
        const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
        return num(r.item.deliveredQty)+(pu?Math.max(0,pu.plan-pu.done):0); }}]:[]),
-    {key:'_pct',label:'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
+    /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，放结余后；与进度列同款百分比口径，可>100%） */
+    ...(formKey==='order_inv'?[{key:'_balPct',label:'结余进度',type:'number',get:r=>{
+       const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
+       const bal=num(r.item.deliveredQty)+(pu?Math.max(0,pu.plan-pu.done):0);
+       const t=num(r.item.orderQty);
+       return t>0?Math.round(bal/t*100):0; }}]:[]),
+    {key:'_pct',label:(formKey==='order_inv')?'交付进度':'进度%',type:'number',get:r=>{const t=num(r.item.orderQty);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
     {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.item.lineNotes!=null?r.item.lineNotes:(r.item.notes||'')}
   ];
   TBL_ROWS[formKey]=rows;
@@ -2467,6 +2473,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const plannedUndel=pu?Math.max(0,pu.plan-pu.done):0;
     /* 2026-08-25.60：结余=已交付+已计划未交付（仅库存订单），同款三角警示——低于最小库存→红、高于最大库存→黄 */
     const balance=num(dq)+plannedUndel;
+    /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，同进度列口径，可>100%） */
+    const balPct=oq>0?Math.round(balance/oq*100):0;
     const today=todayStr();
     const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
     const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':o.status==='已暂停'?'tag-amber':'tag-gray';
@@ -2515,6 +2523,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
       '<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>'+
       (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(warnLowBal?WARN_LOW_BAL_SVG:(warnHighBal?WARN_HIGH_BAL_SVG:''))+money(balance)+'</td>':'')+
+      /* 2026-08-25.61：结余进度（进度条+百分比，同交付进度列样式） */
+      (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+balPct+'%"></div></div><span style="font-size:11px">'+balPct+'%</span></div></td>':'')+
       '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
       '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
       '</tr>';
@@ -6824,6 +6834,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.60</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.61</div>
 </body>
 </html>
