@@ -4813,18 +4813,24 @@ if(!window.__ppLaunchMenuBound){window.__ppLaunchMenuBound=true;document.addEven
    2026-08-29.73：排产计划「延后/提前」——批量调整 planDate（样式复用投产|▾ 融合按钮规范 .30/.31）；
    主按钮=±1 天，▾ 下拉=3 天/7 天/自定义（1~365）；多选；已完成/已取消跳过；提前不低于今天（钳制+提示）
 ================================================================ */
-function ppShiftBtnHtml(type,label){
+/* 延后/提前融合按钮（.30/.31 规范）；plain=true 为白底常规样式（2026-08-29.74：提前/报工按钮白色化） */
+function ppShiftBtnHtml(type,label,plain){
   const act=type==='delay'?'延后':'提前';
   const menuId=type==='delay'?'ppDelayMenu':'ppAdvanceMenu';
   const wrapId=type==='delay'?'ppDelayWrap':'ppAdvanceWrap';
-  return '<span id="'+wrapId+'" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
-    '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="ppShiftDays(\''+type+'\',1)" title="'+act+'选中的排产计划 1 天（多选，待排产/生产中）">'+label+'</button>'+
-    '<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
-    '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\')" title="更多'+act+'天数">▾</button>'+
+  const wrapStyle=plain?'position:relative;display:inline-flex;align-items:stretch;background:#fff;border:1px solid var(--border);border-radius:6px;vertical-align:middle':'position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle';
+  const btnStyle=plain?'border:none;border-radius:5px 0 0 5px;margin:0;color:var(--text);background:transparent;padding:5px 10px':'border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px';
+  const sepStyle=plain?'width:1px;background:rgba(0,0,0,.12)':'width:1px;background:rgba(255,255,255,.45)';
+  const arrowStyle=plain?'border:none;border-radius:0 5px 5px 0;margin:0;color:var(--text);background:transparent;padding:5px 7px':'border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px';
+  const itemCls=plain?'btn btn-sm':'btn btn-sm btn-primary';
+  return '<span id="'+wrapId+'" style="'+wrapStyle+'">'+
+    '<button class="btn btn-sm" style="'+btnStyle+'" onclick="ppShiftDays(\''+type+'\',1)" title="'+act+'选中的排产计划 1 天（多选，待排产/生产中）">'+label+'</button>'+
+    '<span style="'+sepStyle+'"></span>'+
+    '<button class="btn btn-sm" style="'+arrowStyle+'" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\')" title="更多'+act+'天数">▾</button>'+
     '<div id="'+menuId+'" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
-    '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\');ppShiftDays(\''+type+'\',3)">'+act+' 3 天</button>'+
-    '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\');ppShiftDays(\''+type+'\',7)">'+act+' 7 天</button>'+
-    '<div style="display:flex;gap:4px;padding:6px 10px"><input type="number" id="ppShiftCustom_'+type+'" min="1" max="365" placeholder="自定义天数(1~365)" style="flex:1;min-width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppShiftCustom(\''+type+'\',document.getElementById(\'ppShiftCustom_'+type+'\'))">确定</button></div>'+
+    '<button class="'+itemCls+'" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\');ppShiftDays(\''+type+'\',3)">'+act+' 3 天</button>'+
+    '<button class="'+itemCls+'" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\');ppShiftDays(\''+type+'\',7)">'+act+' 7 天</button>'+
+    '<div style="display:flex;gap:4px;padding:6px 10px"><input type="number" id="ppShiftCustom_'+type+'" min="1" max="365" placeholder="自定义天数(1~365)" style="flex:1;min-width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"><button class="'+itemCls+'" onclick="event.stopPropagation();ppShiftCustom(\''+type+'\',document.getElementById(\'ppShiftCustom_'+type+'\'))">确定</button></div>'+
     '</div></span>';
 }
 /* 延后/提前菜单开关（互斥：打开一个关闭另一个） */
@@ -6765,10 +6771,11 @@ function bulkBar(m){
       '<div id="ppLaunchMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
       '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleLaunchMenu();ppReverseLaunch()" title="将选中的「生产中」排产计划转回「待排产」（已报工的无法反投产）">反投产</button>'+
       '</div></span>');
-    /* 2026-08-29.73：延后/提前计划日期（样式复用投产|▾ 融合按钮规范；主按钮=±1 天，下拉=3/7/自定义） */
+    /* 2026-08-29.73：延后/提前计划日期（样式复用投产|▾ 融合按钮规范；主按钮=±1 天，下拉=3/7/自定义）。
+       .74：提前按钮（含下拉）改常规白底，延后保持蓝色主按钮 */
     if(m==='prodPlan')btns.push(ppShiftBtnHtml('delay','延后'));
-    if(m==='prodPlan')btns.push(ppShiftBtnHtml('advance','提前'));
-    if(m==='prodPlan')btns.push('<button class="btn btn-sm btn-primary" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');
+    if(m==='prodPlan')btns.push(ppShiftBtnHtml('advance','提前',true));
+    if(m==='prodPlan')btns.push('<button class="btn btn-sm" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
@@ -7193,6 +7200,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.73</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.74</div>
 </body>
 </html>
