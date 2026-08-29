@@ -2831,7 +2831,7 @@ function productPickerModal(opts){
     body+=ppTh(col);
   });
   body+='</tr></thead><tbody id="pp_tbody"></tbody></table></div>';
-  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(mode==='single'?'单选：点选单选框后点「确定」。':'多选：勾选产品后点「确定」，选中条目追加到订单明细下方；同一产品编码可重复添加为不同行；点「取消」放弃本次操作。')+'</div>';
+  body+='<div style="margin-top:8px;font-size:12px;color:var(--muted)">'+(opts.clickSelect?'点击行直接选中；也可点选单选框后点「确定」。':(mode==='single'?'单选：点选单选框后点「确定」。':'多选：勾选产品后点「确定」，选中条目追加到订单明细下方；同一产品编码可重复添加为不同行；点「取消」放弃本次操作。'))+'</div>';
   /* 二级浮层：不替换底层弹窗 DOM，保证「新增订单」表头输入与明细保留 */
   const ov=document.createElement('div');
   ov.className='modal-bg';
@@ -2953,7 +2953,7 @@ function ppRenderRows(){
     const inputCtrl=mode==='single'
       ?'<input type="radio" class="pp_radio" name="pp_single" value="'+esc(uid)+'" '+(checked?'checked':'')+'>'
       :'<input type="checkbox" class="pp_chk" data-id="'+esc(uid)+'" '+(checked?'checked':'')+'>';
-    html+='<tr data-id="'+esc(uid)+'"><td>'+inputCtrl+'</td>';
+    html+='<tr data-id="'+esc(uid)+'"'+(opts.clickSelect?' style="cursor:pointer" onclick="ppPickRow(this)"':'')+'><td>'+inputCtrl+'</td>';
     schema.forEach(function(col){
       const v=col.get?col.get(p):(p[col.key]!=null?p[col.key]:'');
       html+='<td>'+esc(v)+'</td>';
@@ -2968,6 +2968,13 @@ function ppCancel(){
   const ov=document.getElementById('ppOverlay');
   if(ov)ov.remove();
   window.__ppOpts=null;window.__ppFilterState=null;
+}
+/* 2026-08-29.84：点击行直接选中（single + clickSelect，调用库存选择弹窗）——选中该行 radio 并立即确认关闭回填 */
+function ppPickRow(tr){
+  const opts=window.__ppOpts;if(!opts||(opts.mode||'multi')!=='single'||!opts.clickSelect)return;
+  const radio=tr.querySelector('.pp_radio');
+  if(radio)radio.checked=true;
+  ppConfirm();
 }
 /* 确定：收集勾选条目 → 移除浮层（回到「新增订单」）→ 回调把选中条目追加到订单明细（原有数据不覆盖） */
 function ppConfirm(){
@@ -3163,7 +3170,7 @@ function csPickInv(li){
     {key:'available',label:'可用量',type:'number'}
   ];
   productPickerModal({
-    mode:'single', title:'选择库存订单',
+    mode:'single', title:'选择库存订单', clickSelect:true,   /* 2026-08-29.84：点击行直接选中（立即确认回填） */
     rows:__csCands, schema:schema,
     onConfirm:function(ids){
       const c=ids&&ids.length?__csCands.find(function(x){return x.uid===ids[0];}):null;
@@ -5401,7 +5408,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-29（build .83）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-29（build .84）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5425,7 +5432,7 @@ var GUIDE_MD=[
 '### 订单管理（销售订单）',
 '- **新增**：点「新增订单」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。',
 '- **金蝶导入**：点「导入金蝶订单」选择 Excel → 先出「预检报告」（缺合同号/未知商品编码等）→ 确认后批量导入；重复导入同一文件会提示覆盖或跳过。',
-'- **调用库存 / 退回库存**：选中 1 张销售订单 → 弹窗选择库存订单与数量（可「自动填充」或「按订单数量填充」）→ 确认后库存订单已交付减少、销售订单已交付增加（退回反向）。',
+'- **调用库存 / 退回库存**：选中 1 张销售订单 → 弹窗选择库存订单与数量（选择弹窗**点击行直接选中**，可「自动填充」或「按订单数量填充」）→ 确认后库存订单已交付减少、销售订单已交付增加（退回反向）。',
 '- **调拨查询**：选中 1 张订单 → 跳转调拨台账并自动筛选该订单的调用/退回/冲销记录。',
 '- **计划查询**（.76）：选中 1 张订单 → 跳转交付计划列表并自动筛选该订单的交付计划。',
 '- **生成交付计划**：选中 1 张执行中的订单 → 跳转交付计划并带出明细。',
@@ -7233,6 +7240,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.83</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.84</div>
 </body>
 </html>
