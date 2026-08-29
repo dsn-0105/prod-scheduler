@@ -2524,8 +2524,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>'+
       (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(warnLowBal?WARN_LOW_BAL_SVG:(warnHighBal?WARN_HIGH_BAL_SVG:''))+money(balance)+'</td>':'')+
       /* 2026-08-25.61：结余进度（进度条+百分比，同交付进度列样式） */
-      (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+balPct+'%"></div></div><span style="font-size:11px">'+balPct+'%</span></div></td>':'')+
-      '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:11px">'+pct+'%</span></div></td>'+
+      (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(balPct)+'%'+(balPct<0?';background:var(--red)':'')+'"></div></div><span style="font-size:11px'+(balPct<0?';color:var(--red)':'')+'">'+balPct+'%</span></div></td>':'')+
+      '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(pct)+'%'+(pct<0?';background:var(--red)':'')+'"></div></div><span style="font-size:11px'+(pct<0?';color:var(--red)':'')+'">'+pct+'%</span></div></td>'+
       '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
       '</tr>';
   });
@@ -6834,6 +6834,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.61</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.62</div>
 </body>
 </html>
