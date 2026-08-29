@@ -4763,14 +4763,20 @@ function ppOrderLineOf(p,it){
   const drow=deliveryItems(dl)[it.dlLine];
   return (drow&&drow.orderLine!=null)?drow.orderLine:null;
 }
-/* 2026-08-25.49：订单管理「调拨查询」——跳转调拨台账并预设 salesOrderId=本订单筛选（调用+退回+冲销全包含），时间倒序 */
-function queryTransfersOfOrder(){
-  const s=selSet('order_frame');
-  if(s.size===0){alert('请先勾选 1 张销售订单');return;}
-  if(s.size>1){alert('「调拨查询」只能选择 1 张销售订单，当前已选 '+s.size+' 张。');return;}
+/* 2026-08-25.49：订单管理「调拨查询」——跳转调拨台账并预设本订单筛选（调用+退回+冲销全包含），时间倒序
+   2026-08-25.59：参数化——order_frame 筛 salesOrderId（销售订单）、order_inv 筛 invOrderId（库存订单）；
+   只读导航操作，按钮置于写权限块外（只读账号同样可用） */
+function queryTransfersOfOrder(m){
+  m=m||'order_frame';
+  const s=selSet(m);
+  const label=(m==='order_inv')?'库存订单':'销售订单';
+  if(s.size===0){alert('请先勾选 1 张'+label);return;}
+  if(s.size>1){alert('「调拨查询」只能选择 1 张'+label+'，当前已选 '+s.size+' 张。');return;}
   const o=orders[Number([...s][0])];
   if(!o){alert('未找到订单');return;}
-  tState('transfers').filters={salesOrderId:{mode:'eq',val:o.id}};
+  const key=(m==='order_inv')?'invOrderId':'salesOrderId';
+  const filters={};filters[key]={mode:'eq',val:o.id};
+  tState('transfers').filters=filters;
   tState('transfers').sort={key:'ts',dir:-1};
   switchTab('transfers');
 }
@@ -6386,9 +6392,10 @@ function bulkBar(m){
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
-    if(m==='order_frame')btns.push('<button class="btn btn-sm" onclick="queryTransfersOfOrder()" title="跳转到调拨台账并筛选本订单关联的调拨单（仅限 1 张）">调拨查询</button>');
     btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
   }
+  /* 2026-08-25.59：调拨查询为只读导航操作，置于写权限块外（只读账号也可用）——销售筛 salesOrderId、库存筛 invOrderId */
+  if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryTransfersOfOrder(\''+m+'\')" title="跳转到调拨台账并筛选本订单关联的调拨单（仅限 1 张）">调拨查询</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
   if(m==='order_frame'||m==='order_inv'||m==='prodPlan'){
     /* 订单管理/排产计划：模板/导入按钮暂禁用（排产计划由交付计划下推生成，不手工导入） */
@@ -6804,6 +6811,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.58</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.59</div>
 </body>
 </html>
