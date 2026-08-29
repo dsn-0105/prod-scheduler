@@ -4616,8 +4616,8 @@ function genProdPlan(){
     return {productId:it.productId||'',productName:it.productName||'',spec:it.spec||prod.spec||'',model:it.model||prod.model||'',unit:prod.unit||'',planQty:q,doneQty:0,lineNotes:it.lineNotes||'',dlLine:li,stepsDef:stepsDef,steps:steps};
   });
   if(items.length===0){alert('该交付计划无「本批计划>0」的明细行，无法下推');return;}
-  const existing=productionPlans.filter(p=>p.deliveryIdx===di).length;
-  if(existing>0&&!confirm('该交付计划已下推过 '+existing+' 张排产计划，继续将再生成一张（支持分批生产）？'))return;
+  /* 2026-08-29.86：全部下推=已排产覆盖全部计划量→拦截（alert 无法下推）；部分下推=还有未排数量→直接继续（去掉分批确认框，分批为常态操作） */
+  if(ppDeliveryStatus(di)==='全部下推'){alert('该交付计划已全部下推，无法再下推排产计划。');return;}
   const np={id:ppNextId(),deliveryIdx:di,orderId:d.orderId,customer:d.customer||'',finalDate:fmtDate(d.finalDate),planDate:fmtDate(d.finalDate)||todayStr(),status:'待排产',notes:'',items:items};
   window.__ppPending=np;
   switchTab('prodPlan');
@@ -5408,7 +5408,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-29（build .85）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-29（build .86）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5449,7 +5449,7 @@ var GUIDE_MD=[
 '- 勾选交付计划 → 「下推排产计划」生成排产单。',
 '',
 '### 排产计划',
-'- **下推**：在交付计划页勾选 → 「下推排产计划」→ 弹窗可调整本次排产数量（不能超过未排产数）→ 保存后自动生成排产单（多行明细自动拆成多张单）。',
+'- **下推**：在交付计划页勾选 → 「下推排产计划」→ 弹窗可调整本次排产数量（不能超过未排产数）→ 保存后自动生成排产单（多行明细自动拆成多张单）。**状态为「全部下推」时无法再下推（提示后中断）；「部分下推」可直接继续分批下推（不再弹确认框）**。',
 '- **物料齐套时间**：选填日期（下推或编辑排产单时填写，默认空），用于标识物料齐备可投产的预计时间，列表按计划日期后显示。',
 '- **投产**：勾选「待排产」单 → 「投产」→ 状态变「生产中」（才能报工）；▾ 下拉可「反投产」（生产中且未报工可回退）。',
 '- **报工**：勾选 1 张「生产中」单 → 「报工」→ 填写报工人（选填）+ 各工序本次完成数（增量）→ 提交。全部完工后确认标记「已完成」。',
@@ -7240,6 +7240,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.85</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.86</div>
 </body>
 </html>
