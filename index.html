@@ -908,11 +908,15 @@ function sortRows(m,rows){
 function applyTable(m,rows){return sortRows(m,filterRows(m,rows));}
 
 /* ================================================================
-   2026-08-25.66：金蝶式表单分页（仅 order_frame 试点）——每页条数 10/100/1000 可选（localStorage 记忆），
-   按明细行容量分页 + 整单不拆（同订单全部明细同页，防 rowspan 合并断裂）；排序/筛选后回第 1 页
+   2026-08-25.66：金蝶式表单分页（order_frame 试点）；.68 泛化推广：order_frame/order_inv/delivery/prodPlan
+   （行模型带分组=整单不拆）/product/transfers/logs（单行模型直接切行）。每页条数 10/100/1000（localStorage 记忆）；
+   排序/筛选后回第 1 页
 ================================================================ */
-var tblPage={};   // tblPage[formKey]={page,size,total,maxPage,docCount}
+var tblPage={};   // tblPage[formKey]={page,size,total,maxPage,groupCount}
 const PAGE_SIZES=[10,100,1000];
+/* 2026-08-25.68：启用分页的表单；组模型（rowspan 合并）用 groupKey 整组不拆，单行模型直接切行 */
+const PAGED_FORMS={order_frame:1,order_inv:1,product:1,delivery:1,prodPlan:1,transfers:1,logs:1};
+const PAGED_GROUP_LABEL={order_frame:'张',order_inv:'张',delivery:'张',prodPlan:'张'};
 function pageSizeOf(m){
   const t=tblPage[m];
   if(t&&t.size)return t.size;
@@ -939,30 +943,38 @@ function pagerJump(m,inp){
   if(!isNaN(v))pagerGo(m,v);
   else{inp.value=pageOf(m);}
 }
-/* 订单行「整单不拆」分页：每页最多 size 行明细，同订单全部明细同页；页码越界自动回 1；返回 {rows,maxPage,total,docCount} */
-function sliceOrderPaged(m,shown,size){
+/* 泛化分页切片（.68）：groupKey=分组函数（组模型整组不拆，如订单按 r.order.id、交付按 r.di、排产按 r.p.id）；
+   无 groupKey=单行模型直接按行切。页码越界自动回 1；返回 {rows,maxPage,total,groupCount} */
+function slicePaged(m,shown,size,groupKey){
   const total=shown.length;
-  if(!total)return {rows:[],maxPage:1,total:0,docCount:0};
-  const gmap=new Map();
-  shown.forEach(r=>{if(!gmap.has(r.order.id))gmap.set(r.order.id,[]);gmap.get(r.order.id).push(r);});
-  const pages=[];let cur=[],cnt=0;
-  gmap.forEach(g=>{if(cnt>0&&cnt+g.length>size){pages.push(cur);cur=[];cnt=0;}cur=cur.concat(g);cnt+=g.length;});
-  if(cur.length)pages.push(cur);
+  if(!total)return {rows:[],maxPage:1,total:0,groupCount:0};
+  const pages=[];let gc=0;
+  if(groupKey){
+    const gmap=new Map();
+    shown.forEach(r=>{const gk=groupKey(r);if(!gmap.has(gk))gmap.set(gk,[]);gmap.get(gk).push(r);});
+    let cur=[],cnt=0;
+    gmap.forEach(g=>{if(cnt>0&&cnt+g.length>size){pages.push(cur);cur=[];cnt=0;}cur=cur.concat(g);cnt+=g.length;});
+    if(cur.length)pages.push(cur);
+    gc=gmap.size;
+  }else{
+    for(let i=0;i<shown.length;i+=size)pages.push(shown.slice(i,i+size));
+  }
   const maxPage=pages.length||1;
   let page=pageOf(m);if(page>maxPage)page=1;
   if(!tblPage[m])tblPage[m]={page:1,size:size};
-  tblPage[m].page=page;tblPage[m].maxPage=maxPage;tblPage[m].total=total;tblPage[m].docCount=gmap.size;
-  return {rows:pages[page-1]||[],maxPage:maxPage,total:total,docCount:gmap.size};
+  tblPage[m].page=page;tblPage[m].maxPage=maxPage;tblPage[m].total=total;tblPage[m].groupCount=gc;
+  return {rows:pages[page-1]||[],maxPage:maxPage,total:total,groupCount:gc};
 }
-/* 金蝶式分页栏 HTML（放操作栏最右侧，仅 order_frame 且非空时显示；信息区单 span 防换行） */
+/* 金蝶式分页栏 HTML（放操作栏最右侧；组模型显示 (M 张)，单行模型仅「共 N 条明细」；信息区单 span 防换行） */
 function pagerHtml(m){
   const t=tblPage[m];
-  if(!t||!t.total)return '';
+  if(!PAGED_FORMS[m]||!t||!t.total)return '';
   const sz=t.size||pageSizeOf(m);
   const pg=Math.min(t.page||1,t.maxPage||1);
   const disF=pg<=1,disL=pg>=(t.maxPage||1);
+  const gl=PAGED_GROUP_LABEL[m]&&t.groupCount>0?(' ('+t.groupCount+' '+PAGED_GROUP_LABEL[m]+')'):'';
   return '<span class="tbl-pager" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;flex:none;white-space:nowrap;font-size:12px;color:var(--muted)">'+
-    '<span>共 '+t.total+' 条明细 ('+t.docCount+' 张) · 第 <input type="text" value="'+pg+'" style="width:38px;text-align:center;padding:1px 2px;border:1px solid var(--border);border-radius:4px" onkeydown="if(event.key===\'Enter\')pagerJump(\''+m+'\',this)" onchange="pagerJump(\''+m+'\',this)"> 页 / 共 '+t.maxPage+' 页</span>'+
+    '<span>共 '+t.total+' 条明细'+gl+' · 第 <input type="text" value="'+pg+'" style="width:38px;text-align:center;padding:1px 2px;border:1px solid var(--border);border-radius:4px" onkeydown="if(event.key===\'Enter\')pagerJump(\''+m+'\',this)" onchange="pagerJump(\''+m+'\',this)"> 页 / 共 '+t.maxPage+' 页</span>'+
     '<button class="btn btn-sm" '+(disF?'disabled':'')+' onclick="pagerGo(\''+m+'\',1)" title="第一页">|◀</button>'+
     '<button class="btn btn-sm" '+(disF?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(pg-1)+')" title="上一页">◀</button>'+
     '<button class="btn btn-sm" '+(disL?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(pg+1)+')" title="下一页">▶</button>'+
@@ -1813,7 +1825,9 @@ function renderProducts(){
     const cols=fields.product;
     TBL_SCHEMAS.product=cols.map(f=>({key:f.key,label:f.label,type:f.type==='number'?'number':(f.type==='date'?'date':'text'),select:f.type==='select',locked:f.locked}));
     TBL_ROWS.product=products;
-    const shown=applyTable('product',products);
+    let shown=applyTable('product',products);
+    /* 2026-08-25.68：金蝶式分页（单行模型直接切行） */
+    if(PAGED_FORMS.product&&shown.length>0)shown=slicePaged('product',shown,pageSizeOf('product')).rows;
     lastRowIds.product=shown.map(p=>products.indexOf(p));
     html+=bulkBar('product');
     html+=filterBar('product');
@@ -2521,8 +2535,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   ];
   TBL_ROWS[formKey]=rows;
   let shown=applyTable(formKey,rows);
-  /* 2026-08-25.66：金蝶式分页（仅 order_frame 试点）——按明细行容量分页 + 整单不拆；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
-  if(formKey==='order_frame'&&shown.length>0)shown=sliceOrderPaged(formKey,shown,pageSizeOf(formKey)).rows;
+  /* 2026-08-25.66/.68：金蝶式分页（order_frame/order_inv）——整单不拆（groupKey=r.order.id）；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
+  if(PAGED_FORMS[formKey]&&shown.length>0)shown=slicePaged(formKey,shown,pageSizeOf(formKey),r=>r.order.id).rows;
   /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
      仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
   const HEAD_COLS=5;
@@ -3924,6 +3938,8 @@ function renderDelivery(){
     const lineKeys=TBL_SCHEMAS.delivery.slice(HEAD_COLS).map(c=>c.key);
     const shouldMerge=!sortKey||!lineKeys.includes(sortKey);
     if(shouldMerge) shown=[...shown].sort((a,b)=>a.di-b.di);   // 按交付计划顺序聚合（无手动排序时=原顺序；手动按单据级列排序时同订单管理：以单据聚合保序）
+    /* 2026-08-25.68：金蝶式分页（按交付计划分组整单不拆，groupKey=r.di） */
+    if(PAGED_FORMS.delivery&&shown.length>0)shown=slicePaged('delivery',shown,pageSizeOf('delivery'),r=>r.di).rows;
     const groupMap=new Map();
     shown.forEach((r,i)=>{if(!groupMap.has(r.di))groupMap.set(r.di,{start:i,count:0});groupMap.get(r.di).count++;});
     lastRowIds.delivery=shown.map(r=>r.di);
@@ -4453,13 +4469,16 @@ function renderProdPlanDay(writable,all){
       return b.p.id.localeCompare(a.p.id,'zh-CN');
     });
   }
+  /* 2026-08-25.68：金蝶式分页（按排产单分组整单不拆，groupKey=r.p.id；汇总卡仍统计全量 _ppAll） */
+  const _ppAll=shown;
+  if(PAGED_FORMS.prodPlan&&shown.length>0)shown=slicePaged('prodPlan',shown,pageSizeOf('prodPlan'),r=>r.p.id).rows;
   lastRowIds.prodPlan=shown.map(r=>r.pi);
   let html=bulkBar('prodPlan');
   html+=filterBar('prodPlan');
-  /* 时间段/总览汇总卡（.10） */
+  /* 时间段/总览汇总卡（.10）：统计过滤后全量（不受分页影响） */
   if(isRange||all){
     let tPlan=0,tDone=0;
-    shown.forEach(r=>{tPlan+=ppPlanOf(r.it);tDone+=ppDoneOf(r.it);});
+    _ppAll.forEach(r=>{tPlan+=ppPlanOf(r.it);tDone+=ppDoneOf(r.it);});
     html+='<div class="stats" style="margin-bottom:10px">'+
       statCard(dayPlans.length,'排产单数','blue')+
       statCard(tPlan,'计划总量','blue')+
@@ -5193,8 +5212,11 @@ function renderLogs(){
       {key:'detail',label:'详情(旧→新)',type:'text'}
     ];
     TBL_ROWS.logs=logs;
-    const shownLogs=applyTable('logs',logs);
+    let shownLogs=applyTable('logs',logs);
+    /* 2026-08-25.68：金蝶式分页（单行模型直接切行；日志无操作栏，分页栏放表格上方右对齐） */
+    if(PAGED_FORMS.logs&&shownLogs.length>0)shownLogs=slicePaged('logs',shownLogs,pageSizeOf('logs')).rows;
     html+=filterBar('logs');
+    html+='<div class="bulk-bar" style="margin:8px 0 6px">'+pagerHtml('logs')+'</div>';
     html+='<div class="table-wrap"><table><thead><tr>'
       +thCol('logs',TBL_SCHEMAS.logs[0],'min-width:140px')
       +thCol('logs',TBL_SCHEMAS.logs[1],'width:60px')
@@ -5387,9 +5409,11 @@ function renderTransfers(){
     {key:'user',label:'操作人',type:'text'}
   ];
   TBL_ROWS.transfers=transfers||[];
-  const shown=applyTable('transfers',TBL_ROWS.transfers);
+  let shown=applyTable('transfers',TBL_ROWS.transfers);
+  /* 2026-08-25.68：金蝶式分页（单行模型直接切行） */
+  if(PAGED_FORMS.transfers&&shown.length>0)shown=slicePaged('transfers',shown,pageSizeOf('transfers')).rows;
   let html='<div class="page">';
-  html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录每次「调用库存 / 退回库存」及冲销。记录不可修改，仅可逐条冲销。</span></div>';
+  html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录每次「调用库存 / 退回库存」及冲销。记录不可修改，仅可逐条冲销。</span>'+pagerHtml('transfers')+'</div>';
   html+=filterBar('transfers');
   html+='<div class="table-wrap"><table><thead><tr>'
     +TBL_SCHEMAS.transfers.map(c=>thCol('transfers',c)).join('')
@@ -6548,8 +6572,8 @@ function bulkBar(m){
     if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
   }
   const cnt=' <span class="sel-count" id="selCount_'+m+'">'+(selCount(m)>0?('已选 '+selCount(m)+' 项'):'')+'</span>';
-  /* 2026-08-25.66：金蝶式分页栏（仅 order_frame 试点，置于操作栏最右侧） */
-  const pager=(m==='order_frame')?pagerHtml(m):'';
+  /* 2026-08-25.66/.68：金蝶式分页栏（PAGED_FORMS 启用，置于操作栏最右侧） */
+  const pager=PAGED_FORMS[m]?pagerHtml(m):'';
   return '<div class="bulk-bar">'+btns.join('')+cnt+pager+'</div>';
 }
 
@@ -6955,6 +6979,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.67</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.68</div>
 </body>
 </html>
