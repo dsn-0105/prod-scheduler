@@ -3918,7 +3918,7 @@ function renderDelivery(){
       {key:'createdAt',label:'单据时间',type:'date',get:r=>r.d.createdAt},
       {key:'orderId',label:'订单编号',type:'text',get:r=>r.d.orderId},
       {key:'customer',label:'客户',type:'text',get:r=>r.d.customer},
-      {key:'ppStatus',label:'状态',type:'text',select:true,options:['未排产','部分排产','全部排产'],get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},   /* 2026-08-25.55/.58：状态列恢复复选框多选（select 类列）+ 筛选显示全部状态 */
+      {key:'ppStatus',label:'状态',type:'text',select:true,options:['未下推','部分下推','全部下推'],get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},   /* 2026-08-25.55/.58：状态列恢复复选框多选（select 类列）+ 筛选显示全部状态；.78 选项改名 未下推/部分下推/全部下推 */
       {key:'finalDate',label:'最终交付期',type:'date',get:r=>r.d.finalDate},
       {key:'firstDate',label:'首次交付日',type:'date',get:r=>r.d.firstDate},
       {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
@@ -4160,21 +4160,21 @@ function ppPlannedTotal(deliveryIdx){
   });
   return planned;
 }
-/* 交付计划排产状态（build 2026-08-24.16）：未排产/部分排产/全部排产，实时计算不可编辑。
+/* 交付计划排产状态（build 2026-08-24.16；.78 改名 未排产→未下推/部分排产→部分下推/全部排产→全部下推）：实时计算不可编辑。
    口径：已排产=名下全部排产单（排除已取消，同 ppPlannedOf）items.planQty 合计；总计划=明细行 planQty 合计；
    独立单（deliveryIdx=null）不参与。删除/取消排产单、改排产数量、改交付计划 planQty 均自动反映。 */
-const PP_DL_STATUS_W={未排产:0,部分排产:1,全部排产:2};
+const PP_DL_STATUS_W={未下推:0,部分下推:1,全部下推:2};
 function ppDeliveryStatus(deliveryIdx){
   const d=deliveries[deliveryIdx];
-  if(!d)return '未排产';
+  if(!d)return '未下推';
   let total=0;
   deliveryItems(d).forEach(it=>{total+=num(it.planQty);});
-  if(total<=0)return '未排产';
+  if(total<=0)return '未下推';
   const planned=ppPlannedTotal(deliveryIdx);
-  if(planned<=0)return '未排产';
-  return planned>=total?'全部排产':'部分排产';
+  if(planned<=0)return '未下推';
+  return planned>=total?'全部下推':'部分下推';
 }
-function ppDlStatusTag(st){ return st==='全部排产'?'tag-green':st==='部分排产'?'tag-blue':'tag-amber'; }
+function ppDlStatusTag(st){ return st==='全部下推'?'tag-green':st==='部分下推'?'tag-blue':'tag-amber'; }
 /* ================================================================
    报工明细（productionReports，build 2026-08-24.8）：
    一次报工=一条记录；行内展开（▶）+ 弹窗查看；只读展示
@@ -7216,6 +7216,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.77</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.78</div>
 </body>
 </html>
