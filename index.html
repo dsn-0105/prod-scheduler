@@ -4561,7 +4561,8 @@ function renderProdPlanAgg(view,writable){
   const agg={};
   inRange.forEach(p=>{ppItems(p).forEach(it=>{
     const pid=it.productId||'';
-    if(!agg[pid])agg[pid]={productId:pid,productName:it.productName||'',planQty:0,doneQty:0,count:0};
+    /* 2026-08-29.83：周/月聚合视图新增「型号」「规格」（取排产明细行 it.model/it.spec，同产品多行一致） */
+    if(!agg[pid])agg[pid]={productId:pid,productName:it.productName||'',model:it.model||'',spec:it.spec||'',planQty:0,doneQty:0,count:0};
     agg[pid].planQty+=ppPlanOf(it);agg[pid].doneQty+=ppDoneOf(it);agg[pid].count++;
   });});
   const list=Object.values(agg).sort((a,b)=>b.planQty-a.planQty);
@@ -4572,10 +4573,11 @@ function renderProdPlanAgg(view,writable){
     statCard(tDone,'累计完成','amber')+
     statCard(tPlan>0?Math.round(tDone/tPlan*100):0,'整体进度%','')+
     '</div>';
-  html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th><th style="text-align:right">进度</th><th style="text-align:right">排产单数</th></tr></thead><tbody>';
+  html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th><th style="text-align:right">进度</th><th style="text-align:right">排产单数</th></tr></thead><tbody>';
   list.forEach(a=>{
     const pct=a.planQty>0?Math.round(a.doneQty/a.planQty*100):0;
     html+='<tr><td>'+esc(a.productId)+'</td><td>'+esc(a.productName)+'</td>'+
+      '<td>'+esc(a.model||'')+'</td><td>'+esc(a.spec||'')+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+money(a.planQty)+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(a.doneQty)+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(a.planQty>0&&a.doneQty>=a.planQty?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
@@ -5399,7 +5401,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-29（build .81）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-29（build .83）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5445,7 +5447,7 @@ var GUIDE_MD=[
 '- **投产**：勾选「待排产」单 → 「投产」→ 状态变「生产中」（才能报工）；▾ 下拉可「反投产」（生产中且未报工可回退）。',
 '- **报工**：勾选 1 张「生产中」单 → 「报工」→ 填写报工人（选填）+ 各工序本次完成数（增量）→ 提交。全部完工后确认标记「已完成」。',
 '- **入库工序报工**会**自动回写订单已交付**（销售/库存订单都回写，库存联动产品库存）。',
-'- 视图：日/周/月/总览 切换；日视图可选日期范围；展开 ▶ 可查看每次报工明细并编辑/删除。',
+'- 视图：日/周/月/总览 切换；日视图可选日期范围；展开 ▶ 可查看每次报工明细并编辑/删除。周/月视图按产品汇总（含型号/规格/计划量/完成量/进度）。',
 '',
 '### 工序模板',
 '- 预置 6 工序（装配/瞬时/延时/内包/老化/入库）；产品绑定模板，下推排产时按模板生成工序；默认模板不可删。',
@@ -7231,6 +7233,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.82</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.83</div>
 </body>
 </html>
