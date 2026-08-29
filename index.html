@@ -6772,8 +6772,8 @@ function bulkBar(m){
       '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleLaunchMenu();ppReverseLaunch()" title="将选中的「生产中」排产计划转回「待排产」（已报工的无法反投产）">反投产</button>'+
       '</div></span>');
     /* 2026-08-29.73：延后/提前计划日期（样式复用投产|▾ 融合按钮规范；主按钮=±1 天，下拉=3/7/自定义）。
-       .74：提前按钮（含下拉）改常规白底，延后保持蓝色主按钮 */
-    if(m==='prodPlan')btns.push(ppShiftBtnHtml('delay','延后'));
+       .74/.75：提前、延后、报工均改常规白底（含下拉选项白底化） */
+    if(m==='prodPlan')btns.push(ppShiftBtnHtml('delay','延后',true));
     if(m==='prodPlan')btns.push(ppShiftBtnHtml('advance','提前',true));
     if(m==='prodPlan')btns.push('<button class="btn btn-sm" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
@@ -7200,6 +7200,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.74</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.75</div>
 </body>
 </html>
