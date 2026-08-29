@@ -4216,7 +4216,7 @@ function ppExpandRow(p){
           (plan>0?('（累计 '+money(cur)+'/'+money(plan)+'）'):('（累计 '+money(cur)+'）'))+'</span>';
       }).join(' · ');
       return '<div class="pp-rep-line"><span class="pp-rep-time">'+esc(r.date||'')+' '+esc(r.time||'')+'</span>'+
-        '<span class="pp-rep-worker">'+esc(r.worker||'')+'</span><div class="pp-rep-parts">'+parts+'</div></div>';
+        '<span class="pp-rep-worker">'+(r.worker?esc(r.worker):'—')+'</span><div class="pp-rep-parts">'+parts+'</div></div>';
     }).join('');
   }
   return '<tr class="pp-exp-row"><td colspan="'+(TBL_SCHEMAS.prodPlan.length+2)+'"><div class="pp-exp">'+
@@ -4267,7 +4267,7 @@ function ppSaveReportEdits(planId){
     return {idx:productionReports.indexOf(r),worker:worker,qtyMap:qtyMap};
   });
   for(let i=0;i<updates.length;i++){
-    if(!updates[i].worker){alert('第 '+(i+1)+' 条报工缺少报工人');return;}
+    /* 2026-08-29.77：报工人改非必填（移除必填校验） */
     /* 2026-08-25.41：单道工序数量可改 0（≥0 整数）；一条报工至少保留一道工序 >0（全 0=删除该条，走删除按钮） */
     let anyQ=0;
     for(const step in updates[i].qtyMap){
@@ -4951,8 +4951,8 @@ function reportProdPlan(){
       '<td style="font-size:12px;color:var(--muted);max-width:140px">'+esc(it.lineNotes||'')+'</td></tr>';
   });
   const body='<div class="form-row">'+
-    '<div><label>报工人 *</label><input type="text" id="rp_worker" placeholder="请输入报工人姓名" maxlength="20"></div>'+
-    '<div style="flex:1"><span style="font-size:12px;color:var(--muted)">报工人为手动必填，将记录到报工明细中</span></div>'+
+    '<div><label>报工人</label><input type="text" id="rp_worker" placeholder="选填，最多 20 字" maxlength="20"></div>'+
+    '<div style="flex:1"><span style="font-size:12px;color:var(--muted)">报工人为选填，填写后记录到报工明细中</span></div>'+
     '</div>'+
     '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">'+esc(p.id)+' · 订单 '+esc(p.orderId)+' · 客户 '+esc(p.customer)+' · 计划 '+fmtDate(p.planDate)+'（未填写的工序默认为 0；* 为关键工序提示；本次数量为增量，且不能超过本次排产数；「入库」工序报工后将自动回写订单已交付数量）</div>'+
     '<div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>产品编码</th><th>产品名称</th><th style="text-align:right">计划数量</th><th style="text-align:right">累计完成</th>'+union.map(x=>'<th style="text-align:center">'+esc(x.label)+(x.mandatory?'<span style="color:var(--red)">*</span>':'')+'</th>').join('')+'<th style="text-align:left">行备注</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -4963,7 +4963,7 @@ function saveReport(pi){
   const p=productionPlans[pi];
   if(!p)return;
   const worker=String((document.getElementById('rp_worker')||{}).value||'').trim();
-  if(!worker){alert('请填写报工人');document.getElementById('rp_worker').focus();return;}
+  /* 2026-08-29.77：报工人改非必填（空则存 ''，明细展示 —） */
   const items=ppItems(p);
   const inputs=Array.prototype.slice.call(document.querySelectorAll('.rp_qty'));
   const entries=[];
@@ -5428,7 +5428,7 @@ var GUIDE_MD=[
 '### 排产计划',
 '- **下推**：在交付计划页勾选 → 「下推排产计划」→ 弹窗可调整本次排产数量（不能超过未排产数）→ 保存后自动生成排产单（多行明细自动拆成多张单）。',
 '- **投产**：勾选「待排产」单 → 「投产」→ 状态变「生产中」（才能报工）；▾ 下拉可「反投产」（生产中且未报工可回退）。',
-'- **报工**：勾选 1 张「生产中」单 → 「报工」→ 填写报工人 + 各工序本次完成数（增量）→ 提交。全部完工后确认标记「已完成」。',
+'- **报工**：勾选 1 张「生产中」单 → 「报工」→ 填写报工人（选填）+ 各工序本次完成数（增量）→ 提交。全部完工后确认标记「已完成」。',
 '- **入库工序报工**会**自动回写订单已交付**（销售/库存订单都回写，库存联动产品库存）。',
 '- 视图：日/周/月/总览 切换；日视图可选日期范围；展开 ▶ 可查看每次报工明细并编辑/删除。',
 '',
@@ -7216,6 +7216,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.76</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.77</div>
 </body>
 </html>
