@@ -734,6 +734,8 @@ const NAV=[
   {id:'dashboard',label:'看板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>'},
   {id:'product',label:'产品主数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
   {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
+  /* 2026-08-25.65：库存订单从订单管理独立为「库存管理」页签（完整承载 order_inv 模块） */
+  {id:'inv',label:'库存管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 8l9 5 9-5"/></svg>'},
   {id:'prodPlan',label:'排产计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'},
   {id:'delivery',label:'交付计划',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7"/></svg>'},
   {id:'processTpl',label:'工序模板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4a4 4 0 0 1-4 4H8M14 13v1a4 4 0 0 0 4 4h1"/></svg>'},
@@ -1450,6 +1452,7 @@ function renderContent(){
     case 'dashboard':c.innerHTML=renderDashboard();break;
     case 'product':c.innerHTML=renderProducts();break;
     case 'order':c.innerHTML=renderOrders();break;
+    case 'inv':c.innerHTML=renderInvOrders();break;   /* 2026-08-25.65：库存管理独立页签 */
     case 'dailyPlan':c.innerHTML=renderDailyPlan();break;
     case 'dailyReport':c.innerHTML=renderDailyReport();break;
     case 'prodPlan':c.innerHTML=renderProdPlan();break;
@@ -2331,9 +2334,17 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">销售订单 · 库存订单 · 交付进度 · 状态跟踪</span> '+(canWriteForm('order')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'销售订单\')">新增订单</button>':'')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">销售订单 · 交付进度 · 状态跟踪</span> '+(canWriteForm('order')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'销售订单\')">新增订单</button>':'')+'</div>';
   const prodMap={};products.forEach(p=>prodMap[p.id]=p);
+  /* 2026-08-25.65：库存订单已独立为「库存管理」页签（renderInvOrders），订单管理仅保留销售订单 */
   html+=orderSection('frame','order_frame','销售订单','客户销售订单 · 交付进度 · 状态跟踪',prodMap);
+  html+='</div>';
+  return html;
+}
+/* 2026-08-25.65：库存管理独立页签——完整承载库存订单模块（新增/编辑/生成交付计划/调拨查询/结余/4 档警示全保留） */
+function renderInvOrders(){
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 8l9 5 9-5"/></svg>库存管理 <span class="desc">库存订单 · 调用/退回 · 结余与库存上下限警示</span> '+(canWriteForm('order_inv')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'库存订单\')">新增库存订单</button>':'')+'</div>';
+  const prodMap={};products.forEach(p=>prodMap[p.id]=p);
   html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
   html+='</div>';
   return html;
@@ -6872,6 +6883,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.64</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.65</div>
 </body>
 </html>
