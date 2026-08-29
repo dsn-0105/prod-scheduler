@@ -2994,6 +2994,17 @@ function orderRowVisibleInDom(id){
   for(let i=0;i<tds.length;i++){if(String(tds[i].textContent).trim()===String(id))return true;}
   return false;
 }
+/* 2026-08-25.64：排产计划幽灵选择清理（对齐订单 .5 模式）——操作后（投产/反投产/报工/编辑报工/删除报工/编辑）若排产单
+   被当前筛选/排序隐藏（如投产后退出生前、改计划日期、完工→已完成等），自动取消勾选，防 selSet 残留误报「选择了两条」 */
+function clearHiddenProdPlanSel(pi){
+  if(pi==null)return;
+  if(selSet('prodPlan').delete(String(pi)))updateSelUI('prodPlan');
+}
+function prodPlanRowVisibleInDom(id){
+  const tds=document.querySelectorAll('#content .table-wrap td[data-key="id"]');
+  for(let i=0;i<tds.length;i++){if(String(tds[i].textContent).trim()===String(id))return true;}
+  return false;
+}
 function maybeWarnHiddenOrder(formKey,id){
   if(orderRowVisibleInDom(id))return;   // 仍在列表（含跨区块移动）→ 无需提示
   const s=tState(formKey);
@@ -4229,6 +4240,9 @@ function ppSaveReportEdits(planId){
   logOp('编辑报工','排产计划','编辑排产单「'+p.id+'」报工明细（报工人/数量）');
   closeModal();
   renderContent();
+  /* 2026-08-25.64：编辑报工后状态可能回退（已完成→生产中）导致被筛选隐藏，自动取消勾选 */
+  const _rpi=productionPlans.indexOf(p);
+  if(_rpi>=0&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(_rpi);
 }
 /* 删除一条报工明细：同步回退排产单对应工序累计完成数；已完成后回退则状态回到生产中 */
 function ppDelReport(id){
@@ -4266,6 +4280,11 @@ function ppDelReport(id){
   logOp('删除报工','排产计划','删除排产单「'+rec.planId+'」报工 '+(rec.date||'')+' '+(rec.time||'')+'：'+labelParts+'（累计已回退）');
   closeModal();
   renderContent();
+  /* 2026-08-25.64：删除报工后状态可能回退（已完成→生产中）导致被筛选隐藏，自动取消勾选 */
+  if(p){
+    const _dpi=productionPlans.indexOf(p);
+    if(_dpi>=0&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(_dpi);
+  }
 }
 
 /* 主渲染：视图切换 + 日视图表格 / 周月聚合 */
@@ -4621,6 +4640,8 @@ function saveProdPlan(idx){
   save('productionPlans',productionPlans);
   closeModal();
   renderContent();
+  /* 2026-08-25.64：编辑后若被当前筛选/排序隐藏（如改了计划日期/数量），自动取消勾选防幽灵选择（下推新单 idx<0 无需处理） */
+  if(idx>=0&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(idx);
 }
 function copyProdPlan(i){
   const c=JSON.parse(JSON.stringify(productionPlans[i]));
@@ -4651,6 +4672,8 @@ function delProdPlan(i){
   productionPlans.splice(i,1);
   save('productionPlans',productionPlans);
   renderContent();
+  /* 2026-08-25.64：删除后清理勾选，防 splice 索引漂移幽灵选择 */
+  selSet('prodPlan').delete(String(i));
 }
 
 /* 2026-08-25.27/28：投产——支持多选批量投产（选中多条「待排产」排产计划 → 置「生产中」）；
@@ -4672,6 +4695,8 @@ function ppLaunch(){
   if(launched===0){alert('所选排产计划均不可投产（需为「待排产」状态）'+(skippedIds.length?('：\n'+skippedIds.join('、')):''));return;}
   save('productionPlans',productionPlans);
   renderContent();
+  /* 2026-08-25.64：投产改变状态后若被当前筛选隐藏（如筛「待排产」→ 已投产行不再显示），自动取消勾选防幽灵选择 */
+  idxs.forEach(pi=>{const p=productionPlans[pi];if(p&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(pi);});
   if(skipped>0)alert('已投产 '+launched+' 条；跳过 '+skipped+' 条（非待排产）：'+skippedIds.join('、'));
 }
 /* 2026-08-25.29：投产下拉菜单开关（▾ 箭头） */
@@ -4705,6 +4730,8 @@ function ppReverseLaunch(){
   }
   save('productionPlans',productionPlans);
   renderContent();
+  /* 2026-08-25.64：反投产改变状态后若被当前筛选隐藏（如筛「生产中」→ 已反投产行不再显示），自动取消勾选防幽灵选择 */
+  idxs.forEach(pi=>{const p=productionPlans[pi];if(p&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(pi);});
   if(skipped>0)alert('已反投产 '+done+' 条；跳过 '+skipped+' 条：'+skippedIds.join('、')+(badIds.length?('（其中已报工无法反投产：'+badIds.join('、')+'）'):''));
 }
 
@@ -4889,6 +4916,8 @@ function applyReport(pi,entries,items,worker){
       renderContent();
     }
   }
+  /* 2026-08-25.64：报工/完工后状态变化（待排产→生产中 / →已完成）若被当前筛选隐藏（如筛「生产中」后全完工→已完成），自动取消勾选 */
+  if(!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(pi);
 }
 
 /* 排产计划导出平铺行（每产品一行） */
@@ -6843,6 +6872,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.63</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.64</div>
 </body>
 </html>
