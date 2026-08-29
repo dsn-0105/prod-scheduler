@@ -907,6 +907,70 @@ function sortRows(m,rows){
 
 function applyTable(m,rows){return sortRows(m,filterRows(m,rows));}
 
+/* ================================================================
+   2026-08-25.66：金蝶式表单分页（仅 order_frame 试点）——每页条数 10/100/1000 可选（localStorage 记忆），
+   按明细行容量分页 + 整单不拆（同订单全部明细同页，防 rowspan 合并断裂）；排序/筛选后回第 1 页
+================================================================ */
+var tblPage={};   // tblPage[formKey]={page,size,total,maxPage,docCount}
+const PAGE_SIZES=[10,100,1000];
+function pageSizeOf(m){
+  const t=tblPage[m];
+  if(t&&t.size)return t.size;
+  let v=100;
+  try{v=parseInt(localStorage.getItem(KEY+'pageSize_'+m)||'100',10)||100;}catch(e){}
+  if(!t)tblPage[m]={page:1,size:v};else t.size=v;
+  return v;
+}
+function pageOf(m){const t=tblPage[m];return t&&t.page?t.page:1;}
+function pagerGo(m,to){
+  if(!tblPage[m])tblPage[m]={page:1,size:pageSizeOf(m)};
+  const max=tblPage[m].maxPage||1;
+  tblPage[m].page=Math.min(Math.max(1,to),max);
+  renderContent();
+}
+function pagerSize(m,v){
+  const s=parseInt(v,10)||100;
+  tblPage[m]={page:1,size:s};
+  try{localStorage.setItem(KEY+'pageSize_'+m,String(s));}catch(e){}
+  renderContent();
+}
+function pagerJump(m,inp){
+  const v=parseInt(inp.value,10);
+  if(!isNaN(v))pagerGo(m,v);
+  else{inp.value=pageOf(m);}
+}
+/* 订单行「整单不拆」分页：每页最多 size 行明细，同订单全部明细同页；页码越界自动回 1；返回 {rows,maxPage,total,docCount} */
+function sliceOrderPaged(m,shown,size){
+  const total=shown.length;
+  if(!total)return {rows:[],maxPage:1,total:0,docCount:0};
+  const gmap=new Map();
+  shown.forEach(r=>{if(!gmap.has(r.order.id))gmap.set(r.order.id,[]);gmap.get(r.order.id).push(r);});
+  const pages=[];let cur=[],cnt=0;
+  gmap.forEach(g=>{if(cnt>0&&cnt+g.length>size){pages.push(cur);cur=[];cnt=0;}cur=cur.concat(g);cnt+=g.length;});
+  if(cur.length)pages.push(cur);
+  const maxPage=pages.length||1;
+  let page=pageOf(m);if(page>maxPage)page=1;
+  if(!tblPage[m])tblPage[m]={page:1,size:size};
+  tblPage[m].page=page;tblPage[m].maxPage=maxPage;tblPage[m].total=total;tblPage[m].docCount=gmap.size;
+  return {rows:pages[page-1]||[],maxPage:maxPage,total:total,docCount:gmap.size};
+}
+/* 金蝶式分页栏 HTML（放操作栏最右侧，仅 order_frame 且非空时显示） */
+function pagerHtml(m){
+  const t=tblPage[m];
+  if(!t||!t.total)return '';
+  const sz=t.size||pageSizeOf(m);
+  const pg=Math.min(t.page||1,t.maxPage||1);
+  const disF=pg<=1,disL=pg>=(t.maxPage||1);
+  return '<span class="tbl-pager" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">'+
+    '<span>共 '+t.total+' 条明细 ('+t.docCount+' 张)</span>'+
+    '<span>第 <input type="text" value="'+pg+'" style="width:38px;text-align:center;padding:1px 2px;border:1px solid var(--border);border-radius:4px" onkeydown="if(event.key===\'Enter\')pagerJump(\''+m+'\',this)" onchange="pagerJump(\''+m+'\',this)"> 页 / 共 '+t.maxPage+' 页</span>'+
+    '<button class="btn btn-sm" '+(disF?'disabled':'')+' onclick="pagerGo(\''+m+'\',1)" title="第一页">|◀</button>'+
+    '<button class="btn btn-sm" '+(disF?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(pg-1)+')" title="上一页">◀</button>'+
+    '<button class="btn btn-sm" '+(disL?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(pg+1)+')" title="下一页">▶</button>'+
+    '<button class="btn btn-sm" '+(disL?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(t.maxPage||1)+')" title="最后一页">▶|</button>'+
+    '<select style="padding:1px 2px;border:1px solid var(--border);border-radius:4px" onchange="pagerSize(\''+m+'\',this.value)">'+PAGE_SIZES.map(s=>'<option value="'+s+'" '+(s===sz?'selected':'')+'>'+s+'条/页</option>').join('')+'</select></span>';
+}
+
 /* 可点击列头（排序+筛选图标） */
 var FILT_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>';
 /* 2026-08-25.63：感叹号参数化（fill=红/黄/灰，title 区分维度）——替代 .42/.60 的 4 个固定常量 */
@@ -939,6 +1003,8 @@ function toggleSort(m,key){
   if(!s.sort||s.sort.key!==key)s.sort={key:key,dir:1};
   else if(s.sort.dir===1)s.sort.dir=-1;
   else s.sort=null;
+  /* 2026-08-25.66：排序变化后回第 1 页（金蝶同款） */
+  if(tblPage[m])tblPage[m].page=1;
   renderContent();
 }
 
@@ -1044,8 +1110,8 @@ function openFilter(el,m,key){
 function filtCheckAll(btn,on){
   btn.closest('.filt-pop').querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=on);
 }
-function clearFilt(m,key){delete tState(m).filters[key];closeFiltPop();renderContent();}
-function clearAllFilt(m){tState(m).filters={};closeFiltPop();renderContent();}
+function clearFilt(m,key){delete tState(m).filters[key];closeFiltPop();if(tblPage[m])tblPage[m].page=1;renderContent();}
+function clearAllFilt(m){tState(m).filters={};closeFiltPop();if(tblPage[m])tblPage[m].page=1;renderContent();}
 function applyFilt(m,key,useChecks){
   const f={mode:'contains',val:''};
   if(useChecks){
@@ -1071,7 +1137,10 @@ function applyFilt(m,key,useChecks){
     }
   }
   tState(m).filters[key]=f;
-  closeFiltPop();renderContent();
+  closeFiltPop();
+  /* 2026-08-25.66：筛选变化后回第 1 页（金蝶同款） */
+  if(tblPage[m])tblPage[m].page=1;
+  renderContent();
 }
 
 /* 筛选状态条（有筛选时显示在表格上方） */
@@ -2453,6 +2522,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   ];
   TBL_ROWS[formKey]=rows;
   let shown=applyTable(formKey,rows);
+  /* 2026-08-25.66：金蝶式分页（仅 order_frame 试点）——按明细行容量分页 + 整单不拆；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
+  if(formKey==='order_frame'&&shown.length>0)shown=sliceOrderPaged(formKey,shown,pageSizeOf(formKey)).rows;
   /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
      仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
   const HEAD_COLS=5;
@@ -6478,7 +6549,9 @@ function bulkBar(m){
     if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
   }
   const cnt=' <span class="sel-count" id="selCount_'+m+'">'+(selCount(m)>0?('已选 '+selCount(m)+' 项'):'')+'</span>';
-  return '<div class="bulk-bar">'+btns.join('')+cnt+'</div>';
+  /* 2026-08-25.66：金蝶式分页栏（仅 order_frame 试点，置于操作栏最右侧） */
+  const pager=(m==='order_frame')?pagerHtml(m):'';
+  return '<div class="bulk-bar">'+btns.join('')+cnt+pager+'</div>';
 }
 
 /* 单选操作（编辑/复制）：多选或空选时拒绝 */
@@ -6883,6 +6956,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.65</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.66</div>
 </body>
 </html>
