@@ -4809,6 +4809,79 @@ function ppToggleLaunchMenu(){
 }
 /* 点击投产下拉以外区域自动关闭（全局注册一次） */
 if(!window.__ppLaunchMenuBound){window.__ppLaunchMenuBound=true;document.addEventListener('click',function(e){const m=document.getElementById('ppLaunchMenu');if(m&&!e.target.closest('#ppLaunchWrap'))m.style.display='none';});}
+/* ================================================================
+   2026-08-29.73：排产计划「延后/提前」——批量调整 planDate（样式复用投产|▾ 融合按钮规范 .30/.31）；
+   主按钮=±1 天，▾ 下拉=3 天/7 天/自定义（1~365）；多选；已完成/已取消跳过；提前不低于今天（钳制+提示）
+================================================================ */
+function ppShiftBtnHtml(type,label){
+  const act=type==='delay'?'延后':'提前';
+  const menuId=type==='delay'?'ppDelayMenu':'ppAdvanceMenu';
+  const wrapId=type==='delay'?'ppDelayWrap':'ppAdvanceWrap';
+  return '<span id="'+wrapId+'" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
+    '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="ppShiftDays(\''+type+'\',1)" title="'+act+'选中的排产计划 1 天（多选，待排产/生产中）">'+label+'</button>'+
+    '<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
+    '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\')" title="更多'+act+'天数">▾</button>'+
+    '<div id="'+menuId+'" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
+    '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\');ppShiftDays(\''+type+'\',3)">'+act+' 3 天</button>'+
+    '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleShiftMenu(\''+type+'\');ppShiftDays(\''+type+'\',7)">'+act+' 7 天</button>'+
+    '<div style="display:flex;gap:4px;padding:6px 10px"><input type="number" id="ppShiftCustom_'+type+'" min="1" max="365" placeholder="自定义天数(1~365)" style="flex:1;min-width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppShiftCustom(\''+type+'\',document.getElementById(\'ppShiftCustom_'+type+'\'))">确定</button></div>'+
+    '</div></span>';
+}
+/* 延后/提前菜单开关（互斥：打开一个关闭另一个） */
+function ppToggleShiftMenu(type){
+  ['delay','advance'].forEach(function(t){
+    const el=document.getElementById(t==='delay'?'ppDelayMenu':'ppAdvanceMenu');
+    if(el)el.style.display=(t===type&&el.style.display!=='block')?'block':'none';
+  });
+}
+/* 点击延后/提前菜单以外区域自动关闭（全局注册一次） */
+if(!window.__ppShiftMenuBound){window.__ppShiftMenuBound=true;document.addEventListener('click',function(e){
+  ['delay','advance'].forEach(function(t){
+    const menu=document.getElementById(t==='delay'?'ppDelayMenu':'ppAdvanceMenu');
+    const wrap=document.getElementById(t==='delay'?'ppDelayWrap':'ppAdvanceWrap');
+    if(menu&&wrap&&!e.target.closest('#'+wrap.id))menu.style.display='none';
+  });
+});}
+/* 自定义天数：1~365 正整数校验 */
+function ppShiftCustom(type,inp){
+  const v=parseInt(inp.value,10);
+  if(isNaN(v)||v<1||v>365){alert('请输入 1~365 的整数天数');inp.focus();return;}
+  ppShiftDays(type,v);
+}
+/* 批量延后/提前：待排产/生产中可操作，已完成/已取消跳过；提前不低于今天（钳制+提示）；执行后幽灵勾选清理（.64） */
+function ppShiftDays(type,days){
+  const s=selSet('prodPlan');
+  if(s.size===0){alert('请先勾选要'+(type==='delay'?'延后':'提前')+'的排产计划');return;}
+  const idxs=[...s].map(Number);
+  const dir=type==='delay'?1:-1;
+  const act=type==='delay'?'延后':'提前';
+  const today=todayStr();
+  let done=0,skipped=0,clamped=0;
+  const skippedIds=[],clampedIds=[];
+  idxs.forEach(pi=>{
+    const p=productionPlans[pi];
+    if(!p)return;
+    if(p.status==='已完成'||p.status==='已取消'){skipped++;skippedIds.push(p.id);return;}
+    const d=new Date(String(p.planDate)+'T00:00:00');
+    if(isNaN(d.getTime())){skipped++;skippedIds.push(p.id);return;}
+    const oldDate=fmtDate(p.planDate);
+    d.setDate(d.getDate()+dir*days);
+    let nd=fmtDate(d);
+    if(type==='advance'&&nd<today){nd=today;clamped++;clampedIds.push(p.id);}
+    p.planDate=nd;
+    done++;
+    logOp(act,'排产计划','排产单「'+p.id+'」计划日期 '+oldDate+' → '+nd);
+  });
+  if(done===0){alert('所选排产计划均不可'+act+'（需为「待排产」或「生产中」）'+(skippedIds.length?('：\n'+skippedIds.join('、')):''));return;}
+  save('productionPlans',productionPlans);
+  renderContent();
+  /* 2026-08-25.64：改 planDate 后若被当前筛选隐藏（如日视图日期范围外），自动取消勾选防幽灵选择 */
+  idxs.forEach(pi=>{const p=productionPlans[pi];if(p&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(pi);});
+  let msg='已'+act+' '+done+' 条';
+  if(skipped>0)msg+='；跳过 '+skipped+' 条（已完成/已取消）：'+skippedIds.join('、');
+  if(clamped>0)msg+='；'+clamped+' 条已'+act+'到今天（原计划日期早于今天）：'+clampedIds.join('、');
+  if(skipped>0||clamped>0)alert(msg);
+}
 /* 2026-08-25.29：反投产——选中多条「生产中」排产计划转回「待排产」；
    已报工（有报工明细记录 或 任一行累计完成>0）无法反投产；仅生产中可反投产（待排产/已完成跳过） */
 function ppReverseLaunch(){
@@ -6692,6 +6765,9 @@ function bulkBar(m){
       '<div id="ppLaunchMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
       '<button class="btn btn-sm btn-primary" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();ppToggleLaunchMenu();ppReverseLaunch()" title="将选中的「生产中」排产计划转回「待排产」（已报工的无法反投产）">反投产</button>'+
       '</div></span>');
+    /* 2026-08-29.73：延后/提前计划日期（样式复用投产|▾ 融合按钮规范；主按钮=±1 天，下拉=3/7/自定义） */
+    if(m==='prodPlan')btns.push(ppShiftBtnHtml('delay','延后'));
+    if(m==='prodPlan')btns.push(ppShiftBtnHtml('advance','提前'));
     if(m==='prodPlan')btns.push('<button class="btn btn-sm btn-primary" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
     if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
@@ -7117,6 +7193,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.72</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.73</div>
 </body>
 </html>
