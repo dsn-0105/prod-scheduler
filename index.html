@@ -4015,7 +4015,7 @@ function renderDelivery(){
    数据表 productionPlans（server.js DEFAULT_DATA+BIZ_KEYS 已登记）
    口径：planQty=交付计划行 planQty（1:1）；doneQty=成品入库累计（回写二期）
 ================================================================ */
-let planView='day';           // day / week / month
+let planView='all';           // day / week / month（.85：默认总览，原 day）
 let planViewDate=todayStr();  // 周/月视图参照日
 let planDateFrom=todayStr();  // 日视图开始日期（.10 起支持时间段；=结束 即单日）
 let planDateTo=todayStr();    // 日视图结束日期
@@ -5408,7 +5408,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-29（build .84）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-29（build .85）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5454,7 +5454,7 @@ var GUIDE_MD=[
 '- **投产**：勾选「待排产」单 → 「投产」→ 状态变「生产中」（才能报工）；▾ 下拉可「反投产」（生产中且未报工可回退）。',
 '- **报工**：勾选 1 张「生产中」单 → 「报工」→ 填写报工人（选填）+ 各工序本次完成数（增量）→ 提交。全部完工后确认标记「已完成」。',
 '- **入库工序报工**会**自动回写订单已交付**（销售/库存订单都回写，库存联动产品库存）。',
-'- 视图：日/周/月/总览 切换；日视图可选日期范围；展开 ▶ 可查看每次报工明细并编辑/删除。周/月视图按产品汇总（含型号/规格/计划量/完成量/进度）。',
+'- 视图：日/周/月/总览 切换（默认总览）；日视图可选日期范围；展开 ▶ 可查看每次报工明细并编辑/删除。周/月视图按产品汇总（含型号/规格/计划量/完成量/进度）。',
 '',
 '### 工序模板',
 '- 预置 6 工序（装配/瞬时/延时/内包/老化/入库）；产品绑定模板，下推排产时按模板生成工序；默认模板不可删。',
@@ -7240,6 +7240,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.84</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.85</div>
 </body>
 </html>
