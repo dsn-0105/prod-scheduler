@@ -954,16 +954,15 @@ function sliceOrderPaged(m,shown,size){
   tblPage[m].page=page;tblPage[m].maxPage=maxPage;tblPage[m].total=total;tblPage[m].docCount=gmap.size;
   return {rows:pages[page-1]||[],maxPage:maxPage,total:total,docCount:gmap.size};
 }
-/* 金蝶式分页栏 HTML（放操作栏最右侧，仅 order_frame 且非空时显示） */
+/* 金蝶式分页栏 HTML（放操作栏最右侧，仅 order_frame 且非空时显示；信息区单 span 防换行） */
 function pagerHtml(m){
   const t=tblPage[m];
   if(!t||!t.total)return '';
   const sz=t.size||pageSizeOf(m);
   const pg=Math.min(t.page||1,t.maxPage||1);
   const disF=pg<=1,disL=pg>=(t.maxPage||1);
-  return '<span class="tbl-pager" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">'+
-    '<span>共 '+t.total+' 条明细 ('+t.docCount+' 张)</span>'+
-    '<span>第 <input type="text" value="'+pg+'" style="width:38px;text-align:center;padding:1px 2px;border:1px solid var(--border);border-radius:4px" onkeydown="if(event.key===\'Enter\')pagerJump(\''+m+'\',this)" onchange="pagerJump(\''+m+'\',this)"> 页 / 共 '+t.maxPage+' 页</span>'+
+  return '<span class="tbl-pager" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;flex:none;white-space:nowrap;font-size:12px;color:var(--muted)">'+
+    '<span>共 '+t.total+' 条明细 ('+t.docCount+' 张) · 第 <input type="text" value="'+pg+'" style="width:38px;text-align:center;padding:1px 2px;border:1px solid var(--border);border-radius:4px" onkeydown="if(event.key===\'Enter\')pagerJump(\''+m+'\',this)" onchange="pagerJump(\''+m+'\',this)"> 页 / 共 '+t.maxPage+' 页</span>'+
     '<button class="btn btn-sm" '+(disF?'disabled':'')+' onclick="pagerGo(\''+m+'\',1)" title="第一页">|◀</button>'+
     '<button class="btn btn-sm" '+(disF?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(pg-1)+')" title="上一页">◀</button>'+
     '<button class="btn btn-sm" '+(disL?'disabled':'')+' onclick="pagerGo(\''+m+'\','+(pg+1)+')" title="下一页">▶</button>'+
@@ -6956,6 +6955,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.66</div>
+<div style="position:fixed;right:8px;bottom:4px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-25.67</div>
 </body>
 </html>
