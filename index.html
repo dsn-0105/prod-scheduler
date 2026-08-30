@@ -2535,17 +2535,18 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'unit',label:'单位',type:'text',get:r=>{const p=prodMap[r.item.productId];return p?p.unit:'';}},
     /* 2026-08-30.92：库存订单删除「数量」列（数量=最大库存量）；销售订单保留 */
     ...(formKey!=='order_inv'?[{key:'orderQty',label:'数量',type:'number',get:r=>r.item.orderQty}]:[]),
-    {key:'stockMax',label:'最大库存量',type:'number',get:r=>r.item.stockMax},
-    {key:'stockMin',label:'最小库存量',type:'number',get:r=>r.item.stockMin},
+    /* 2026-08-30.96：销售订单删除「最大库存量/最小库存量/已计划未交付」列（库存订单保留——库存上下限为库存核心字段） */
+    ...(formKey!=='order_frame'?[{key:'stockMax',label:'最大库存量',type:'number',get:r=>r.item.stockMax}]:[]),
+    ...(formKey!=='order_frame'?[{key:'stockMin',label:'最小库存量',type:'number',get:r=>r.item.stockMin}]:[]),
     {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.item.deliveredQty},
     /* 2026-08-30.94：库存订单删除「已调用/未交付」列（已调用=销售订单调用累计，库存恒 0；未交付计算保留在统计层） */
     ...(formKey!=='order_inv'?[{key:'calledQty',label:'已调用',type:'number',get:r=>r.item.calledQty}]:[]),   /* 2026-08-25.35：调用库存累计 */
     ...(formKey!=='order_inv'?[{key:'_undel',label:'未交付',type:'number',get:r=>invQtyOf(r.order,r.item)-num(r.item.deliveredQty)}]:[]),
-    {key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>{
+    ...(formKey!=='order_frame'?[{key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>{
        /* 2026-08-25.17 新口径：Σ交付计划.planQty − Σ名下排产单入库累计(排除已取消)，只跟生产入库走（调拨/导入初始不参与）。
           .33 行级：优先按订单行索引 orderLine 查行级 key，无则回退产品级 */
        const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
-       return pu?Math.max(0,pu.plan-pu.done):0; }},
+       return pu?Math.max(0,pu.plan-pu.done):0; }}]:[]),
     /* 2026-08-25.60：结余=已交付+已计划未交付（纯计算列，仅库存订单显示；销售订单共用模板不含此列） */
     ...(formKey==='order_inv'?[{key:'_balance',label:'结余',type:'number',get:r=>{
        const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
@@ -2649,12 +2650,12 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="spec">'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
       '<td data-key="unit">'+esc(prodMap[it.productId]?prodMap[it.productId].unit:'')+'</td>'+
       '<td data-key="orderQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
-      '<td data-key="stockMax" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
-      '<td data-key="stockMin" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
+      (formKey!=='order_frame'?'<td data-key="stockMax" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>':'')+
+      (formKey!=='order_frame'?'<td data-key="stockMin" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>':'')+
       '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvD==='red'?warnTriSvg('#ef4444',sumTxt):(lvD==='amber'?warnTriSvg('#f59e0b',sumTxt):(lvD==='gray'?warnTriSvg('#9ca3af',sumTxt):'')))+money(dq)+'</td>'+
       (formKey!=='order_inv'?'<td data-key="calledQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(num(it.calledQty)>0?money(it.calledQty):'')+'</td>':'')+
       (formKey!=='order_inv'?'<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>':'')+
-      '<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>'+
+      (formKey!=='order_frame'?'<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>':'')+
       (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvB==='red'?warnTriSvg('#ef4444',sumTxt):(lvB==='amber'?warnTriSvg('#f59e0b',sumTxt):(lvB==='gray'?warnTriSvg('#9ca3af',sumTxt):'')))+money(balance)+'</td>':'')+
       /* 2026-08-25.61：结余进度（进度条+百分比，同交付进度列样式）；.63 起颜色随 4 档状态（红/黄/绿/灰） */
       (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(balPct)+'%'+balBarCls+'"></div></div><span style="font-size:11px'+balTxtCls+'">'+balPct+'%</span></div></td>':'')+
@@ -2743,7 +2744,8 @@ function orderModal(idx,prefill){
   /* 2026-08-30.92：库存订单弹窗隐藏「数量」输入列（数量=最大库存量）——全局标志供添加行/批量选择复用（_invModal 定义见 headCols 前） */
   window.__orderModalInv=_invModal;
   body+='<div class="table-wrap"><table id="orderItemsTbl"><thead><tr>'+
-    orderLineFields().filter(f=>!(_invModal&&(f.key==='orderQty'||f.key==='calledQty'))).map(f=>'<th>'+esc(f.label)+(f.required?' *':'')+'</th>').join('')+
+    /* .92/.94：库存隐藏数量+已调用；.96：销售隐藏最大/最小库存量（库存订单保留——数量=最大库存量需填） */
+    orderLineFields().filter(f=>!(_invModal&&(f.key==='orderQty'||f.key==='calledQty'))&&!(!_invModal&&(f.key==='stockMax'||f.key==='stockMin'))).map(f=>'<th>'+esc(f.label)+(f.required?' *':'')+'</th>').join('')+
     '<th style="width:56px">操作</th></tr></thead><tbody>';
   orderItems(o).forEach(it=>body+=orderItemRow(it,locked,_invModal));
   body+='</tbody></table></div>';
@@ -2760,6 +2762,7 @@ function orderItemRow(it,locked,isInv){
   const _inv=(isInv===true||window.__orderModalInv===true);   /* .92：库存订单隐藏数量列（含添加行/批量选择的新行） */
   orderLineCols().forEach(f=>{
     if(_inv&&(f.key==='orderQty'||f.key==='calledQty'))return;   /* .92：库存订单无独立数量（=最大库存量）；.94：已调用=销售订单字段，库存隐藏 */
+    if(!_inv&&(f.key==='stockMax'||f.key==='stockMin'))return;   /* .96：销售订单隐藏最大/最小库存量（库存核心字段，库存保留） */
     const v=it[f.key]!=null?it[f.key]:'';
     if(f.key==='productId'){
       h+='<td style="display:flex;gap:4px;align-items:center"><input type="text" class="oi_field" data-key="productId" value="'+esc(v)+'" placeholder="产品编码" style="flex:1;min-width:80px"'+(locked?' readonly':'')+' onchange="orderItemIdChange(this)" onblur="orderItemIdChange(this)">'+(locked?'':'<button type="button" class="btn btn-sm" onclick="openProductPicker(this)" title="从产品库选择">选</button>')+'</td>';
@@ -5454,7 +5457,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .95）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .96）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5478,6 +5481,7 @@ var GUIDE_MD=[
 '',
 '### 订单管理（销售订单）',
 '- **新增**：点「+ 新增」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。**本页自动生成销售订单（订单类型由页面决定，无类型选择）**。',
+'- **精简列（.96）**：销售订单不显示「最大库存量/最小库存量/已计划未交付」列（库存上下限为库存管理核心字段，库存订单保留）；编辑弹窗同步隐藏。',
 '- **金蝶导入**：点「导入金蝶订单」选择 Excel → 先出「预检报告」（缺合同号/未知商品编码等）→ 确认后批量导入；重复导入同一文件会提示覆盖或跳过。',
 '- **调用库存 / 退回库存**：选中 1 张销售订单 → 弹窗选择库存订单与数量（选择弹窗**点击行直接选中**，可「自动填充」或「按订单数量填充」）→ 确认后库存订单已交付减少、销售订单已交付增加（退回反向）。',
 '- **调拨查询**：选中 1 张订单 → 跳转调拨台账并自动筛选该订单的调用/退回/冲销记录。',
@@ -7295,6 +7299,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.95</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.96</div>
 </body>
 </html>
