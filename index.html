@@ -998,6 +998,23 @@ function invStockLevel(v,min,max){
   if(max!=null&&max!==''&&num(max)>0&&num(v)>num(max))return 'gray';
   return 'green';
 }
+/* 2026-08-30.90：库存订单行「一句话总结」（用户口径：已交付=当前实物库存余量，结余=未来预期库存）——
+   组合覆盖 7 种状态：欠货+计划补足/欠货+计划不足/欠货+计划过量/缺货无计划/缺货有计划/正常/积压；欠货统一加「需要尽快生产」 */
+function invRowSummary(dq,balance,min,max,lvD,lvB){
+  var s;
+  if(lvD==='red')s='当前欠货 '+money(Math.abs(dq))+' 件，需要尽快生产';
+  else if(lvD==='amber')s='库存 '+money(dq)+' 件低于最小库存 '+money(min)+'，有缺货风险';
+  else if(lvD==='gray')s='库存 '+money(dq)+' 件超出最大库存 '+money(max)+'，积压';
+  else s='库存 '+money(dq)+' 件处于上下限之间，库存正常';
+  /* 同档简化：绿/绿=正常（无需结余补充）；灰/灰=积压（结余同向，追加重复语义） */
+  if((lvD==='green'&&lvB==='green'))return s+'，排产合理';
+  if(lvD==='gray'&&lvB==='gray')return s;
+  if(lvB==='red')s+='；排产计划严重不足（结余 '+money(balance)+' 件为负），需尽快安排计划';
+  else if(lvB==='amber')s+='；未来仍不足（结余 '+money(balance)+' 件低于下限 '+money(min)+'），需增加计划量';
+  else if(lvB==='gray')s+='；计划过量（结余 '+money(balance)+' 件超出上限 '+money(max)+'），未来将积压';
+  else s+='；排产补足后未来库存正常';
+  return s;
+}
 function thCol(m,col,style){
   const s=tState(m);
   const sorted=s.sort&&s.sort.key===col.key;
@@ -2502,6 +2519,14 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   typeOrders.forEach(({o,i})=>{orderItems(o).forEach((it,li)=>rows.push({order:o,item:it,orderIdx:i,__li:li}));});
   const puMap=buildPlannedUndelMap();          // 2026-08-25.17：新口径已计划未交付预计算
   TBL_SCHEMAS[formKey]=[
+    /* 2026-08-30.90：一句话总结列（仅库存订单，行首位置；行级每行独立，文案=已交付/结余两维 4 档组合） */
+    ...(formKey==='order_inv'?[{key:'_summary',label:'总结',type:'text',get:r=>{
+       const _pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
+       const _dq=num(r.item.deliveredQty);
+       const _puu=_pu?Math.max(0,_pu.plan-_pu.done):0;
+       const _bal=_dq+_puu;
+       return invRowSummary(_dq,_bal,r.item.stockMin,r.item.stockMax,invStockLevel(_dq,r.item.stockMin,r.item.stockMax),invStockLevel(_bal,r.item.stockMin,r.item.stockMax));
+     }}]:[]),
     {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
     {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
     {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
@@ -2616,7 +2641,10 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
         '<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>';
     }
-    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
+    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+
+      /* 2026-08-30.90：总结列（仅库存订单，行首=选择列后，行级每行独立不参与 rowspan 合并） */
+      (formKey==='order_inv'?'<td data-key="_summary" style="min-width:220px;max-width:320px;font-size:12px;line-height:1.5">'+esc(invRowSummary(dq,balance,it.stockMin,it.stockMax,lvD,lvB))+'</td>':'')+
+      headCells+
       '<td data-key="productId">'+esc(it.productId)+'</td>'+
       '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
       '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -5411,7 +5439,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .89）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .90）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5444,6 +5472,7 @@ var GUIDE_MD=[
 '',
 '### 库存管理（库存订单）',
 '- 功能同销售订单（新增/编辑/生成交付计划/调拨查询/计划查询），用于按库存直发/备货。**本页新增自动生成库存订单（无类型选择）**。',
+'- **总结列（行首）**：每行一句话说明当前与未来库存状态——已交付<0 欠货（需要尽快生产）；低于最小库存=缺货风险需排产；超上限=积压。结余（未来预期库存）维度补充：计划不足需加量/计划过量未来积压/计划补足未来正常。',
 '- 关键列含义：`已交付`=实际入库/出库数；`已计划未交付`=交付计划计划量−已生产入库；`结余`=已交付+已计划未交付；`交付进度`=已交付÷订单数量；`结余进度`=结余÷订单数量。',
 '- **颜色警示（重要）**：数量<0 红色（欠货）；0<数量<最小库存 黄色（缺货）；最小~最大之间 绿色正常（无警示）；数量>最大库存 灰色（积压）。已交付与结余两列均按此规则。',
 '',
@@ -7247,6 +7276,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.89</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.90</div>
 </body>
 </html>
