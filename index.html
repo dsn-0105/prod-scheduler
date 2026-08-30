@@ -2586,9 +2586,9 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   html+=filterBar(formKey);
   /* 2026-08-25.8：订单表头/表体双表结构——表头独立表置于 sticky 容器随页面滚动固定，表体表承载 rowspan 整单合并；
      两表各带 colgroup，列宽由 syncHeadBody 从表头 th 实际宽度对齐 */
-  const _colN=TBL_SCHEMAS[formKey].length+1+(formKey==='order_frame'?1:0);   /* .97：销售订单多展开列 */
+  const _colN=TBL_SCHEMAS[formKey].length+1;
   const _colg='<colgroup>'+Array(_colN).fill('<col>').join('')+'</colgroup>';
-  html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_colg+'<thead><tr><th class="sel-col"></th>'+(formKey==='order_frame'?'<th class="exp-col" title="展开/收起退货操作（.97）"></th>':'')+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead></table></div></div>';
+  html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_colg+'<thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead></table></div></div>';
   html+='<div class="table-wrap"><table class="body-tbl">'+_colg+'<tbody>';
   if(shown.length===0){html+=noMatchRow(formKey,TBL_SCHEMAS[formKey].length+1);}
   shown.forEach((r,i)=>{
@@ -2643,10 +2643,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
         (_noInvHead?('<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>'):'');
     }
-    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+
-      /* 2026-08-30.97：销售订单行展开列（▶，单据级 rowspan；展开栏=退货操作） */
-      (formKey==='order_frame'?(shouldMerge?(isFirst?'<td class="exp-col" rowspan="'+rs+'"><button class="pp-exp-btn'+(saleExpand[o.id]?' on':'')+'" onclick="event.stopPropagation();toggleSaleExpand(\''+esc(o.id)+'\')" title="展开/收起退货操作">▶</button></td>':''):'<td class="exp-col"><button class="pp-exp-btn'+(saleExpand[o.id]?' on':'')+'" onclick="event.stopPropagation();toggleSaleExpand(\''+esc(o.id)+'\')" title="展开/收起退货操作">▶</button></td>'):'')+
-      headCells+
+    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
       '<td data-key="productId">'+esc(it.productId)+'</td>'+
       '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
       '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -2665,7 +2662,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       /* 2026-08-25.62：负值宽度按绝对值；.63 起库存订单进度条颜色随 4 档状态，销售订单保持默认蓝 */
       '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(pct)+'%'+pctBarCls+'"></div></div><span style="font-size:11px'+pctTxtCls+'">'+pct+'%</span></div></td>'+
       '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
-      '</tr>'+(formKey==='order_frame'&&saleExpand[o.id]&&isFirst?saleExpandRow(o,_colN):'');
+      '</tr>';
   });
   html+='</tbody></table></div>';
   return html;
@@ -2688,20 +2685,36 @@ function nextOrderNo(dateStr,type){
   return prefix+String(max+1).padStart(5,'0');
 }
 
-/* ===== 2026-08-30.97：销售订单「交付/退货」操作（已交付=交付−退货驱动） ===== */
-let saleExpand={};            // 销售订单展开态（orderId->true，纯内存，刷新重置）
+/* ===== 2026-08-30.97/.98：销售订单「交付/退货」操作（已交付=交付−退货驱动） ===== */
 
-function toggleSaleExpand(id){
-  saleExpand[id]=!saleExpand[id];
-  renderContent();
+/* .98：交付按钮旁下拉展开栏（延后样式）——展开栏内「退货」操作 */
+function saleOpsBtnHtml(){
+  return '<span id="saleOpsWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
+    '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="saleDeliverDlg()" title="为选中的销售订单记录交付（本次交付≤未交付，合计≤已调用）">交付</button>'+
+    '<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
+    '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();saleToggleOpsMenu()" title="更多销售订单操作">▾</button>'+
+    '<div id="saleOpsMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
+    '<button class="btn btn-sm" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();saleToggleOpsMenu();saleReturnForSel()" title="客户退货：减少选中销售订单已交付数量">退货</button>'+
+    '</div></span>';
 }
-/* 销售订单展开行：退货操作入口（样式沿用排产计划展开行） */
-function saleExpandRow(o,colN){
-  return '<tr class="pp-exp-row"><td colspan="'+colN+'"><div class="pp-exp">'+
-    '<div class="pp-exp-head"><span>销售订单操作（'+esc(o.id)+' · '+esc(o.customer||'')+'）</span>'+
-    '<button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="event.stopPropagation();saleReturnDlg(\''+esc(o.id)+'\')" title="客户退货：减少该订单已交付数量">退货</button></div>'+
-    '<div style="font-size:12px;color:var(--muted)">退货：客户退回产品，扣减对应明细行已交付数量（退货量不得超过已交付）。</div>'+
-    '</div></td></tr>';
+function saleToggleOpsMenu(){
+  const el=document.getElementById('saleOpsMenu');
+  if(el)el.style.display=(el.style.display!=='block')?'block':'none';
+}
+if(!window.__saleOpsMenuBound){window.__saleOpsMenuBound=true;document.addEventListener('click',function(e){
+  const menu=document.getElementById('saleOpsMenu');
+  const wrap=document.getElementById('saleOpsWrap');
+  if(menu&&wrap&&!e.target.closest('#saleOpsWrap'))menu.style.display='none';
+});}
+/* 退货入口（下拉菜单）：选中 1 张销售订单 → 弹退货窗 */
+function saleReturnForSel(){
+  const s=selSet('order_frame');
+  if(s.size===0){alert('请先勾选 1 张销售订单');return;}
+  if(s.size>1){alert('「退货」一次只能选择 1 张销售订单，当前已选 '+s.size+' 张。请只勾选一条再操作。');return;}
+  const oi=Number([...s][0]);
+  const o=orders[oi];
+  if(!o){alert('未找到该订单');return;}
+  saleReturnDlg(o.id);
 }
 /* 交付弹窗：明细行已调用/已交付/未交付只读 + 本次交付可填；行级≤未交付、整单≤Σ已调用 */
 function saleDeliverDlg(){
@@ -5579,7 +5592,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .97）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .98）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5605,7 +5618,7 @@ var GUIDE_MD=[
 '- **新增**：点「+ 新增」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。**本页自动生成销售订单（订单类型由页面决定，无类型选择）**。',
 '- **精简列（.96）**：销售订单不显示「最大库存量/最小库存量/已计划未交付」列（库存上下限为库存管理核心字段，库存订单保留）；编辑弹窗同步隐藏。',
 '- **交付（.97）**：勾选 1 张销售订单 → 「交付」→ 弹窗填写本次交付（≤ 该行未交付，合计 ≤ 已调用）→ 已交付增加。**已交付改由「交付/退货」操作驱动**（初始导入值迁移时保留 = 原已交付 − 已调用）。',
-'- **退货（.97）**：行首 ▶ 展开 → 「退货」→ 弹窗填写退货数量（≤ 已交付）→ 已交付减少。',
+'- **退货（.97/.98）**：「交付」按钮旁 ▾ 下拉 → 「退货」→ 弹窗填写退货数量（≤ 已交付）→ 已交付减少。',
 '- **交付进度（.97）**：原「进度」列改名，计算 = 已交付 ÷ 数量。',
 '- **金蝶导入**：点「导入金蝶订单」选择 Excel → 先出「预检报告」（缺合同号/未知商品编码等）→ 确认后批量导入；重复导入同一文件会提示覆盖或跳过。',
 '- **调用库存 / 退回库存**：选中 1 张销售订单 → 弹窗选择库存订单与数量（选择弹窗**点击行直接选中**，可「自动填充」或「按订单数量填充」）→ 确认后库存订单已交付减少、销售订单已交付增加（退回反向）。',
@@ -6976,7 +6989,7 @@ function bulkBar(m){
     /* 2026-08-25.21/.27：交付计划、排产计划只能由上游下推生成，禁止复制 */
     if(m!=='delivery'&&m!=='prodPlan')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
-    if(m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="saleDeliverDlg()" title="为选中的销售订单记录交付（本次交付≤未交付，合计≤已调用）">交付</button>');   /* 2026-08-30.97：销售订单交付操作 */
+    if(m==='order_frame')btns.push(saleOpsBtnHtml());   /* 2026-08-30.97/.98：销售订单交付（+下拉退货） */
     if(m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的库存订单生成交付计划（仅限 1 条）">生成交付计划</button>');   /* 2026-08-30.95：交付计划仅库存订单可生成（销售订单按钮隐藏） */
     if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
     /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
@@ -7425,6 +7438,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.97</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.98</div>
 </body>
 </html>
