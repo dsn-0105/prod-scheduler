@@ -2557,7 +2557,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
        const bal=num(r.item.deliveredQty)+(pu?Math.max(0,pu.plan-pu.done):0);
        const t=invQtyOf(r.order,r.item);
        return t>0?Math.round(bal/t*100):0; }}]:[]),
-    {key:'_pct',label:(formKey==='order_inv')?'交付进度':'进度%',type:'number',get:r=>{const t=invQtyOf(r.order,r.item);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},
+    {key:'_pct',label:'交付进度',type:'number',get:r=>{const t=invQtyOf(r.order,r.item);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},   /* .97：销售/库存统一「交付进度」=已交付/数量 */
     {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.item.lineNotes!=null?r.item.lineNotes:(r.item.notes||'')}
   ];
   TBL_ROWS[formKey]=rows;
@@ -2586,9 +2586,9 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   html+=filterBar(formKey);
   /* 2026-08-25.8：订单表头/表体双表结构——表头独立表置于 sticky 容器随页面滚动固定，表体表承载 rowspan 整单合并；
      两表各带 colgroup，列宽由 syncHeadBody 从表头 th 实际宽度对齐 */
-  const _colN=TBL_SCHEMAS[formKey].length+1;
+  const _colN=TBL_SCHEMAS[formKey].length+1+(formKey==='order_frame'?1:0);   /* .97：销售订单多展开列 */
   const _colg='<colgroup>'+Array(_colN).fill('<col>').join('')+'</colgroup>';
-  html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_colg+'<thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead></table></div></div>';
+  html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_colg+'<thead><tr><th class="sel-col"></th>'+(formKey==='order_frame'?'<th class="exp-col" title="展开/收起退货操作（.97）"></th>':'')+TBL_SCHEMAS[formKey].map(c=>thCol(formKey,c)).join('')+'</tr></thead></table></div></div>';
   html+='<div class="table-wrap"><table class="body-tbl">'+_colg+'<tbody>';
   if(shown.length===0){html+=noMatchRow(formKey,TBL_SCHEMAS[formKey].length+1);}
   shown.forEach((r,i)=>{
@@ -2643,7 +2643,10 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
         (_noInvHead?('<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>'):'');
     }
-    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
+    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+
+      /* 2026-08-30.97：销售订单行展开列（▶，单据级 rowspan；展开栏=退货操作） */
+      (formKey==='order_frame'?(shouldMerge?(isFirst?'<td class="exp-col" rowspan="'+rs+'"><button class="pp-exp-btn'+(saleExpand[o.id]?' on':'')+'" onclick="event.stopPropagation();toggleSaleExpand(\''+esc(o.id)+'\')" title="展开/收起退货操作">▶</button></td>':''):'<td class="exp-col"><button class="pp-exp-btn'+(saleExpand[o.id]?' on':'')+'" onclick="event.stopPropagation();toggleSaleExpand(\''+esc(o.id)+'\')" title="展开/收起退货操作">▶</button></td>'):'')+
+      headCells+
       '<td data-key="productId">'+esc(it.productId)+'</td>'+
       '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
       '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -2662,7 +2665,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       /* 2026-08-25.62：负值宽度按绝对值；.63 起库存订单进度条颜色随 4 档状态，销售订单保持默认蓝 */
       '<td data-key="_pct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(pct)+'%'+pctBarCls+'"></div></div><span style="font-size:11px'+pctTxtCls+'">'+pct+'%</span></div></td>'+
       '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
-      '</tr>';
+      '</tr>'+(formKey==='order_frame'&&saleExpand[o.id]&&isFirst?saleExpandRow(o,_colN):'');
   });
   html+='</tbody></table></div>';
   return html;
@@ -2683,6 +2686,125 @@ function nextOrderNo(dateStr,type){
     }
   });
   return prefix+String(max+1).padStart(5,'0');
+}
+
+/* ===== 2026-08-30.97：销售订单「交付/退货」操作（已交付=交付−退货驱动） ===== */
+let saleExpand={};            // 销售订单展开态（orderId->true，纯内存，刷新重置）
+
+function toggleSaleExpand(id){
+  saleExpand[id]=!saleExpand[id];
+  renderContent();
+}
+/* 销售订单展开行：退货操作入口（样式沿用排产计划展开行） */
+function saleExpandRow(o,colN){
+  return '<tr class="pp-exp-row"><td colspan="'+colN+'"><div class="pp-exp">'+
+    '<div class="pp-exp-head"><span>销售订单操作（'+esc(o.id)+' · '+esc(o.customer||'')+'）</span>'+
+    '<button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="event.stopPropagation();saleReturnDlg(\''+esc(o.id)+'\')" title="客户退货：减少该订单已交付数量">退货</button></div>'+
+    '<div style="font-size:12px;color:var(--muted)">退货：客户退回产品，扣减对应明细行已交付数量（退货量不得超过已交付）。</div>'+
+    '</div></td></tr>';
+}
+/* 交付弹窗：明细行已调用/已交付/未交付只读 + 本次交付可填；行级≤未交付、整单≤Σ已调用 */
+function saleDeliverDlg(){
+  const s=selSet('order_frame');
+  if(s.size===0){alert('请先勾选 1 张销售订单');return;}
+  if(s.size>1){alert('「交付」一次只能选择 1 张销售订单，当前已选 '+s.size+' 张。请只勾选一条再操作。');return;}
+  const oi=Number([...s][0]);
+  const o=orders[oi];
+  if(!o){alert('未找到该订单');return;}
+  if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法交付');return;}
+  const its=orderItems(o);
+  if(its.length===0){alert('该订单无明细行');return;}
+  let body='<div class="form-row">'+
+    '<div><label>单据编号</label><input type="text" value="'+esc(o.id)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '<div><label>客户名称</label><input type="text" value="'+esc(o.customer)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '</div><div class="form-row">'+
+    '<div><label>单据日期</label><input type="text" value="'+fmtDate(o.startDate)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '<div><label>审核状态</label><input type="text" value="'+esc(o.status)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '</div>'+
+    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">本次交付 ≤ 该行未交付；合计 ≤ 该单已调用合计</span></div>'+
+    '<div class="table-wrap"><table id="saleDeliverTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>已调用</th><th>已交付</th><th>未交付</th><th>本次交付</th></tr></thead><tbody>';
+  its.forEach(function(it,li){
+    const oq=num(it.orderQty),dq=num(it.deliveredQty),cq=num(it.calledQty);
+    body+='<tr><td>'+esc(it.productId)+'</td><td>'+esc(it.productName||'')+'</td>'+
+      '<td style="text-align:right">'+money(cq)+'</td><td style="text-align:right">'+money(dq)+'</td><td style="text-align:right">'+money(Math.max(0,oq-dq))+'</td>'+
+      '<td><input type="number" class="sd-qty" data-li="'+li+'" data-max="'+Math.max(0,oq-dq)+'" min="0" value="0" style="width:90px"></td></tr>';
+  });
+  body+='</tbody></table></div>';
+  showModal('交付 · '+o.id,body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saleDeliverSave('+oi+')">确认交付</button>'
+  );
+}
+function saleDeliverSave(oi){
+  const o=orders[oi];
+  if(!o)return;
+  let total=0,overRows=[];
+  const updates=[];
+  document.querySelectorAll('#saleDeliverTbl tbody tr').forEach(function(tr){
+    const li=Number(tr.querySelector('.sd-qty').dataset.li);
+    const it=(o.items||[])[li];
+    const qty=num(tr.querySelector('.sd-qty').value);
+    const maxD=Math.max(0,num(it.orderQty)-num(it.deliveredQty));
+    if(qty>0){
+      if(qty>maxD)overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 未交付 '+maxD);
+      updates.push({li:li,qty:qty});total+=qty;
+    }
+  });
+  if(updates.length===0){alert('请至少填写一行的本次交付数量');return;}
+  const totalCalled=orderItems(o).reduce(function(s,it){return s+Math.max(0,num(it.calledQty));},0);
+  if(total>totalCalled){alert('本次交付合计 '+total+' 超过该单已调用合计 '+totalCalled+'（交付不能超过已调用库存）');return;}
+  if(overRows.length>0){alert('以下行本次交付超过未交付数量：\n'+overRows.join('\n'));return;}
+  updates.forEach(function(u){o.items[u.li].deliveredQty=num(o.items[u.li].deliveredQty)+u.qty;});
+  save('orders',orders);
+  syncOrderAutoStatus();
+  logOp('新增','销售订单','交付「'+o.id+'」'+updates.reduce(function(s,u){return s+u.qty;},0)+' 台（'+updates.length+' 行）');
+  closeModal();
+  renderContent();
+}
+/* 退货弹窗：明细行已交付只读 + 退货数量可填；退货 ≤ 已交付 */
+function saleReturnDlg(orderId){
+  const o=orders.find(function(x){return x.id===orderId;});
+  if(!o){alert('未找到该订单');return;}
+  const its=orderItems(o);
+  if(its.length===0){alert('该订单无明细行');return;}
+  let body='<div class="form-row">'+
+    '<div><label>单据编号</label><input type="text" value="'+esc(o.id)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '<div><label>客户名称</label><input type="text" value="'+esc(o.customer)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
+    '</div>'+
+    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">退货明细</b><span style="font-size:12px;color:var(--muted)">退货数量 ≤ 该行已交付</span></div>'+
+    '<div class="table-wrap"><table id="saleReturnTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>已交付</th><th>退货数量</th></tr></thead><tbody>';
+  its.forEach(function(it,li){
+    body+='<tr><td>'+esc(it.productId)+'</td><td>'+esc(it.productName||'')+'</td>'+
+      '<td style="text-align:right">'+money(num(it.deliveredQty))+'</td>'+
+      '<td><input type="number" class="sr-qty" data-li="'+li+'" data-max="'+Math.max(0,num(it.deliveredQty))+'" min="0" value="0" style="width:90px"></td></tr>';
+  });
+  body+='</tbody></table></div>';
+  showModal('退货 · '+o.id,body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saleReturnSave(\''+esc(o.id)+'\')">确认退货</button>'
+  );
+}
+function saleReturnSave(orderId){
+  const o=orders.find(function(x){return x.id===orderId;});
+  if(!o)return;
+  let total=0,overRows=[];
+  const updates=[];
+  document.querySelectorAll('#saleReturnTbl tbody tr').forEach(function(tr){
+    const li=Number(tr.querySelector('.sr-qty').dataset.li);
+    const it=(o.items||[])[li];
+    const qty=num(tr.querySelector('.sr-qty').value);
+    const maxR=Math.max(0,num(it.deliveredQty));
+    if(qty>0){
+      if(qty>maxR)overRows.push('「'+(it.productName||it.productId)+'」退货 '+qty+' > 已交付 '+maxR);
+      updates.push({li:li,qty:qty});total+=qty;
+    }
+  });
+  if(updates.length===0){alert('请至少填写一行的退货数量');return;}
+  if(overRows.length>0){alert('以下行退货数量超过已交付：\n'+overRows.join('\n'));return;}
+  updates.forEach(function(u){o.items[u.li].deliveredQty=Math.max(0,num(o.items[u.li].deliveredQty)-u.qty);});
+  save('orders',orders);
+  syncOrderAutoStatus();
+  logOp('新增','销售订单','退货「'+o.id+'」'+total+' 台（'+updates.length+' 行）');
+  closeModal();
+  renderContent();
 }
 
 /* 产品主数据：「生成订单」——选中产品生成库存订单（.87：跳转库存管理页签 inv 并打开新增弹窗，明细预填选中商品；原跳订单管理 order 为 .65 模块移动遗留错误） */
@@ -3452,8 +3574,7 @@ function applyStockMove(salesOrder,salesUpdates,invUpdates,type){
     const it=(salesOrder.items||[])[u.lineIdx];
     if(!it)return;
     const delta=type==='call'?u.qty:-u.qty;
-    it.deliveredQty=Math.max(0,num(it.deliveredQty)+delta);   /* 销售订单已交付保持非负（发货量不为负） */
-    /* 2026-08-25.35：已调用=调用库存累计（调用 +、退回 −，下限 0） */
+    /* .97 迁移：销售订单已交付改由「交付/退货」操作驱动——调用/退回库存不再自动增减已交付，仅更新 calledQty（可交付上限=已调用累计） */
     it.calledQty=Math.max(0,num(it.calledQty)+delta);
   });
   save('orders',orders);
@@ -3504,9 +3625,9 @@ function reverseTransfer(id){
   const invIt=(inv.items||[])[t.invLineIdx];
   if(!salesIt||!invIt){alert('关联明细已不存在，无法冲销');return;}
   const revType=t.type==='call'?'return':'call';
-  /* 2026-08-25.20：库存订单已交付允许负数（冲销时负欠货向 0 恢复）；销售订单保持非负 */
+  /* 2026-08-25.20：库存订单已交付允许负数（冲销时负欠货向 0 恢复）
+     .97 迁移：销售订单已交付不再随调拨冲销变动（由交付/退货操作驱动）——冲销只回滚库存订单已交付与销售 calledQty */
   invIt.deliveredQty=num(invIt.deliveredQty)+(t.type==='call'?t.qty:-t.qty);
-  salesIt.deliveredQty=Math.max(0,num(salesIt.deliveredQty)+(t.type==='call'?-t.qty:+t.qty));
   /* 2026-08-25.35：已调用同步冲销（冲销 call → 减、冲销 return → 加，下限 0） */
   salesIt.calledQty=Math.max(0,num(salesIt.calledQty)+(t.type==='call'?-t.qty:+t.qty));
   save('orders',orders);
@@ -5120,11 +5241,12 @@ function writebackInbound(orderId,productId,delta,orderLine){
   if(orderLine!=null&&oi[orderLine]&&String(oi[orderLine].productId)===String(productId))it=oi[orderLine];
   if(!it)it=oi.find(x=>String(x.productId)===String(productId));
   if(!it)return;
-  /* 2026-08-25.20：库存订单已交付允许负数（欠货向 0 恢复）；销售订单保持非负 */
-  it.deliveredQty=orderTypeOf(o)==='库存订单'?num(it.deliveredQty)+delta:Math.max(0,num(it.deliveredQty)+delta);
+  /* 2026-08-25.20：库存订单已交付允许负数（欠货向 0 恢复）
+     .97 迁移：销售订单已交付改由「交付/退货」操作驱动（writebackInbound 仅服务库存订单；.95 后排产单只从库存订单下推，销售订单不回写） */
+  if(orderTypeOf(o)!=='库存订单')return;
+  it.deliveredQty=num(it.deliveredQty)+delta;
   save('orders',orders);
-  if(orderTypeOf(o)==='库存订单')syncStockFromInvOrders();
-  else syncOrderAutoStatus();
+  syncStockFromInvOrders();
   logOp('系统','库存打通','报工入库回写订单「'+o.id+'」'+(it.productName||productId)+' 已交付 '+(delta>0?'+':'')+delta);
 }
 function applyReport(pi,entries,items,worker){
@@ -5457,7 +5579,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .96）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .97）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5482,6 +5604,9 @@ var GUIDE_MD=[
 '### 订单管理（销售订单）',
 '- **新增**：点「+ 新增」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。**本页自动生成销售订单（订单类型由页面决定，无类型选择）**。',
 '- **精简列（.96）**：销售订单不显示「最大库存量/最小库存量/已计划未交付」列（库存上下限为库存管理核心字段，库存订单保留）；编辑弹窗同步隐藏。',
+'- **交付（.97）**：勾选 1 张销售订单 → 「交付」→ 弹窗填写本次交付（≤ 该行未交付，合计 ≤ 已调用）→ 已交付增加。**已交付改由「交付/退货」操作驱动**（初始导入值迁移时保留 = 原已交付 − 已调用）。',
+'- **退货（.97）**：行首 ▶ 展开 → 「退货」→ 弹窗填写退货数量（≤ 已交付）→ 已交付减少。',
+'- **交付进度（.97）**：原「进度」列改名，计算 = 已交付 ÷ 数量。',
 '- **金蝶导入**：点「导入金蝶订单」选择 Excel → 先出「预检报告」（缺合同号/未知商品编码等）→ 确认后批量导入；重复导入同一文件会提示覆盖或跳过。',
 '- **调用库存 / 退回库存**：选中 1 张销售订单 → 弹窗选择库存订单与数量（选择弹窗**点击行直接选中**，可「自动填充」或「按订单数量填充」）→ 确认后库存订单已交付减少、销售订单已交付增加（退回反向）。',
 '- **调拨查询**：选中 1 张订单 → 跳转调拨台账并自动筛选该订单的调用/退回/冲销记录。',
@@ -6851,6 +6976,7 @@ function bulkBar(m){
     /* 2026-08-25.21/.27：交付计划、排产计划只能由上游下推生成，禁止复制 */
     if(m!=='delivery'&&m!=='prodPlan')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
+    if(m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="saleDeliverDlg()" title="为选中的销售订单记录交付（本次交付≤未交付，合计≤已调用）">交付</button>');   /* 2026-08-30.97：销售订单交付操作 */
     if(m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的库存订单生成交付计划（仅限 1 条）">生成交付计划</button>');   /* 2026-08-30.95：交付计划仅库存订单可生成（销售订单按钮隐藏） */
     if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
     /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
@@ -7299,6 +7425,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.96</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.97</div>
 </body>
 </html>
