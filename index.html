@@ -2734,16 +2734,18 @@ function saleDeliverDlg(){
     '<div><label>单据日期</label><input type="text" value="'+fmtDate(o.startDate)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '<div><label>审核状态</label><input type="text" value="'+esc(o.status)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '</div>'+
-    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">本次交付 ≤ 该行未交付；合计 ≤ 该单已调用合计</span>'+saleDeliverFillBtnHtml()+'</div>'+   /* .99：自动填充下拉（延后样式） */
+    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">本次交付 ≤ 该行未交付 且 ≤ 该行可调用余量（已调用−已交付，.100 行级对应）</span>'+saleDeliverFillBtnHtml()+'</div>'+   /* .99：自动填充下拉（延后样式） */
     '<div class="table-wrap"><table id="saleDeliverTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>已调用</th><th>已交付</th><th>未交付</th><th>本次交付</th></tr></thead><tbody>';
   its.forEach(function(it,li){
     const oq=num(it.orderQty),dq=num(it.deliveredQty),cq=num(it.calledQty);
+    /* .100：行级可交付上限 = min(未交付, 已调用−已交付) */
+    const maxRow=Math.min(Math.max(0,oq-dq),Math.max(0,cq-dq));
     const p=products.find(function(x){return String(x.id)===String(it.productId);});
     /* .99：明细行加型号/规格（无则产品库回填）；表体单元格统一左对齐 */
     body+='<tr><td style="text-align:left">'+esc(it.productId)+'</td><td style="text-align:left">'+esc(it.productName||'')+'</td>'+
       '<td style="text-align:left">'+esc(it.model||(p?p.model:'')||'')+'</td><td style="text-align:left">'+esc(it.spec||(p?p.spec:'')||'')+'</td>'+
       '<td style="text-align:left">'+money(cq)+'</td><td style="text-align:left">'+money(dq)+'</td><td style="text-align:left">'+money(Math.max(0,oq-dq))+'</td>'+
-      '<td style="text-align:left"><input type="number" class="sd-qty" data-li="'+li+'" data-max="'+Math.max(0,oq-dq)+'" min="0" value="0" style="width:90px"></td></tr>';
+      '<td style="text-align:left"><input type="number" class="sd-qty" data-li="'+li+'" data-max="'+maxRow+'" min="0" value="0" style="width:90px"></td></tr>';
   });
   body+='</tbody></table></div>';
   window.__saleDeliverOrderId=o.id;   /* .99：自动填充需要当前订单上下文 */
@@ -2793,16 +2795,20 @@ function saleDeliverSave(oi){
     const li=Number(tr.querySelector('.sd-qty').dataset.li);
     const it=(o.items||[])[li];
     const qty=num(tr.querySelector('.sd-qty').value);
+    /* .100：行级校验——本次交付 ≤ 未交付 且 ≤ 该行可调用余量（已调用−已交付，与 .99 填充口径一致） */
     const maxD=Math.max(0,num(it.orderQty)-num(it.deliveredQty));
+    const maxC=Math.max(0,num(it.calledQty)-num(it.deliveredQty));
+    const maxRow=Math.min(maxD,maxC);
     if(qty>0){
-      if(qty>maxD)overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 未交付 '+maxD);
+      if(qty>maxRow){
+        if(qty>maxD)overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 该行未交付 '+maxD);
+        else overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 该行可交付 '+maxC+'（已调用'+num(it.calledQty)+'−已交付'+num(it.deliveredQty)+'）');
+      }
       updates.push({li:li,qty:qty});total+=qty;
     }
   });
   if(updates.length===0){alert('请至少填写一行的本次交付数量');return;}
-  const totalCalled=orderItems(o).reduce(function(s,it){return s+Math.max(0,num(it.calledQty));},0);
-  if(total>totalCalled){alert('本次交付合计 '+total+' 超过该单已调用合计 '+totalCalled+'（交付不能超过已调用库存）');return;}
-  if(overRows.length>0){alert('以下行本次交付超过未交付数量：\n'+overRows.join('\n'));return;}
+  if(overRows.length>0){alert('以下行本次交付超过可交付上限：\n'+overRows.join('\n'));return;}
   updates.forEach(function(u){o.items[u.li].deliveredQty=num(o.items[u.li].deliveredQty)+u.qty;});
   save('orders',orders);
   syncOrderAutoStatus();
@@ -5629,7 +5635,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .99）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .100）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5654,7 +5660,7 @@ var GUIDE_MD=[
 '### 订单管理（销售订单）',
 '- **新增**：点「+ 新增」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。**本页自动生成销售订单（订单类型由页面决定，无类型选择）**。',
 '- **精简列（.96）**：销售订单不显示「最大库存量/最小库存量/已计划未交付」列（库存上下限为库存管理核心字段，库存订单保留）；编辑弹窗同步隐藏。',
-'- **交付（.97/.99）**：勾选 1 张销售订单 → 「交付」→ 弹窗填写本次交付（≤ 该行未交付，合计 ≤ 已调用）→ 已交付增加。弹窗含型号/规格、**自动填充**（▾ 下拉：按调用数量=已调用−已交付 / 按未交付数量）。**已交付改由「交付/退货」操作驱动**（初始导入值迁移时保留 = 原已交付 − 已调用）。',
+'- **交付（.97/.99/.100）**：勾选 1 张销售订单 → 「交付」→ 弹窗填写本次交付 → 已交付增加。**行级校验：本次交付 ≤ 该行未交付 且 ≤ 该行可调用余量（已调用−已交付，.100）**。弹窗含型号/规格、**自动填充**（▾ 下拉：按调用数量=已调用−已交付 / 按未交付数量）。**已交付改由「交付/退货」操作驱动**（初始导入值迁移时保留 = 原已交付 − 已调用）。',
 '- **退货（.97/.98）**：「交付」按钮旁 ▾ 下拉 → 「退货」→ 弹窗填写退货数量（≤ 已交付）→ 已交付减少。',
 '- **交付进度（.97）**：原「进度」列改名，计算 = 已交付 ÷ 数量。',
 '- **金蝶导入**：点「导入金蝶订单」选择 Excel → 先出「预检报告」（缺合同号/未知商品编码等）→ 确认后批量导入；重复导入同一文件会提示覆盖或跳过。',
@@ -7475,6 +7481,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.99</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.100</div>
 </body>
 </html>
