@@ -2419,7 +2419,7 @@ function orderItemOptions(selOrderId,selProductId){
 }
 
 function renderOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">销售订单 · 交付进度 · 状态跟踪</span> '+(canWriteForm('order')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'销售订单\')">新增订单</button>':'')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单管理 <span class="desc">销售订单 · 交付进度 · 状态跟踪</span></div>';   /* 2026-08-30.88：移除卡片标题「新增订单」按钮（与区块头「+ 新增」重复，保留区块头入口） */
   const prodMap={};products.forEach(p=>prodMap[p.id]=p);
   /* 2026-08-25.65：库存订单已独立为「库存管理」页签（renderInvOrders），订单管理仅保留销售订单 */
   html+=orderSection('frame','order_frame','销售订单','客户销售订单 · 交付进度 · 状态跟踪',prodMap);
@@ -2428,7 +2428,7 @@ function renderOrders(){
 }
 /* 2026-08-25.65：库存管理独立页签——完整承载库存订单模块（新增/编辑/生成交付计划/调拨查询/结余/4 档警示全保留） */
 function renderInvOrders(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 8l9 5 9-5"/></svg>库存管理 <span class="desc">库存订单 · 调用/退回 · 结余与库存上下限警示</span> '+(canWriteForm('order_inv')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addOrderOfType(\'库存订单\')">新增库存订单</button>':'')+'</div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 8l9 5 9-5"/></svg>库存管理 <span class="desc">库存订单 · 调用/退回 · 结余与库存上下限警示</span></div>';   /* 2026-08-30.88：移除卡片标题「新增库存订单」按钮（与区块头「+ 新增」重复） */
   const prodMap={};products.forEach(p=>prodMap[p.id]=p);
   html+=orderSection('inv','order_inv','库存订单','按库存直发/备货订单 · 交付进度 · 状态跟踪',prodMap);
   html+='</div>';
@@ -2693,6 +2693,8 @@ function orderModal(idx,prefill){
   const headCols=fields.order.filter(f=>!isLineField(f));
   let body='<div class="form-row">';
   headCols.forEach((f,i)=>{
+    /* 2026-08-30.88：订单类型隐藏——由页面上下文决定（订单管理=销售订单、库存管理=库存订单；编辑/复制保持原类型，.25 强制逻辑已就位），杜绝串类 */
+    if(f.key==='orderType')return;
     if(i>0&&i%2===0)body+='</div><div class="form-row">';
     const val=o[f.key]!=null?o[f.key]:'';
     let ctrl;
@@ -5408,7 +5410,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-29（build .87）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .88）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5431,7 +5433,7 @@ var GUIDE_MD=[
 '- **生成订单**：勾选产品 → 「生成订单」→ 自动跳转「库存管理」并打开新增库存订单（明细预填选中商品）。',
 '',
 '### 订单管理（销售订单）',
-'- **新增**：点「新增订单」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。',
+'- **新增**：点「+ 新增」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。**本页自动生成销售订单（订单类型由页面决定，无类型选择）**。',
 '- **金蝶导入**：点「导入金蝶订单」选择 Excel → 先出「预检报告」（缺合同号/未知商品编码等）→ 确认后批量导入；重复导入同一文件会提示覆盖或跳过。',
 '- **调用库存 / 退回库存**：选中 1 张销售订单 → 弹窗选择库存订单与数量（选择弹窗**点击行直接选中**，可「自动填充」或「按订单数量填充」）→ 确认后库存订单已交付减少、销售订单已交付增加（退回反向）。',
 '- **调拨查询**：选中 1 张订单 → 跳转调拨台账并自动筛选该订单的调用/退回/冲销记录。',
@@ -5440,7 +5442,7 @@ var GUIDE_MD=[
 '- **审核状态**：执行中/已完成/已取消/已暂停。整单全部交付后自动「已完成」；已取消/已暂停的订单不能生成交付计划/调用退回库存。',
 '',
 '### 库存管理（库存订单）',
-'- 功能同销售订单（新增/编辑/生成交付计划/调拨查询/计划查询），用于按库存直发/备货。',
+'- 功能同销售订单（新增/编辑/生成交付计划/调拨查询/计划查询），用于按库存直发/备货。**本页新增自动生成库存订单（无类型选择）**。',
 '- 关键列含义：`已交付`=实际入库/出库数；`已计划未交付`=交付计划计划量−已生产入库；`结余`=已交付+已计划未交付；`交付进度`=已交付÷订单数量；`结余进度`=结余÷订单数量。',
 '- **颜色警示（重要）**：数量<0 红色（欠货）；0<数量<最小库存 黄色（缺货）；最小~最大之间 绿色正常（无警示）；数量>最大库存 灰色（积压）。已交付与结余两列均按此规则。',
 '',
@@ -7241,6 +7243,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.87</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.88</div>
 </body>
 </html>
