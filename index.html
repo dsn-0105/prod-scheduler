@@ -2657,7 +2657,7 @@ function nextOrderNo(dateStr,type){
   return prefix+String(max+1).padStart(5,'0');
 }
 
-/* 产品主数据：「生成订单」——选中产品生成库存订单（跳转订单管理并打开新增弹窗，明细预填选中商品） */
+/* 产品主数据：「生成订单」——选中产品生成库存订单（.87：跳转库存管理页签 inv 并打开新增弹窗，明细预填选中商品；原跳订单管理 order 为 .65 模块移动遗留错误） */
 function bulkGenOrder(){
   const s=selSet('product');
   if(s.size===0){alert('请先在左侧勾选要生成订单的产品');return;}
@@ -2666,7 +2666,7 @@ function bulkGenOrder(){
     const p=products[i];if(!p)return;
     items.push({productId:p.id,productName:p.name||'',spec:p.spec||'',model:p.model||'',orderQty:'',stockMax:'',stockMin:'',deliveredQty:'',lineNotes:''});
   });
-  switchTab('order');
+  switchTab('inv');
   pendingOrderType='库存订单';
   orderModal(null,{
     id:nextOrderNo(todayStr(),'库存订单'),
@@ -5408,7 +5408,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-29（build .86）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-29（build .87）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5428,6 +5428,7 @@ var GUIDE_MD=[
 '### 产品主数据',
 '- 维护产品编码/名称/型号/规格/单位/日产能/上下限库存/工序模板。',
 '- **库存（已交付数量）为系统自动计算**（=所有库存订单已交付之和），无需手工填写。',
+'- **生成订单**：勾选产品 → 「生成订单」→ 自动跳转「库存管理」并打开新增库存订单（明细预填选中商品）。',
 '',
 '### 订单管理（销售订单）',
 '- **新增**：点「新增订单」→ 填写单据信息与明细行（商品、数量、预计交货日期必填）→ 保存。',
@@ -7240,6 +7241,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.86</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-29.87</div>
 </body>
 </html>
