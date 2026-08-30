@@ -2519,14 +2519,6 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   typeOrders.forEach(({o,i})=>{orderItems(o).forEach((it,li)=>rows.push({order:o,item:it,orderIdx:i,__li:li}));});
   const puMap=buildPlannedUndelMap();          // 2026-08-25.17：新口径已计划未交付预计算
   TBL_SCHEMAS[formKey]=[
-    /* 2026-08-30.90：一句话总结列（仅库存订单，行首位置；行级每行独立，文案=已交付/结余两维 4 档组合） */
-    ...(formKey==='order_inv'?[{key:'_summary',label:'总结',type:'text',get:r=>{
-       const _pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
-       const _dq=num(r.item.deliveredQty);
-       const _puu=_pu?Math.max(0,_pu.plan-_pu.done):0;
-       const _bal=_dq+_puu;
-       return invRowSummary(_dq,_bal,r.item.stockMin,r.item.stockMax,invStockLevel(_dq,r.item.stockMin,r.item.stockMax),invStockLevel(_bal,r.item.stockMin,r.item.stockMax));
-     }}]:[]),
     {key:'deadline',label:'预计交货日期',type:'date',get:r=>r.order.deadline},
     {key:'startDate',label:'单据日期',type:'date',get:r=>r.order.startDate},
     {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
@@ -2611,6 +2603,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     /* 2026-08-25.63：库存订单 4 档状态（已交付/结余 各自独立）——感叹号+进度条颜色同档位：red 红/amber 黄/green 绿无感叹号/gray 灰 */
     const lvD=invStockLevel(dq,it.stockMin,it.stockMax);
     const lvB=invStockLevel(balance,it.stockMin,it.stockMax);
+    /* 2026-08-30.91：三角警示悬浮框=行一句话总结（.90 总结列改悬浮；已交付/结余警示标 hover 均显示完整总结句） */
+    const sumTxt=(formKey==='order_inv')?invRowSummary(dq,balance,it.stockMin,it.stockMax,lvD,lvB):'';
     const _lvCls=function(lv){return lv==='red'?';background:var(--red)':lv==='amber'?';background:var(--amber)':lv==='green'?';background:var(--green)':lv==='gray'?';background:#9ca3af':'';};
     const pctBarCls=(formKey==='order_inv')?_lvCls(lvD):(pct<0?';background:var(--red)':'');   /* 销售订单进度条保持默认蓝（已交付恒非负） */
     const pctTxtCls=(formKey==='order_inv')?(lvD==='red'?';color:var(--red)':''):(pct<0?';color:var(--red)':'');
@@ -2641,10 +2635,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
         '<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>';
     }
-    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+
-      /* 2026-08-30.90：总结列（仅库存订单，行首=选择列后，行级每行独立不参与 rowspan 合并） */
-      (formKey==='order_inv'?'<td data-key="_summary" style="min-width:220px;max-width:320px;font-size:12px;line-height:1.5">'+esc(invRowSummary(dq,balance,it.stockMin,it.stockMax,lvD,lvB))+'</td>':'')+
-      headCells+
+    html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
       '<td data-key="productId">'+esc(it.productId)+'</td>'+
       '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
       '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
@@ -2653,11 +2644,11 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="orderQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
       '<td data-key="stockMax" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
       '<td data-key="stockMin" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
-      '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvD==='red'?warnTriSvg('#ef4444','已交付数量小于零（欠货）\n当前已交付：'+money(dq)):(lvD==='amber'?warnTriSvg('#f59e0b','已交付数量低于最小库存量（缺货风险）\n当前已交付：'+money(dq)+' · 最小库存：'+money(it.stockMin)):(lvD==='gray'?warnTriSvg('#9ca3af','已交付数量高于最大库存量（积压预警）\n当前已交付：'+money(dq)+' · 最大库存：'+money(it.stockMax)):'')))+money(dq)+'</td>'+
+      '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvD==='red'?warnTriSvg('#ef4444',sumTxt):(lvD==='amber'?warnTriSvg('#f59e0b',sumTxt):(lvD==='gray'?warnTriSvg('#9ca3af',sumTxt):'')))+money(dq)+'</td>'+
       '<td data-key="calledQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(num(it.calledQty)>0?money(it.calledQty):'')+'</td>'+
       '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
       '<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>'+
-      (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvB==='red'?warnTriSvg('#ef4444','结余数量小于零（欠货）\n当前结余：'+money(balance)):(lvB==='amber'?warnTriSvg('#f59e0b','结余数量低于最小库存量（缺货风险）\n当前结余：'+money(balance)+' · 最小库存：'+money(it.stockMin)):(lvB==='gray'?warnTriSvg('#9ca3af','结余数量高于最大库存量（积压预警）\n当前结余：'+money(balance)+' · 最大库存：'+money(it.stockMax)):'')))+money(balance)+'</td>':'')+
+      (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvB==='red'?warnTriSvg('#ef4444',sumTxt):(lvB==='amber'?warnTriSvg('#f59e0b',sumTxt):(lvB==='gray'?warnTriSvg('#9ca3af',sumTxt):'')))+money(balance)+'</td>':'')+
       /* 2026-08-25.61：结余进度（进度条+百分比，同交付进度列样式）；.63 起颜色随 4 档状态（红/黄/绿/灰） */
       (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(balPct)+'%'+balBarCls+'"></div></div><span style="font-size:11px'+balTxtCls+'">'+balPct+'%</span></div></td>':'')+
       /* 2026-08-25.62：负值宽度按绝对值；.63 起库存订单进度条颜色随 4 档状态，销售订单保持默认蓝 */
@@ -5439,7 +5430,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .90）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .91）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -5472,7 +5463,7 @@ var GUIDE_MD=[
 '',
 '### 库存管理（库存订单）',
 '- 功能同销售订单（新增/编辑/生成交付计划/调拨查询/计划查询），用于按库存直发/备货。**本页新增自动生成库存订单（无类型选择）**。',
-'- **总结列（行首）**：每行一句话说明当前与未来库存状态——已交付<0 欠货（需要尽快生产）；低于最小库存=缺货风险需排产；超上限=积压。结余（未来预期库存）维度补充：计划不足需加量/计划过量未来积压/计划补足未来正常。',
+'- **总结悬浮框（.90/.91）**：hover「已交付/结余」列的三角警示标，显示该行一句话总结——已交付<0 欠货（需要尽快生产）；低于最小库存=缺货风险需排产；超上限=积压。结余（未来预期库存）维度补充：计划不足需加量/计划过量未来积压/计划补足未来正常。',
 '- 关键列含义：`已交付`=实际入库/出库数；`已计划未交付`=交付计划计划量−已生产入库；`结余`=已交付+已计划未交付；`交付进度`=已交付÷订单数量；`结余进度`=结余÷订单数量。',
 '- **颜色警示（重要）**：数量<0 红色（欠货）；0<数量<最小库存 黄色（缺货）；最小~最大之间 绿色正常（无警示）；数量>最大库存 灰色（积压）。已交付与结余两列均按此规则。',
 '',
@@ -7276,6 +7267,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.90</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.91</div>
 </body>
 </html>
