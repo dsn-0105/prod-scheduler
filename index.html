@@ -3048,8 +3048,15 @@ function saveOrder(idx){
   cols.forEach(f=>{
     if(isLineField(f))return;
     const el=document.getElementById('of_'+f.key);
+    if(!el)return;   /* .93 修复：隐藏控件（订单类型 .88 隐藏后无 of_orderType）跳过——值由下方兜底补回，避免 null.value 崩溃 */
     o[f.key]=f.type==='number'?num(el.value):el.value;
   });
+  /* .93 修复：orderType 控件隐藏后未收集——从上下文补回（编辑=原单、新增=pendingOrderType、兜底销售），保证 .25 校验链完整 */
+  if(!o.orderType){
+    if(idx>=0&&orders[idx]&&orders[idx].orderType)o.orderType=orders[idx].orderType;
+    else if(pendingOrderType)o.orderType=pendingOrderType;
+    else o.orderType='销售订单';
+  }
   if(!o.id){alert('请填写订单编号');return;}
   if(!o.customer){alert('请填写客户名称');return;}
   if(o.orderType==='销售订单'&&(!o.contractNo||!String(o.contractNo).trim())){alert('销售订单请填写合同号');return;}
@@ -5442,7 +5449,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .92）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .93）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -7280,6 +7287,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.92</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.93</div>
 </body>
 </html>
