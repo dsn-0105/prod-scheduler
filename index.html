@@ -986,9 +986,10 @@ function pagerHtml(m){
 
 /* 可点击列头（排序+筛选图标） */
 var FILT_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>';
-/* 2026-08-25.63：感叹号参数化（fill=红/黄/灰，title 区分维度）——替代 .42/.60 的 4 个固定常量 */
-function warnTriSvg(fill,title){
-  return '<svg viewBox="0 0 24 24" style="width:14px;height:14px;vertical-align:-2px;margin-right:3px" title="'+title+'"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" fill="'+fill+'"/><path d="M12 9v4M12 17h.01" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+/* 2026-08-25.63：感叹号参数化（fill=红/黄/灰，tip 区分维度）——替代 .42/.60 的 4 个固定常量。
+   .89：原生 title 改为 data-tip（配合 cell-tip 悬浮框统一渲染，避免浏览器原生 tooltip 慢/无样式） */
+function warnTriSvg(fill,tip){
+  return '<svg viewBox="0 0 24 24" style="width:14px;height:14px;vertical-align:-2px;margin-right:3px;cursor:help" data-tip="'+tip+'"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" fill="'+fill+'"/><path d="M12 9v4M12 17h.01" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
 }
 /* 2026-08-25.63：库存状态 4 档（数量 vs 上下限）——red(数量<0 欠货)/amber(0<数量<最小 缺货风险)/green(最小~最大 正常)/gray(数量>最大 积压)；未设限或限=0 时落 green，0 值落 green（用户口径：>0 且<最小才黄色） */
 function invStockLevel(v,min,max){
@@ -2624,11 +2625,11 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="orderQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(oq)+'</td>'+
       '<td data-key="stockMax" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMax!=null&&it.stockMax!==''?money(it.stockMax):'')+'</td>'+
       '<td data-key="stockMin" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.stockMin!=null&&it.stockMin!==''?money(it.stockMin):'')+'</td>'+
-      '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvD==='red'?warnTriSvg('#ef4444','已交付数量小于零（欠货）'):(lvD==='amber'?warnTriSvg('#f59e0b','已交付数量低于最小库存量（缺货风险）'):(lvD==='gray'?warnTriSvg('#9ca3af','已交付数量高于最大库存量（积压预警）'):'')))+money(dq)+'</td>'+
+      '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvD==='red'?warnTriSvg('#ef4444','已交付数量小于零（欠货）\n当前已交付：'+money(dq)):(lvD==='amber'?warnTriSvg('#f59e0b','已交付数量低于最小库存量（缺货风险）\n当前已交付：'+money(dq)+' · 最小库存：'+money(it.stockMin)):(lvD==='gray'?warnTriSvg('#9ca3af','已交付数量高于最大库存量（积压预警）\n当前已交付：'+money(dq)+' · 最大库存：'+money(it.stockMax)):'')))+money(dq)+'</td>'+
       '<td data-key="calledQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(num(it.calledQty)>0?money(it.calledQty):'')+'</td>'+
       '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
       '<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>'+
-      (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvB==='red'?warnTriSvg('#ef4444','结余数量小于零（欠货）'):(lvB==='amber'?warnTriSvg('#f59e0b','结余数量低于最小库存量（缺货风险）'):(lvB==='gray'?warnTriSvg('#9ca3af','结余数量高于最大库存量（积压预警）'):'')))+money(balance)+'</td>':'')+
+      (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvB==='red'?warnTriSvg('#ef4444','结余数量小于零（欠货）\n当前结余：'+money(balance)):(lvB==='amber'?warnTriSvg('#f59e0b','结余数量低于最小库存量（缺货风险）\n当前结余：'+money(balance)+' · 最小库存：'+money(it.stockMin)):(lvB==='gray'?warnTriSvg('#9ca3af','结余数量高于最大库存量（积压预警）\n当前结余：'+money(balance)+' · 最大库存：'+money(it.stockMax)):'')))+money(balance)+'</td>':'')+
       /* 2026-08-25.61：结余进度（进度条+百分比，同交付进度列样式）；.63 起颜色随 4 档状态（红/黄/绿/灰） */
       (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(balPct)+'%'+balBarCls+'"></div></div><span style="font-size:11px'+balTxtCls+'">'+balPct+'%</span></div></td>':'')+
       /* 2026-08-25.62：负值宽度按绝对值；.63 起库存订单进度条颜色随 4 档状态，销售订单保持默认蓝 */
@@ -5410,7 +5411,7 @@ function mdRender(md){
 var GUIDE_MD=[
 '# 辰微生产排产系统 · 使用说明',
 '',
-'> 更新：2026-08-30（build .88）。系统功能升级后，本说明会同步更新。',
+'> 更新：2026-08-30（build .89）。系统功能升级后，本说明会同步更新。',
 '',
 '## 一、系统简介',
 '- 用途：智能低压断路器生产排产与订单管理（销售订单 → 库存 → 交付计划 → 排产计划 → 报工入库全流程）。',
@@ -7209,6 +7210,9 @@ bootstrap();
     return avail>0 && full>avail+0.5;
   }
   document.addEventListener('mouseover',function(e){
+    /* 2026-08-30.89：三角警示等 [data-tip] 元素——优先显示自定义悬浮框（替代原生 title，语义+数值解释） */
+    var tipEl=e.target.closest('[data-tip]');
+    if(tipEl){tip.textContent=tipEl.getAttribute('data-tip');tip.style.display='block';return;}
     /* 2026-08-25.4：下拉框（select）特判——内容=当前选中项文本；仅选中项超宽且未展开（非 focus）时显示，
        避免 td.innerText 拼出全部 option 文本的大悬浮框（调用库存弹窗 cs-inv 误命中 td） */
     var sel=e.target.closest('select');
@@ -7243,6 +7247,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.88</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-08-30.89</div>
 </body>
 </html>
