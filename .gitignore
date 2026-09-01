@@ -11,3 +11,4 @@ server/data.json
 server/users.json
 server/backups/
 deploy_tencent/
+rollback.sh
