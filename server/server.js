@@ -135,7 +135,15 @@ const server = http.createServer((req, res) => {
   if (p === '/api/save' && req.method === 'POST') {
     return readBody(req, b => {
       if (!b || !b.key || b.value === undefined) return send(res, 400, { error: '参数缺失' });
-      if (!(b.key in data)) return send(res, 400, { error: '未知数据表: ' + b.key });
+      if (!(b.key in data)) {
+        /* 加固：DEFAULT_DATA 已注册的表自动补键（兼容线上旧 data.json 缺键场景），真未知表才 400 */
+        if (Object.prototype.hasOwnProperty.call(DEFAULT_DATA, b.key)) {
+          data[b.key] = JSON.parse(JSON.stringify(DEFAULT_DATA[b.key]));
+          revs[b.key] = 0;
+        } else {
+          return send(res, 400, { error: '未知数据表: ' + b.key });
+        }
+      }
       if (!canWrite(user, b.key)) return send(res, 403, { error: '无该表单的编辑权限' });
       data[b.key] = b.value;
       revs[b.key] = (revs[b.key] || 0) + 1;
