@@ -345,6 +345,7 @@ body.col-dragging{cursor:grabbing;user-select:none}
 </div>
 
 <script src="js/guide.js"></script>
+<script src="js/logs.js"></script>
 <script>
 /* ================================================================
    DB 异步数据层 — 服务器就绪
@@ -580,13 +581,7 @@ function refKeyTrigger(el){
 /* ================================================================
    操作日志
 ================================================================ */
-function logOp(action,target,detail,field,oldv,newv){
-  var entry={time:new Date().toLocaleString('zh-CN',{hour12:false}),action:action,target:target,detail:detail,
-    field:field||'', oldv:(oldv===undefined?'':oldv), newv:(newv===undefined?'':newv)};
-  logs.unshift(entry);
-  if(logs.length>500)logs=logs.slice(0,500);
-  save('logs',logs);
-}
+
 /* 字段级日志增强：硬编码表单(排产/交付)的字段名映射 */
 const HARD_FIELDS={
   dailyPlan:[
@@ -751,7 +746,7 @@ const NAV=[
    状态
 ================================================================ */
 let products=[],orders=[],dailyPlans=[],dailyPkgs=[],deliveries=[],productionPlans=[],productionReports=[],processTemplates=[];
-let logs=[];
+
 let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
 let meta={seq:0};
@@ -5544,46 +5539,7 @@ function delDelivery(idx){
 /* ================================================================
    操作日志
 ================================================================ */
-function renderLogs(){
-  const ACTION_CLS={'新增':'tag-green','编辑':'tag-blue','删除':'tag-red','导入':'tag-amber','导出':'','清空':'tag-red','字段设置':''};
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>操作日志 <span class="desc">记录关键操作 · 最多保留 500 条</span> <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="clearLogs()">清空日志</button></div>';
-  if(logs.length===0){
-    html+='<div class="empty">暂无操作记录</div>';
-  }else{
-    TBL_SCHEMAS.logs=[
-      {key:'time',label:'时间',type:'text'},
-      {key:'action',label:'操作',type:'text',select:true},
-      {key:'target',label:'表单',type:'text',select:true},
-      {key:'field',label:'字段',type:'text',select:true},
-      {key:'detail',label:'详情(旧→新)',type:'text'}
-    ];
-    TBL_ROWS.logs=logs;
-    let shownLogs=applyTable('logs',logs);
-    /* 2026-08-25.68：金蝶式分页（单行模型直接切行；日志无操作栏，分页栏放表格上方右对齐） */
-    if(PAGED_FORMS.logs&&shownLogs.length>0)shownLogs=slicePaged('logs',shownLogs,pageSizeOf('logs')).rows;
-    html+=filterBar('logs');
-    html+='<div class="bulk-bar" style="margin:8px 0 6px">'+pagerHtml('logs')+'</div>';
-    html+='<div class="table-wrap"><table><thead><tr>'
-      +thCol('logs',TBL_SCHEMAS.logs[0],'min-width:140px')
-      +thCol('logs',TBL_SCHEMAS.logs[1],'width:60px')
-      +thCol('logs',TBL_SCHEMAS.logs[2],'width:120px')
-      +thCol('logs',TBL_SCHEMAS.logs[3],'width:130px')
-      +thCol('logs',TBL_SCHEMAS.logs[4])
-      +'</tr></thead><tbody>';
-    if(shownLogs.length===0){html+=noMatchRow('logs',5);}
-    shownLogs.forEach(l=>{
-      const cls=ACTION_CLS[l.action]||'tag-gray';
-      html+='<tr><td data-key="time" style="font-size:12px;color:var(--muted);white-space:nowrap">'+esc(l.time)+'</td>'
-        +'<td data-key="action"><span class="tag '+cls+'">'+esc(l.action)+'</span></td>'
-        +'<td data-key="target">'+esc(l.target)+'</td>'
-        +'<td data-key="field" style="font-size:13px;color:var(--primary);font-weight:600">'+(l.field?esc(l.field):'<span style="color:var(--muted);font-weight:400">—</span>')+'</td>'
-        +'<td data-key="detail" style="font-size:13px">'+esc(l.detail)+'</td></tr>';
-    });
-    html+='</tbody></table></div>';
-  }
-  html+='</div>';
-  return html;
-}
+
 
 /* ================================================================
    2026-08-25.69：使用说明页（系统内帮助文档）——内容为 Markdown 文本（GUIDE_MD），
@@ -5639,13 +5595,7 @@ function renderGuide(){
     '<div style="padding:4px 16px 14px">'+mdRender(GUIDE_MD)+'</div></div>';
 }
 
-function clearLogs(){
-  if(!confirm('确认清空所有操作日志？此操作不可恢复。'))return;
-  logs=[];
-  save('logs',logs);
-  logOp('清空','操作日志','清空全部日志');
-  renderContent();
-}
+
 
 /* ================================================================
    工序模板（processTemplates，build 2026-08-24.11）：
@@ -7391,6 +7341,6 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.101</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.102</div>
 </body>
 </html>
