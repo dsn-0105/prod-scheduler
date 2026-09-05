@@ -2718,6 +2718,13 @@ function saleReturnForSel(){
   saleReturnDlg(o.id);
 }
 /* 交付弹窗：明细行已调用/已交付/未交付只读 + 本次交付可填；行级≤未交付、整单≤Σ已调用 */
+/* .108：行级可调用余量 = 已调用 − 超出期初直接交付基数的已交付（下限 0）。
+   口径演进（版本 .100 → .108）：.100 用 calledQty−deliveredQty，把全部已交付都当作已消耗调用额度；
+   .108 起期初直接交付（directDelivered=无调用支撑的历史已交付，.97 迁移/金蝶导入带入）不消耗调用额度——
+   只有超出 directDelivered 的已交付才从 calledQty 中扣减（directDelivered 缺省/为 0 时等价 .100 公式）。 */
+function saleMaxCallable(it){
+  return Math.max(0,num(it.calledQty)-Math.max(0,num(it.deliveredQty)-num(it.directDelivered)));
+}
 function saleDeliverDlg(){
   const s=selSet('order_frame');
   if(s.size===0){alert('请先勾选 1 张销售订单');return;}
@@ -2735,12 +2742,12 @@ function saleDeliverDlg(){
     '<div><label>单据日期</label><input type="text" value="'+fmtDate(o.startDate)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '<div><label>审核状态</label><input type="text" value="'+esc(o.status)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '</div>'+
-    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">本次交付 ≤ 该行未交付 且 ≤ 该行可调用余量（已调用−已交付，.100 行级对应）</span>'+saleDeliverFillBtnHtml()+'</div>'+   /* .99：自动填充下拉（延后样式） */
+    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">本次交付 ≤ 该行未交付 且 ≤ 该行可调用余量（.108：已调用−超出期初直接交付基数的已交付）</span>'+saleDeliverFillBtnHtml()+'</div>'+   /* .99：自动填充下拉（延后样式） */
     '<div class="table-wrap"><table id="saleDeliverTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>型号</th><th>规格</th><th>已调用</th><th>已交付</th><th>未交付</th><th>本次交付</th></tr></thead><tbody>';
   its.forEach(function(it,li){
     const oq=num(it.orderQty),dq=num(it.deliveredQty),cq=num(it.calledQty);
-    /* .100：行级可交付上限 = min(未交付, 已调用−已交付) */
-    const maxRow=Math.min(Math.max(0,oq-dq),Math.max(0,cq-dq));
+    /* .108：行级可交付上限 = min(未交付, 可调用余量 saleMaxCallable（已调用−超出期初直接交付基数的已交付）) */
+    const maxRow=Math.min(Math.max(0,oq-dq),saleMaxCallable(it));
     const p=products.find(function(x){return String(x.id)===String(it.productId);});
     /* .99：明细行加型号/规格（无则产品库回填）；表体单元格统一左对齐 */
     body+='<tr><td style="text-align:left">'+esc(it.productId)+'</td><td style="text-align:left">'+esc(it.productName||'')+'</td>'+
@@ -2774,7 +2781,7 @@ if(!window.__saleDeliverFillBound){window.__saleDeliverFillBound=true;document.a
   const wrap=document.getElementById('saleDeliverFillWrap');
   if(menu&&wrap&&!e.target.closest('#saleDeliverFillWrap'))menu.style.display='none';
 });}
-/* 自动填充：called=已调用−已交付（下限 0，默认）；undel=未交付（下限 0）；逐行写入 sd-qty */
+/* 自动填充：called=可调用余量 saleMaxCallable（.108：已调用−超出期初直接交付基数的已交付，下限 0，默认）；undel=未交付（下限 0）；逐行写入 sd-qty */
 function saleDeliverFill(type){
   const o=orders.find(function(x){return x.id===window.__saleDeliverOrderId;});
   if(!o)return;
@@ -2783,7 +2790,7 @@ function saleDeliverFill(type){
     const it=(o.items||[])[li];
     if(!it)return;
     const dq=num(it.deliveredQty);
-    const val=(type==='undel')?Math.max(0,num(it.orderQty)-dq):Math.max(0,num(it.calledQty)-dq);
+    const val=(type==='undel')?Math.max(0,num(it.orderQty)-dq):saleMaxCallable(it);
     tr.querySelector('.sd-qty').value=val;
   });
 }
@@ -2796,14 +2803,14 @@ function saleDeliverSave(oi){
     const li=Number(tr.querySelector('.sd-qty').dataset.li);
     const it=(o.items||[])[li];
     const qty=num(tr.querySelector('.sd-qty').value);
-    /* .100：行级校验——本次交付 ≤ 未交付 且 ≤ 该行可调用余量（已调用−已交付，与 .99 填充口径一致） */
+    /* .108：行级校验——本次交付 ≤ 未交付 且 ≤ 该行可调用余量（saleMaxCallable：已调用−超出期初直接交付基数的已交付，与 .99 填充口径一致） */
     const maxD=Math.max(0,num(it.orderQty)-num(it.deliveredQty));
-    const maxC=Math.max(0,num(it.calledQty)-num(it.deliveredQty));
+    const maxC=saleMaxCallable(it);
     const maxRow=Math.min(maxD,maxC);
     if(qty>0){
       if(qty>maxRow){
         if(qty>maxD)overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 该行未交付 '+maxD);
-        else overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 该行可交付 '+maxC+'（已调用'+num(it.calledQty)+'−已交付'+num(it.deliveredQty)+'）');
+        else overRows.push('「'+(it.productName||it.productId)+'」本次交付 '+qty+' > 该行可调用余量 '+maxC+'（已调用'+num(it.calledQty)+'−已交付'+num(it.deliveredQty)+'，期初直接交付'+num(it.directDelivered)+'豁免）');
       }
       updates.push({li:li,qty:qty});total+=qty;
     }
@@ -2856,7 +2863,12 @@ function saleReturnSave(orderId){
   });
   if(updates.length===0){alert('请至少填写一行的退货数量');return;}
   if(overRows.length>0){alert('以下行退货数量超过已交付：\n'+overRows.join('\n'));return;}
-  updates.forEach(function(u){o.items[u.li].deliveredQty=Math.max(0,num(o.items[u.li].deliveredQty)-u.qty);});
+  updates.forEach(function(u){
+    const _it=o.items[u.li];
+    _it.deliveredQty=Math.max(0,num(_it.deliveredQty)-u.qty);
+    /* .108：退货使已交付跌至期初直接交付基数以下 → 基数同步下调至新已交付（防负基数/超额豁免） */
+    if(_it.directDelivered!=null&&_it.directDelivered!=='')_it.directDelivered=Math.min(num(_it.directDelivered),num(_it.deliveredQty));
+  });
   save('orders',orders);
   syncOrderAutoStatus();
   logOp('新增','销售订单','退货「'+o.id+'」'+total+' 台（'+updates.length+' 行）');
@@ -3259,13 +3271,20 @@ function saveOrder(idx){
   const items=[];
   /* 2026-08-30.92：库存订单数量=最大库存量（校验/过滤以 stockMax 为准） */
   const _oqOf=function(it){return num((o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?it.stockMax:it.orderQty);};
-  document.querySelectorAll('#orderItemsTbl tbody tr').forEach(tr=>{
+  /* .108：directDelivered（期初直接交付基数，只读内部字段，不进弹窗输入项）——行对象保存时按表单重建会丢字段，
+     故按行序从旧行补回（须产品一致，防止删行/换品后索引漂移错位；增删行漂移风险同 .24/.33/.40 已知） */
+  const _oldLines=(idx>=0&&orders[idx]&&orders[idx].items)?orders[idx].items:null;
+  document.querySelectorAll('#orderItemsTbl tbody tr').forEach((tr,li)=>{
     const it={};
     tr.querySelectorAll('.oi_field').forEach(el=>{
       const f=cols.find(c=>c.key===el.dataset.key);
       it[el.dataset.key]=(f&&f.type==='number')?num(el.value):(el.value||'');
     });
-    if(it.productId||_oqOf(it)>0)items.push(it);
+    if(it.productId||_oqOf(it)>0){
+      const _old=_oldLines&&_oldLines[li];
+      if(_old&&String(_old.productId)===String(it.productId)&&_old.directDelivered!=null&&_old.directDelivered!==''&&num(_old.directDelivered)>0)it.directDelivered=num(_old.directDelivered);
+      items.push(it);
+    }
   });
   if(items.length===0){alert('请至少填写一行产品明细（选择产品并填写'+(o.orderType==='库存订单'?'最大库存量':'订单数量')+'）');return;}
   const bad=items.find(it=>!it.productId||_oqOf(it)<=0);
@@ -6312,7 +6331,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.107</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.108</div>
 </body>
 </html>
 

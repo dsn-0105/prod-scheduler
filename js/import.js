@@ -458,7 +458,12 @@ function kdDoImport(){
       }
       /* 落库时回填产品名称/规格/型号（以产品主数据为准，非 Excel 原值） */
       var pp=pm[pid]||{};
-      items.push({productId:pid,productName:pp.name||'',spec:pp.spec||'',model:pp.model||'',orderQty:num(it.orderQty)||0,deliveredQty:num(it.deliveredQty)||0,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''});
+      var _impQty=num(it.orderQty)||0,_impDq=num(it.deliveredQty)||0;
+      /* .108：金蝶导入的已交付无调用支撑（calledQty 恒无），deliveredQty>0 即视为期初直接交付基数 directDelivered——
+         避免 .100 行级上限把全部已交付当作已消耗调用额度、导致后续交付被拦（防新导入数据再入坑） */
+      var _impItem={productId:pid,productName:pp.name||'',spec:pp.spec||'',model:pp.model||'',orderQty:_impQty,deliveredQty:_impDq,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''};
+      if(_impDq>0&&!(num(it.calledQty)>0))_impItem.directDelivered=_impDq;
+      items.push(_impItem);
     });
     if(items.length===0){skipCount++;return;}
     totalLines+=items.length;
