@@ -2824,7 +2824,7 @@ function saleDeliverSave(oi){
   closeModal();
   renderContent();
 }
-/* 退货弹窗：明细行已交付只读 + 退货数量可填；退货 ≤ 已交付 */
+/* 退货弹窗：明细行已交付/可退货只读 + 退货数量可填；退货 ≤ 可退货（=当前已交付，.109 增可退货列明示上限） */
 function saleReturnDlg(orderId){
   const o=orders.find(function(x){return x.id===orderId;});
   if(!o){alert('未找到该订单');return;}
@@ -2834,11 +2834,12 @@ function saleReturnDlg(orderId){
     '<div><label>单据编号</label><input type="text" value="'+esc(o.id)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '<div><label>客户名称</label><input type="text" value="'+esc(o.customer)+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '</div>'+
-    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">退货明细</b><span style="font-size:12px;color:var(--muted)">退货数量 ≤ 该行已交付</span></div>'+
-    '<div class="table-wrap"><table id="saleReturnTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>已交付</th><th>退货数量</th></tr></thead><tbody>';
+    '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">退货明细</b><span style="font-size:12px;color:var(--muted)">退货数量 ≤ 该行可退货</span></div>'+
+    '<div class="table-wrap"><table id="saleReturnTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>已交付</th><th>可退货</th><th>退货数量</th></tr></thead><tbody>';
   its.forEach(function(it,li){
     body+='<tr><td>'+esc(it.productId)+'</td><td>'+esc(it.productName||'')+'</td>'+
       '<td style="text-align:right">'+money(num(it.deliveredQty))+'</td>'+
+      '<td style="text-align:right">'+money(Math.max(0,num(it.deliveredQty)))+'</td>'+
       '<td><input type="number" class="sr-qty" data-li="'+li+'" data-max="'+Math.max(0,num(it.deliveredQty))+'" min="0" value="0" style="width:90px"></td></tr>';
   });
   body+='</tbody></table></div>';
@@ -2855,9 +2856,9 @@ function saleReturnSave(orderId){
     const li=Number(tr.querySelector('.sr-qty').dataset.li);
     const it=(o.items||[])[li];
     const qty=num(tr.querySelector('.sr-qty').value);
-    const maxR=Math.max(0,num(it.deliveredQty));
+    const maxR=Math.max(0,num(it.deliveredQty)); /* .109：可退货=当前已交付，文案随列名 */
     if(qty>0){
-      if(qty>maxR)overRows.push('「'+(it.productName||it.productId)+'」退货 '+qty+' > 已交付 '+maxR);
+      if(qty>maxR)overRows.push('「'+(it.productName||it.productId)+'」退货 '+qty+' > 可退货 '+maxR);
       updates.push({li:li,qty:qty});total+=qty;
     }
   });
@@ -6331,7 +6332,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.108</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.109</div>
 </body>
 </html>
 
