@@ -2577,6 +2577,18 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     if(formKey==='order_frame') shown=[...shown].sort((a,b)=>b.order.id.localeCompare(a.order.id,'zh-CN',{numeric:true})); // 销售订单默认：单据编号降序（数字感知，.79）
     else if(formKey==='order_inv') shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 库存：id 升序（保持原行为）
   }
+  /* 2026-09-05.110：幽灵勾选复发修复（用户报告「被筛选条目仍被选中→视觉 1 条但仅限 1 条操作报已选 N 张」）。
+     .5/.64 只在编辑保存/操作后清理，筛选或排序条件变更本身不清 selSet → 被筛掉的行 checkbox 消失但 selSet 残留。
+     此处渲染层兜底：在分页切片前，把 selSet 中不在「当前筛选+排序可见全量」的行剔除（对齐 .5/.64 模式）。
+     时机=分页前：同一筛选条件下跨页勾选保留；无筛选时全量可见 → 零副作用。 */
+  {
+    const _vis=new Set();
+    shown.forEach(function(r){_vis.add(String(r.orderIdx));});
+    const _sel=selSet(formKey);
+    let _ghost=false;
+    _sel.forEach(function(k){ if(!_vis.has(k)){_sel.delete(k);_ghost=true;} });
+    /* 计数与勾选态随本次重渲染自动刷新，无需 updateSelUI */
+  }
   /* 2026-08-25.66/.68：金蝶式分页（order_frame/order_inv）——整单不拆（groupKey=r.order.id）；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
   if(PAGED_FORMS[formKey]&&shown.length>0)shown=slicePaged(formKey,shown,pageSizeOf(formKey),r=>r.order.id).rows;
   if(shouldMerge&&manualSort) shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 手动排序后聚合保序（历史行为）
@@ -6332,7 +6344,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.109</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.110</div>
 </body>
 </html>
 
