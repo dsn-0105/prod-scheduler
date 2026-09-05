@@ -363,7 +363,9 @@ body.col-dragging{cursor:grabbing;user-select:none}
 const API_BASE='/api'; // 服务器模式；本地单机调试可改为 '' 回退 localStorage
 const KEY='wb_cb_prod_';
 let authToken='';
-try{authToken=localStorage.getItem(KEY+'token')||'';}catch(e){}
+// 会话保持策略：登录 token 存 sessionStorage（.107 起），关闭标签页/浏览器即自动失效，
+// 刷新页面仍保持登录态；不再用 localStorage 跨会话持久化登录凭证，降低泄露面。
+try{authToken=sessionStorage.getItem(KEY+'token')||'';}catch(e){}
 let serverData=null;
 let serverRevs={};
 let syncTimer=null;
@@ -460,7 +462,7 @@ async function doLogin(){
     if(!r.ok){err.textContent=j.error||'登录失败';return;}
     authToken=j.token;
     currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{}};
-    try{localStorage.setItem(KEY+'token',authToken);}catch(e){}
+    try{sessionStorage.setItem(KEY+'token',authToken);}catch(e){}
     serverData=null;serverRevs={};
     const lb=document.getElementById('loginBox');if(lb)lb.style.display='none';
     try{await pullAll();}catch(e){}
@@ -470,7 +472,7 @@ async function doLogin(){
 function logout(){
   if(!confirm('确认退出登录？'))return;
   authToken='';currentUser=null;
-  try{localStorage.removeItem(KEY+'token');}catch(e){}
+  try{sessionStorage.removeItem(KEY+'token');}catch(e){}
   serverData=null;serverRevs={};
   showLogin();
 }
@@ -6310,7 +6312,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.106</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.107</div>
 </body>
 </html>
 
