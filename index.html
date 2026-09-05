@@ -1838,6 +1838,26 @@ function statCard(v,l,cls){
   return '<div class="stat '+(cls||'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>';
 }
 
+/* 2026-09-05.112：表格合计行生成器（需求：每个表单最下方一行合计，只统计上方数字的总数）。
+   口径：①合计范围=当前筛选后全量行（分页前传入）；②仅 schema type:'number' 的列求和；
+   ③比率/进度列（_pct/_balPct）与文本列留空；④第一数字列前的文本列合并为「合计」标签格。
+   返回整行 <tr>…</tr>；preTd=勾选/展开列前缀 td（如 '<td class="sel-col"></td>'）；rows 为空返回 ''。
+   首列即数字的极端 schema（本 7 表均不存在）标签格省略、数值照常对齐输出。 */
+const SUM_SKIP_KEYS={_pct:1,_balPct:1};
+function sumRowHtml(schema,rows,preTd,rowStyle){
+  if(!rows||rows.length===0)return '';
+  const sums={};let first=-1;
+  schema.forEach((c,i)=>{if(c.type==='number'&&!SUM_SKIP_KEYS[c.key]){sums[c.key]=0;if(first<0)first=i;}});
+  rows.forEach(r=>{schema.forEach(c=>{if(sums[c.key]!=null)sums[c.key]+=num(c.get?c.get(r):r[c.key]);});});
+  let h=preTd||'';
+  if(first>0)h+='<td colspan="'+first+'" style="text-align:right;font-weight:600">合计</td>';
+  schema.forEach((c,i)=>{
+    if(i<first)return;
+    h+=(sums[c.key]!=null)?('<td data-key="'+c.key+'" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(sums[c.key])+'</td>'):'<td></td>';
+  });
+  return '<tr style="'+(rowStyle||'font-weight:600;background:var(--primary-light)')+'">'+h+'</tr>';
+}
+
 /* ================================================================
    产品主数据
 ================================================================ */
@@ -1850,6 +1870,7 @@ function renderProducts(){
     TBL_SCHEMAS.product=cols.map(f=>({key:f.key,label:f.label,type:f.type==='number'?'number':(f.type==='date'?'date':'text'),select:f.type==='select',locked:f.locked}));
     TBL_ROWS.product=products;
     let shown=applyTable('product',products);
+    const pAll=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存） */
     /* 2026-08-25.68：金蝶式分页（单行模型直接切行） */
     if(PAGED_FORMS.product&&shown.length>0)shown=slicePaged('product',shown,pageSizeOf('product')).rows;
     lastRowIds.product=shown.map(p=>products.indexOf(p));
@@ -1881,6 +1902,7 @@ function renderProducts(){
       });
       html+='</tr>';
     });
+    if(pAll.length>0)html+=sumRowHtml(TBL_SCHEMAS.product,pAll,'<td class="sel-col"></td>');   /* 2026-09-05.112：底部合计（日产能/库存数量列求和） */
     html+='</tbody></table></div>';
   }
   html+='</div>';
@@ -2563,6 +2585,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   ];
   TBL_ROWS[formKey]=rows;
   let shown=applyTable(formKey,rows);
+  const allShown=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存，供底部合计行） */
   /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
      仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
   const HEAD_COLS=5;
@@ -2677,6 +2700,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
       '</tr>';
   });
+  if(allShown.length>0)html+=sumRowHtml(TBL_SCHEMAS[formKey],allShown,'<td class="sel-col"></td>');   /* 2026-09-05.112：底部合计（数量列求和，交付进度%列留空；口径=筛选后全量跨页恒定） */
   html+='</tbody></table></div>';
   return html;
 }
@@ -3532,7 +3556,6 @@ function renderDailyPlan(){
     html+=filterBar('dp_stockup');
     html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.dp_stockup.map(c=>thCol('dp_stockup',c)).join('')+'</tr></thead><tbody>';
     if(shownPlans.length===0){html+=noMatchRow('dp_stockup',8);}
-    let sumAssembly=0,sumInner=0,sumTest=0,sumSemi=0;
     shownPlans.forEach((p)=>{
       const idx=dailyPlans.indexOf(p);
       const selChecked=selSet('dp_stockup').has(String(idx))?'checked':'';
@@ -3542,9 +3565,9 @@ function renderDailyPlan(){
         '<td data-key="testAgingDone" style="text-align:center;font-size:12px">'+(p.testAgingPlan||0)+' / <b>'+(p.testAgingDone||0)+'</b></td>'+
         '<td data-key="semiInbound" style="text-align:center;font-weight:600">'+(p.semiInbound||0)+'</td>'+
         '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
-      sumAssembly+=num(p.assemblyDone);sumInner+=num(p.innerPackDone);sumTest+=num(p.testAgingDone);sumSemi+=num(p.semiInbound);
     });
-    html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td colspan="2">小计</td><td style="text-align:center">'+sumAssembly+'</td><td style="text-align:center">'+sumInner+'</td><td style="text-align:center">'+sumTest+'</td><td style="text-align:center">'+sumSemi+'</td><td></td></tr>';
+    /* 2026-09-05.112：小计升级为通用合计行（口径不变：装配/内包/调试老化完成数 + 半成品入库，筛选全量） */
+    html+=sumRowHtml(TBL_SCHEMAS.dp_stockup,shownPlans,'<td class="sel-col"></td>');
     html+='</tbody></table></div>';
   }
 
@@ -3571,7 +3594,6 @@ function renderDailyPlan(){
     html+=filterBar('dp_pkg');
     html+='<div class="table-wrap"><table><thead><tr><th class="sel-col"></th>'+TBL_SCHEMAS.dp_pkg.map(c=>thCol('dp_pkg',c)).join('')+'</tr></thead><tbody>';
     if(shownPkgs.length===0){html+=noMatchRow('dp_pkg',10);}
-    let sumPkg=0,sumFin=0;
     shownPkgs.forEach(p=>{
       const idx=dailyPkgs.indexOf(p);
       const selChecked=selSet('dp_pkg').has(String(idx))?'checked':'';
@@ -3582,9 +3604,9 @@ function renderDailyPlan(){
         '<td data-key="delivered" style="text-align:right">'+money(p.delivered)+'</td>'+
         '<td data-key="undelivered" style="text-align:right">'+money(p.undelivered)+'</td>'+
         '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
-      sumPkg+=num(p.pkgDone);sumFin+=num(p.finInbound);
     });
-    html+='<tr style="font-weight:600;background:var(--amber-bg)"><td class="sel-col"></td><td colspan="3">小计</td><td style="text-align:center">'+sumPkg+'</td><td style="text-align:center">'+sumFin+'</td><td colspan="4"></td></tr>';
+    /* 2026-09-05.112：小计升级为通用合计行（补全 订单总量/已交付/未交付 列合计；包装完成/成品入库沿用完成口径） */
+    html+=sumRowHtml(TBL_SCHEMAS.dp_pkg,shownPkgs,'<td class="sel-col"></td>','font-weight:600;background:var(--amber-bg)');
     html+='</tbody></table></div>';
   }
 
@@ -3890,6 +3912,7 @@ function renderDelivery(){
     ];
     TBL_ROWS.delivery=rows;
     let shown=applyTable('delivery',rows);
+    const dAll=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存，供底部合计行） */
     /* 单据级列合并（订单管理同款）：前 6 列按单据 rowspan 合并；仅未按明细级列排序时合并，避免明细行打散致 rowspan 断裂 */
     const HEAD_COLS=6;
     const manualSort=tState('delivery').sort;
@@ -3952,6 +3975,7 @@ function renderDelivery(){
         '<td data-key="_ppPlanned" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlannedOfLine(di,li,it.productId))+'</td>'+
         '<td data-key="lineNotes">'+esc(it.lineNotes||'')+'</td></tr>';
     });
+    if(dAll.length>0)html+=sumRowHtml(TBL_SCHEMAS.delivery,dAll,'<td class="sel-col"></td>');   /* 2026-09-05.112：底部合计（订单数量/已交付/未交付/本批计划/已排产求和，口径=筛选后全量） */
     html+='</tbody></table></div>';
   }
 
@@ -4319,7 +4343,6 @@ function renderProdPlanDay(writable,all){
   html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_ppColg+'<thead><tr><th class="sel-col"></th><th class="exp-col" title="展开/收起报工明细"></th>'+TBL_SCHEMAS.prodPlan.map(c=>thCol('prodPlan',c)).join('')+'</tr></thead></table></div></div>';
   html+='<div class="table-wrap"><table class="body-tbl">'+_ppColg+'<tbody>';
   if(shown.length===0){html+=noMatchRow('prodPlan',TBL_SCHEMAS.prodPlan.length+2);}
-  let sumPlan=0,sumDone=0;
   /* 按排产单分组渲染：组内每产品一行，组后插展开行（报工明细） */
   const gmap=new Map();
   shown.forEach(r=>{ if(!gmap.has(r.p.id))gmap.set(r.p.id,[]); gmap.get(r.p.id).push(r); });
@@ -4350,14 +4373,14 @@ function renderProdPlanDay(writable,all){
         '<td data-key="_pct" style="font-variant-numeric:tabular-nums;text-align:right">'+(allDone?'<span class="tag tag-green">100%</span>':pct+'%')+'</td>'+
         '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td>'+
         '<td data-key="lineNotes" style="font-size:12px;color:var(--muted)">'+esc(it.lineNotes||'')+'</td></tr>';
-      sumPlan+=t;sumDone+=d;
     });
     if(planExpand[pid]){
       const gp=productionPlans.find(x=>x.id===pid);
       if(gp)html+=ppExpandRow(gp);
     }
   });
-  html+='<tr style="font-weight:600;background:var(--primary-light)"><td class="sel-col"></td><td class="exp-col"></td><td colspan="10">小计</td><td style="text-align:right">'+money(sumPlan)+'</td><td style="text-align:right">'+money(sumDone)+'</td><td colspan="3"></td></tr>';
+  /* 2026-09-05.112：小计升级为通用合计行——口径改为筛选后全量 _ppAll（原只合计当前页），计划数量/累计完成求和、进度%列留空（列位按 schema 自动对齐，修正原 colspan 错位） */
+  html+=sumRowHtml(TBL_SCHEMAS.prodPlan,_ppAll,'<td class="sel-col"></td><td class="exp-col"></td>');
   html+='</tbody></table></div>';
   return html;
 }
@@ -6364,7 +6387,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.111</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.112</div>
 </body>
 </html>
 
