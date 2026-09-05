@@ -1840,20 +1840,34 @@ function statCard(v,l,cls){
 
 /* 2026-09-05.112：表格合计行生成器（需求：每个表单最下方一行合计，只统计上方数字的总数）。
    口径：①合计范围=当前筛选后全量行（分页前传入）；②仅 schema type:'number' 的列求和；
-   ③比率/进度列（_pct/_balPct）与文本列留空；④第一数字列前的文本列合并为「合计」标签格。
-   返回整行 <tr>…</tr>；preTd=勾选/展开列前缀 td（如 '<td class="sel-col"></td>'）；rows 为空返回 ''。
-   首列即数字的极端 schema（本 7 表均不存在）标签格省略、数值照常对齐输出。 */
+   ③比率/进度列（_pct/_balPct）与文本列留空；④「合计」标签放首个 schema 列。
+   返回整行 <tr>…</tr>；preTd=勾选/展开列前缀 td（如 '<td class="sel-col"></td>'）；rows 为空返回 ''。 */
 const SUM_SKIP_KEYS={_pct:1,_balPct:1};
-function sumRowHtml(schema,rows,preTd,rowStyle){
+/* 2026-09-05.113：合计行「合计」标签列 = 当前列布局（layoutOf(m).order，用户拖拽后的可见顺序）
+   中第一个非数字列——标签随布局首个业务列显示（如单据日期/商品编码），避免挂在 schema 首列上
+   被拖到表格角落（销售订单 schema[0]=预计交货日期常被拖至末列）。 */
+function sumLabelKey(m,schema){
+  const ord=layoutOf(m).order||[];
+  for(const k of ord){const c=schema.find(x=>x.key===k);if(c&&c.type!=='number')return k;}
+  for(const c of schema){if(c.type!=='number')return c.key;}
+  return schema.length?schema[0].key:null;
+}
+function sumRowHtml(schema,rows,preTd,rowStyle,labelKey){
   if(!rows||rows.length===0)return '';
-  const sums={};let first=-1;
-  schema.forEach((c,i)=>{if(c.type==='number'&&!SUM_SKIP_KEYS[c.key]){sums[c.key]=0;if(first<0)first=i;}});
+  const sums={};
+  schema.forEach(c=>{if(c.type==='number'&&!SUM_SKIP_KEYS[c.key])sums[c.key]=0;});
   rows.forEach(r=>{schema.forEach(c=>{if(sums[c.key]!=null)sums[c.key]+=num(c.get?c.get(r):r[c.key]);});});
+  /* 2026-09-05.113 修复（用户报告 .112 合计数字全歪）：合计行改为与数据行逐列同构——
+     每个 schema 列输出一个带 data-key 的 td（含文本/比率等空占位列）。
+     .112 原实现输出 colspan 标签格 + 无 data-key 空 td，而 applyTableLayout 只按 data-key 重排行内 td
+     （表头/数据行全部带 key，随用户拖拽列布局移动），合计行无 key 的占位列不参与、仅数字列被挪至行尾 → 数字错位。
+     现合计行所有 td 带 key，与数据行一样随列布局重排移动，任何拖拽顺序下都对齐。 */
   let h=preTd||'';
-  if(first>0)h+='<td colspan="'+first+'" style="text-align:right;font-weight:600">合计</td>';
   schema.forEach((c,i)=>{
-    if(i<first)return;
-    h+=(sums[c.key]!=null)?('<td data-key="'+c.key+'" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(sums[c.key])+'</td>'):'<td></td>';
+    const has=sums[c.key]!=null;
+    const isLabel=c.key===labelKey||(!labelKey&&i===0);
+    h+='<td data-key="'+c.key+'"'+(has||isLabel?' style="font-variant-numeric:tabular-nums;'+(has?'text-align:right;':'')+'font-weight:600"':'')+'>'+
+      (isLabel?'合计':(has?money(sums[c.key]):''))+'</td>';
   });
   return '<tr style="'+(rowStyle||'font-weight:600;background:var(--primary-light)')+'">'+h+'</tr>';
 }
@@ -1902,7 +1916,7 @@ function renderProducts(){
       });
       html+='</tr>';
     });
-    if(pAll.length>0)html+=sumRowHtml(TBL_SCHEMAS.product,pAll,'<td class="sel-col"></td>');   /* 2026-09-05.112：底部合计（日产能/库存数量列求和） */
+    if(pAll.length>0)html+=sumRowHtml(TBL_SCHEMAS.product,pAll,'<td class="sel-col"></td>','',sumLabelKey('product',TBL_SCHEMAS.product));   /* 2026-09-05.112：底部合计（日产能/库存数量列求和）；.113 标签随列布局首列 */
     html+='</tbody></table></div>';
   }
   html+='</div>';
@@ -2700,7 +2714,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="lineNotes">'+esc(it.lineNotes!=null?it.lineNotes:(it.notes||''))+'</td>'+
       '</tr>';
   });
-  if(allShown.length>0)html+=sumRowHtml(TBL_SCHEMAS[formKey],allShown,'<td class="sel-col"></td>');   /* 2026-09-05.112：底部合计（数量列求和，交付进度%列留空；口径=筛选后全量跨页恒定） */
+  if(allShown.length>0)html+=sumRowHtml(TBL_SCHEMAS[formKey],allShown,'<td class="sel-col"></td>','',sumLabelKey(formKey,TBL_SCHEMAS[formKey]));   /* 2026-09-05.112：底部合计（数量列求和，交付进度%列留空；口径=筛选后全量跨页恒定）；.113 标签随列布局首列 */
   html+='</tbody></table></div>';
   return html;
 }
@@ -3567,7 +3581,7 @@ function renderDailyPlan(){
         '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
     });
     /* 2026-09-05.112：小计升级为通用合计行（口径不变：装配/内包/调试老化完成数 + 半成品入库，筛选全量） */
-    html+=sumRowHtml(TBL_SCHEMAS.dp_stockup,shownPlans,'<td class="sel-col"></td>');
+    html+=sumRowHtml(TBL_SCHEMAS.dp_stockup,shownPlans,'<td class="sel-col"></td>','',sumLabelKey('dp_stockup',TBL_SCHEMAS.dp_stockup));
     html+='</tbody></table></div>';
   }
 
@@ -3606,7 +3620,7 @@ function renderDailyPlan(){
         '<td data-key="notes" style="font-size:12px;color:var(--muted)">'+esc(p.notes)+'</td></tr>';
     });
     /* 2026-09-05.112：小计升级为通用合计行（补全 订单总量/已交付/未交付 列合计；包装完成/成品入库沿用完成口径） */
-    html+=sumRowHtml(TBL_SCHEMAS.dp_pkg,shownPkgs,'<td class="sel-col"></td>','font-weight:600;background:var(--amber-bg)');
+    html+=sumRowHtml(TBL_SCHEMAS.dp_pkg,shownPkgs,'<td class="sel-col"></td>','font-weight:600;background:var(--amber-bg)',sumLabelKey('dp_pkg',TBL_SCHEMAS.dp_pkg));
     html+='</tbody></table></div>';
   }
 
@@ -3975,7 +3989,7 @@ function renderDelivery(){
         '<td data-key="_ppPlanned" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlannedOfLine(di,li,it.productId))+'</td>'+
         '<td data-key="lineNotes">'+esc(it.lineNotes||'')+'</td></tr>';
     });
-    if(dAll.length>0)html+=sumRowHtml(TBL_SCHEMAS.delivery,dAll,'<td class="sel-col"></td>');   /* 2026-09-05.112：底部合计（订单数量/已交付/未交付/本批计划/已排产求和，口径=筛选后全量） */
+    if(dAll.length>0)html+=sumRowHtml(TBL_SCHEMAS.delivery,dAll,'<td class="sel-col"></td>','',sumLabelKey('delivery',TBL_SCHEMAS.delivery));   /* 2026-09-05.112：底部合计（订单数量/已交付/未交付/本批计划/已排产求和，口径=筛选后全量）；.113 标签随列布局首列 */
     html+='</tbody></table></div>';
   }
 
@@ -4380,7 +4394,7 @@ function renderProdPlanDay(writable,all){
     }
   });
   /* 2026-09-05.112：小计升级为通用合计行——口径改为筛选后全量 _ppAll（原只合计当前页），计划数量/累计完成求和、进度%列留空（列位按 schema 自动对齐，修正原 colspan 错位） */
-  html+=sumRowHtml(TBL_SCHEMAS.prodPlan,_ppAll,'<td class="sel-col"></td><td class="exp-col"></td>');
+  html+=sumRowHtml(TBL_SCHEMAS.prodPlan,_ppAll,'<td class="sel-col"></td><td class="exp-col"></td>','',sumLabelKey('prodPlan',TBL_SCHEMAS.prodPlan));
   html+='</tbody></table></div>';
   return html;
 }
@@ -6387,7 +6401,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.112</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.113</div>
 </body>
 </html>
 
