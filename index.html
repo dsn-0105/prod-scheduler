@@ -2329,10 +2329,18 @@ function migrateOrderCalledQty(){
   const map={};   // orderId|lineIdx → qty
   transfers.forEach(t=>{
     if(t.reversed)return;                       /* 已冲销原记录不计；冲销生成的反向记录（revType）正常参与 */
-    if(t.type!=='call'&&t.type!=='return')return;
-    if(!t.salesOrderId||t.salesLineIdx==null)return;
-    const k=t.salesOrderId+'|'+t.salesLineIdx;
-    map[k]=(map[k]||0)+(t.type==='call'?num(t.qty):-num(t.qty));
+    const ty=t.type;
+    if(ty!=='call'&&ty!=='return')return;       /* .115：conv/move/冲销反向不涉及销售 calledQty */
+    let so=null,sl=null;
+    if(t.outOrderId!=null){                     /* .115 方向模型：call 销售在调入侧(in)、return 销售在调出侧(out) */
+      const side=(ty==='call')?'in':'out';
+      if(t[side+'OrderType']==='sales'){so=t[side+'OrderId'];sl=t[side+'LineIdx'];}
+    }else{                                      /* 旧结构（迁移前防御）：销售恒在 salesOrderId */
+      so=t.salesOrderId;sl=t.salesLineIdx;
+    }
+    if(!so||sl==null)return;
+    const k=so+'|'+sl;
+    map[k]=(map[k]||0)+(ty==='call'?num(t.qty):-num(t.qty));
   });
   let changed=false;
   orders.forEach(o=>{
@@ -4881,9 +4889,10 @@ function queryTransfersOfOrder(m){
   if(s.size>1){alert('「调拨查询」只能选择 1 张'+label+'，当前已选 '+s.size+' 张。');return;}
   const o=orders[Number([...s][0])];
   if(!o){alert('未找到订单');return;}
-  const key=(m==='order_inv')?'invOrderId':'salesOrderId';
-  const filters={};filters[key]={mode:'eq',val:o.id};
-  tState('transfers').filters=filters;
+  /* 2026-09-06.115：方向模型——本订单作为「调出订单」或「调入订单」的记录均展示
+     （renderTransfers 按 window.transferScopeId 过滤 out/in 两侧，台账顶部带限定 chip 可一键清除） */
+  window.transferScopeId=o.id;
+  tState('transfers').filters={};
   tState('transfers').sort={key:'ts',dir:-1};
   switchTab('transfers');
 }
@@ -5953,6 +5962,7 @@ function bulkBar(m){
     if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
     if(m==='order_frame')btns.push(saleOpsBtnHtml());   /* 2026-08-30.97/.98：销售订单交付（+下拉退货） */
     if(m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的库存订单生成交付计划（仅限 1 条）">生成交付计划</button>');   /* 2026-08-30.95：交付计划仅库存订单可生成（销售订单按钮隐藏） */
+    if(writable&&m==='order_inv')btns.push('<button class="btn btn-sm" onclick="openInvCallStock()" title="为选中的库存订单调用库存/改装补库（仅限 1 张）：从其他产品库存订单调入，跨料号=改装、同料号=移库，写入调拨台账">调用库存</button>');   /* 2026-09-06.115：库存订单调用库存（改装/移库补库） */
     if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
     /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
        下拉等宽于按钮组、下拉项与主按钮同款 btn-primary。
@@ -6401,7 +6411,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-06.114</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-06.115</div>
 </body>
 </html>
 
