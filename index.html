@@ -1909,7 +1909,7 @@ function renderProducts(){
           const cls=val==='启用'?'tag-green':'tag-gray';
           html+='<td data-key="'+f.key+'"><span class="tag '+cls+'">'+esc(val)+'</span></td>';
         }else if(f.type==='number'){
-          html+='<td data-key="'+f.key+'" style="font-variant-numeric:tabular-nums">'+esc(val)+'</td>';
+          html+='<td data-key="'+f.key+'" style="font-variant-numeric:tabular-nums;text-align:right">'+esc(val)+'</td>';   /* 2026-09-06.114：数字列右对齐（与合计行一致，修数据行靠左/合计行靠右的视觉错位） */
         }else{
           html+='<td data-key="'+f.key+'">'+esc(val)+'</td>';
         }
@@ -6401,7 +6401,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-01.113</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-06.114</div>
 </body>
 </html>
 
