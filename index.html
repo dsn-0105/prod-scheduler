@@ -5444,13 +5444,44 @@ function renderUsers(){
   html+='</tbody></table></div></div>';
   return html;
 }
-/* .119：员工权限面板——勾选/取消表单联动展开其「业务动作」子项（勾表单=子项全勾；取消=隐藏；子项可逐个取消收敛） */
-function permRootToggle(k,checked){
-  const box=document.getElementById('acts_'+k);
-  if(box){
-    box.style.display=checked?'flex':'none';
-    box.querySelectorAll('input[data-act]').forEach(c=>{c.checked=checked;});
-  }
+/* .120：员工权限面板——左列表（表单三态复选框）+ 右栏（点击表单名查看/勾选其「业务动作」按钮）。
+   三态语义：空框=无该表单写权限；全勾=该表单全部写权限（动作全开）；横杠(indeterminate)=部分写权限（部分动作勾选）。
+   存储不变：perms[form]=bool（半选视为 true，动作落库/按钮 gate 仍需表单写权限）+ perms.acts={form.act:bool}。 */
+let __permActiveForm=null;
+function setActivePermForm(k){
+  __permActiveForm=k;
+  document.querySelectorAll('#modal [id^="permrow_"]').forEach(function(el){
+    el.style.background=(el.id.slice(8)===k)?'#e8f0fe':'';
+    el.style.outline=(el.id.slice(8)===k)?'1px solid #bfdbfe':'';
+  });
+  document.querySelectorAll('#modal [id^="permActs_"]').forEach(function(el){
+    el.style.display=(el.id.slice(9)===k)?'block':'none';
+  });
+}
+/* 动作勾选变化 → 重算表单复选框三态（全勾=勾、部分=横杠、全无=空） */
+function recomputePermTri(k){
+  const acts=FORM_ACTS[k]?Object.keys(FORM_ACTS[k]):[];
+  if(!acts.length)return;
+  const root=document.querySelector('#modal input[data-perm="'+k+'"]');
+  const bs=document.querySelectorAll('#modal input[data-act^="'+k+'."]');
+  let n=0;
+  bs.forEach(function(b){if(b.checked)n++;});
+  root.checked=(n>0&&n===bs.length);
+  root.indeterminate=(n>0&&n<bs.length);
+  if(n>0&&__permActiveForm!==k)setActivePermForm(k);
+}
+/* 勾选表单复选框=全开其动作；取消=全关（含半选清空） */
+function permTriToggle(k,checked){
+  document.querySelectorAll('#modal input[data-act^="'+k+'."]').forEach(function(b){b.checked=checked;});
+  const root=document.querySelector('#modal input[data-perm="'+k+'"]');
+  root.checked=checked;
+  root.indeterminate=false;
+  if(checked&&__permActiveForm!==k)setActivePermForm(k);
+}
+/* 弹窗渲染完成后：按存量勾选反推各表单三态 + 默认选中第一个表单 */
+function permInitUI(){
+  Object.keys(PERM_FORMS).forEach(function(k){recomputePermTri(k);});
+  setActivePermForm(Object.keys(PERM_FORMS)[0]);
 }
 function userModal(username){
   const list=window.__usersCache||[];
@@ -5461,23 +5492,38 @@ function userModal(username){
     +'<div class="form-row"><div><label>角色</label><select id="uf_role"><option value="staff" '+(p.role!=='admin'?'selected':'')+'>员工</option><option value="admin" '+(p.role==='admin'?'selected':'')+'>管理员</option></select></div>'
     +'<div><label>状态</label><select id="uf_status"><option value="active" '+(p.status!=='disabled'?'selected':'')+'>启用</option><option value="disabled" '+(p.status==='disabled'?'selected':'')+'>停用</option></select></div></div>'
     +'<div class="form-row"><div><label>'+(u?'重置密码（留空则不修改）':'初始密码')+'</label><input id="uf_pwd" type="text" value=""></div></div>'
-    +'<div><label style="font-weight:600">表单写权限（勾选=该表单可编辑；不勾=只读）</label>'
-    +'<div style="font-size:12px;color:var(--muted);margin-top:2px">.119 起：勾选表单后其下展开「业务动作」，可把同一表单内的按钮细分给不同人（如排产页：PMC 只勾编辑/删除整单、车间只勾投产/报工）</div></div>'
-    +'<div style="margin-top:6px">'
+    +'<div><label style="font-weight:600">表单写权限</label>'
+    +'<div style="font-size:12px;color:var(--muted);margin:2px 0 6px">左侧勾选表单＝整表单可编辑；<b>点表单名</b>，右侧显示其「业务动作」按钮逐个勾选。动作有空窗/全勾/部分三种：空＝无权限 · 全勾＝全部按钮 · <b>横杠＝部分按钮</b>（仍算有该表单写权限）</div>'
+    +'<div style="display:flex;gap:10px;align-items:flex-start">'
+    +'<div style="flex:0 0 188px;border:1px solid var(--border);border-radius:6px;padding:3px;max-height:320px;overflow:auto;background:#fff">'
+    +Object.keys(PERM_FORMS).map(k=>{
+      const fCk=p.perms&&p.perms[k]===true;
+      const hasActs=!!(FORM_ACTS[k]&&Object.keys(FORM_ACTS[k]).length);
+      return '<div id="permrow_'+k+'" style="display:flex;align-items:center;gap:5px;padding:4px 7px;border-radius:4px;cursor:pointer;font-size:13px" onclick="setActivePermForm(\''+k+'\')" title="'+(hasActs?'点击查看/勾选本表单的业务动作按钮':'本表单无独立业务动作，勾选即整表单可编辑')+'">'
+        +'<input type="checkbox" data-perm="'+k+'" '+(fCk?'checked':'')+' onclick="event.stopPropagation();permTriToggle(\''+k+'\',this.checked)" style="flex:none;cursor:pointer">'
+        +'<span style="color:var(--text);white-space:nowrap">'+PERM_FORMS[k]+'</span>'
+        +(hasActs?'<span style="margin-left:auto;font-size:10px;color:#9ca3af">动作▸</span>':'')
+        +'</div>';
+    }).join('')
+    +'</div>'
+    +'<div style="flex:1;border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:140px;background:#fbfcfe;overflow:auto;max-height:320px">'
     +Object.keys(PERM_FORMS).map(k=>{
       const acts=FORM_ACTS[k]?Object.keys(FORM_ACTS[k]):[];
       const fCk=p.perms&&p.perms[k]===true;
       const actsObj=p.perms&&p.perms.acts;
-      return '<div style="margin-bottom:4px">'
-        +'<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text)"><input type="checkbox" data-perm="'+k+'" '+(fCk?'checked':'')+' onchange="permRootToggle(\''+k+'\',this.checked)">'+PERM_FORMS[k]+'</label>'
-        +(acts.length?('<div id="acts_'+k+'" style="display:'+(fCk?'flex':'none')+';flex-wrap:wrap;gap:2px 14px;padding-left:22px;margin-top:2px">'
-          +acts.map(a=>'<label style="display:flex;align-items:center;gap:3px;font-size:12px;color:var(--muted)"><input type="checkbox" data-act="'+k+'.'+a+'" '+(fCk&&(!actsObj||actsObj[k+'.'+a]===true)?'checked':'')+' >'+FORM_ACTS[k][a]+'</label>').join('')
-          +'</div>'):'')
+      return '<div id="permActs_'+k+'" style="display:none">'
+        +'<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">'+PERM_FORMS[k]+' · 业务动作按钮</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">勾选＝拥有该按钮操作权（保存生效）；按钮可见还需左侧本表单已勾选（横杠=部分也放行）。仅勾「动作」未勾「左侧全选框」时，保存自动视为表单已授权。</div>'
+        +(acts.length
+          ?'<div style="display:flex;flex-direction:column;gap:2px">'+acts.map(a=>'<label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" data-act="'+k+'.'+a+'" '+(fCk&&(!actsObj||actsObj[k+'.'+a]===true)?'checked':'')+' onchange="recomputePermTri(\''+k+'\')" style="cursor:pointer">'+FORM_ACTS[k][a]+'</label>').join('')+'</div>'
+          :'<div style="font-size:12px;color:var(--muted)">该表单无独立业务动作按钮——勾选左侧本表单即拥有其全部写权限（新增/编辑/复制/删除）。</div>')
         +'</div>';
     }).join('')
+    +'</div>'
     +'</div>';
   showModal(u?'编辑员工':'新增员工',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveUser('+(u?"'"+u.username+"'":'null')+')">保存</button>');
+  permInitUI();
 }
 async function saveUser(username){
   const uname=document.getElementById('uf_user').value.trim();
@@ -5486,7 +5532,8 @@ async function saveUser(username){
   const status=document.getElementById('uf_status').value;
   const pwd=document.getElementById('uf_pwd').value;
   const perms={};
-  document.querySelectorAll('#modal input[data-perm]').forEach(c=>{perms[c.dataset.perm]=c.checked;});
+  /* .120：三态收集——全勾/横杠(部分动作)=表单有写权限（动作按钮可见与落库均需表单写权限）；空框=无权限 */
+  document.querySelectorAll('#modal input[data-perm]').forEach(c=>{perms[c.dataset.perm]=(c.checked||c.indeterminate);});
   /* .119：按钮级动作权限收集——勾选的「业务动作」子项写入 perms.acts（未勾=该动作收敛；保存后 canAct 即严格生效） */
   const acts={};
   document.querySelectorAll('#modal input[data-act]').forEach(c=>{acts[c.dataset.act]=c.checked;});
@@ -6482,7 +6529,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.119</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.120</div>
 </body>
 </html>
 
