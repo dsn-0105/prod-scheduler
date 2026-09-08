@@ -51,7 +51,7 @@ let revs = {};
 Object.keys(data).forEach(k => revs[k] = 0);
 
 /* 用户（兼容旧格式：补 name/status/perms） */
-const STAFF_PERMS = { products: false, orders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, processTemplates: false, fields: false };
+const STAFF_PERMS = { products: false, saleOrders: false, invOrders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, processTemplates: false, fields: false };   /* .118：orders 拆为 saleOrders(销售)/invOrders(库存) */
 let users = load(USERS_FILE, null);
 if (!users || !Array.isArray(users)) {
   users = [
@@ -67,6 +67,15 @@ if (!users || !Array.isArray(users)) {
     if (u.name === undefined) { u.name = u.username; changed = true; }
     if (u.status === undefined) { u.status = 'active'; changed = true; }
     if (u.perms === undefined) { u.perms = u.role === 'admin' ? {} : JSON.parse(JSON.stringify(STAFF_PERMS)); changed = true; }
+    /* .118：权限点拆分迁移——旧 orders 键(订单管理=销售+库存同权)拆为 saleOrders/invOrders；曾勾选过则双开保权限不缩水 */
+    if (u.perms && 'orders' in u.perms) {
+      const _lo = u.perms.orders; delete u.perms.orders;
+      if (_lo === true) {
+        if (u.perms.saleOrders === undefined) u.perms.saleOrders = true;
+        if (u.perms.invOrders === undefined) u.perms.invOrders = true;
+      }
+      changed = true;
+    }
     if (!u.salt || !u.hash) { const s = crypto.randomBytes(16).toString('hex'); u.salt = s; u.hash = hashPwd('123456', s); changed = true; }
   });
   if (changed) saveJson(USERS_FILE, users);
@@ -98,6 +107,8 @@ function canWrite(user, key) {
   if (!user) return false;
   if (user.role === 'admin') return true;
   if (SYSTEM_KEYS.indexOf(key) >= 0) return true;
+  /* .118：orders 表同时承载销售+库存两类订单——staff 写权限=两权限点任一开启；页面级隔离由前端 canWriteForm(order_frame/order_inv) 控制 */
+  if (key === 'orders') return !!(user.perms && (user.perms.saleOrders === true || user.perms.invOrders === true || user.perms.orders === true));
   return !!(user.perms && user.perms[key] === true);
 }
 function publicUser(u) {

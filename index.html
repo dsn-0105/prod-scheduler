@@ -478,13 +478,16 @@ function logout(){
 /* ---- 权限：按表单控制写权限（管理员全放行；员工按 perms 逐表单） ---- */
 let currentUser=null;
 function formToKey(formKey){
-  const m={product:'products',order_frame:'orders',order_inv:'orders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',prodPlan:'dailyPlans',processTpl:'processTemplates',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};
+  const m={product:'products',order_frame:'saleOrders',order_inv:'invOrders',dp_stockup:'dailyPlans',dp_pkg:'dailyPkgs',delivery:'deliveries',prodPlan:'dailyPlans',processTpl:'processTemplates',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};   /* .118：订单权限点拆分——销售订单(金蝶导入/调用库存)与库存订单(生成交付计划)分人管控 */
   return m[formKey]||formKey;
 }
 function canWriteKey(k){
   if(!currentUser)return false;
   if(currentUser.role==='admin')return true;
-  return !!(currentUser.perms&&currentUser.perms[k]===true);
+  const p=currentUser.perms||{};
+  /* .118：权限点拆分平滑期兼容——旧「订单管理(orders)」勾选视为销售/库存双开（不缩权限；管理员重存该员工后固化） */
+  if((k==='saleOrders'||k==='invOrders')&&p[k]===undefined&&p.orders===true)return true;
+  return !!(p[k]===true);
 }
 function canWriteForm(formKey){return canWriteKey(formToKey(formKey));}
 function ensureWrite(formKey){
@@ -5362,7 +5365,7 @@ function delTpl(i){
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',orders:'订单管理',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};
+const PERM_FORMS={products:'产品主数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',dailyPkgs:'包装排产',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人 */
 async function loadUsers(){
   try{
     const r=await apiReq('/users?token='+authToken);
@@ -5416,6 +5419,11 @@ async function saveUser(username){
   const pwd=document.getElementById('uf_pwd').value;
   const perms={};
   document.querySelectorAll('#modal input[data-perm]').forEach(c=>{perms[c.dataset.perm]=c.checked;});
+  /* .118：权限点拆分固化——编辑历史员工若曾勾「订单管理(orders)」则自动转为销售/库存双开（该员工权限面板不再有 orders 项） */
+  if(username){
+    const _ou=(window.__usersCache||[]).find(x=>x.username===username);
+    if(_ou&&_ou.perms&&_ou.perms.orders===true){perms.saleOrders=true;perms.invOrders=true;}
+  }
   const payload={username:uname||username,name:name||uname||username,role:role,status:status,perms:perms};
   if(pwd)payload.password=pwd;
   try{
@@ -6399,7 +6407,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.117</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.118</div>
 </body>
 </html>
 
