@@ -321,7 +321,6 @@ body.col-dragging{cursor:grabbing;user-select:none}
       <div class="topbar-actions">
         <button class="btn btn-sm" onclick="resetTableLayout()" title="恢复所有表格的默认列顺序和列宽"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>重置列布局</button>
         <button class="btn btn-sm" onclick="exportXLSX()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>全量导出</button>
-        <button class="btn btn-sm" onclick="triggerImport()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>全量导入</button>
         <span style="width:1px;height:20px;background:var(--border);margin:0 4px;display:inline-block"></span>
         <button class="btn btn-sm" style="background:var(--primary);color:#fff" onclick="backupAll()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7M18 9l-6-6-6 6M12 3v12"/></svg>备份</button>
         <button class="btn btn-sm" id="pwdBtn" style="display:none" onclick="pwdModal()" title="修改自己的登录密码"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>改密</button>
@@ -5866,15 +5865,10 @@ function rowHasData(obj,keys){
 
 
 
-/* 表单级导入导出按钮 */
-function formIOBtns(formKey){
-  return '<button class="btn btn-sm" style="margin-left:6px" onclick="exportForm(\''+formKey+'\')" title="导出此表单数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>导出</button>'+
-    '<button class="btn btn-sm" style="margin-left:4px" onclick="downloadTemplate(\''+formKey+'\')" title="下载导入模板（必填字段标红）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>模板</button>'+
-    '<button class="btn btn-sm" style="margin-left:4px" onclick="triggerImport(\''+formKey+'\')" title="导入此表单数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>导入</button>';
-}
+/* 2026-09-08.117：表单级 导出+模板+导入 三连按钮（formIOBtns）为无调用死代码，已删除 */
 
 /* ================================================================
-   批量操作：行选择 + 上方工具栏（编辑/复制/删除/导出选中/导入/全选）
+   批量操作：行选择 + 上方工具栏（编辑/复制/删除/导出选中/全选）
    说明：可编辑表单的"操作"改为「先勾选行 → 点上方按钮」；
    编辑/复制等仅支持单条的操作，多选时自动拒绝。
 ================================================================ */
@@ -5989,14 +5983,8 @@ function bulkBar(m){
   /* 2026-08-29.76：计划查询（只读导航，写权限块外）——跳转交付计划并筛选本订单 */
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryDeliveryOfOrder(\''+m+'\')" title="跳转到交付计划并筛选本订单的交付计划（仅限 1 张）">计划查询</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
-  if(m==='order_frame'||m==='order_inv'||m==='prodPlan'){
-    /* 订单管理/排产计划：模板/导入按钮暂禁用（排产计划由交付计划下推生成，不手工导入） */
-    btns.push('<button class="btn btn-sm" disabled style="margin-left:4px;opacity:.45;cursor:not-allowed" title="已暂禁用：误导入空文件会清空本表单数据">模板</button>');
-    if(writable)btns.push('<button class="btn btn-sm" disabled style="opacity:.45;cursor:not-allowed" title="已暂禁用：误导入空文件会清空本表单数据">导入</button>');
-  }else{
-    btns.push('<button class="btn btn-sm" onclick="downloadTemplate(\''+a.formKey+'\')" title="下载导入模板（必填字段标红）">模板</button>');
-    if(writable)btns.push('<button class="btn btn-sm" onclick="triggerImport(\''+a.formKey+'\')" title="导入此表单数据">导入</button>');
-  }
+  /* 2026-09-08.117：表单内「模板/导入」按钮全部隐藏（含此前的灰禁用占位）——数据写入只走业务动作
+     （金蝶导入/交付登记/调用库存/下推生成）与「恢复」json，杜绝误导入覆盖；金蝶导入入口保留于销售订单页 */
   const cnt=' <span class="sel-count" id="selCount_'+m+'">'+(selCount(m)>0?('已选 '+selCount(m)+' 项'):'')+'</span>';
   /* 2026-08-25.66/.68：金蝶式分页栏（PAGED_FORMS 启用，置于操作栏最右侧） */
   const pager=PAGED_FORMS[m]?pagerHtml(m):'';
@@ -6411,7 +6399,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-07.116</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.117</div>
 </body>
 </html>
 
