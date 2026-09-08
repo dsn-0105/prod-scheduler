@@ -5458,12 +5458,21 @@ function setActivePermForm(k){
     el.style.display=(el.id.slice(9)===k)?'block':'none';
   });
 }
+/* .121 修复：PERM_FORMS 遍历键=权限键(products/saleOrders…)，FORM_ACTS 键=表单键(product/order_frame…)——面板按权限键匹配动作恒为空。
+   统一经 formToKey 反查：权限键 → 该权限点下承载动作的表单键（dailyPlans 同时挂 dp_stockup/prodPlan，取 FORM_ACTS 存在者=prodPlan） */
+function permFormKeyOf(permKey){
+  const keys=Object.keys(FORM_ACTS);
+  for(let i=0;i<keys.length;i++){if(formToKey(keys[i])===permKey)return keys[i];}
+  return null;
+}
 /* 动作勾选变化 → 重算表单复选框三态（全勾=勾、部分=横杠、全无=空） */
 function recomputePermTri(k){
-  const acts=FORM_ACTS[k]?Object.keys(FORM_ACTS[k]):[];
+  const fm=permFormKeyOf(k);
+  if(!fm)return;
+  const acts=Object.keys(FORM_ACTS[fm]);
   if(!acts.length)return;
   const root=document.querySelector('#modal input[data-perm="'+k+'"]');
-  const bs=document.querySelectorAll('#modal input[data-act^="'+k+'."]');
+  const bs=document.querySelectorAll('#modal input[data-act^="'+fm+'."]');
   let n=0;
   bs.forEach(function(b){if(b.checked)n++;});
   root.checked=(n>0&&n===bs.length);
@@ -5472,7 +5481,8 @@ function recomputePermTri(k){
 }
 /* 勾选表单复选框=全开其动作；取消=全关（含半选清空） */
 function permTriToggle(k,checked){
-  document.querySelectorAll('#modal input[data-act^="'+k+'."]').forEach(function(b){b.checked=checked;});
+  const fm=permFormKeyOf(k);
+  if(fm)document.querySelectorAll('#modal input[data-act^="'+fm+'."]').forEach(function(b){b.checked=checked;});
   const root=document.querySelector('#modal input[data-perm="'+k+'"]');
   root.checked=checked;
   root.indeterminate=false;
@@ -5498,7 +5508,8 @@ function userModal(username){
     +'<div style="flex:0 0 188px;border:1px solid var(--border);border-radius:6px;padding:3px;max-height:320px;overflow:auto;background:#fff">'
     +Object.keys(PERM_FORMS).map(k=>{
       const fCk=p.perms&&p.perms[k]===true;
-      const hasActs=!!(FORM_ACTS[k]&&Object.keys(FORM_ACTS[k]).length);
+      const fmKey=permFormKeyOf(k);   /* .121：权限键→表单键反查（PERM_FORMS 键 ≠ FORM_ACTS 键） */
+      const hasActs=!!fmKey;
       return '<div id="permrow_'+k+'" style="display:flex;align-items:center;gap:5px;padding:4px 7px;border-radius:4px;cursor:pointer;font-size:13px" onclick="setActivePermForm(\''+k+'\')" title="'+(hasActs?'点击查看/勾选本表单的业务动作按钮':'本表单无独立业务动作，勾选即整表单可编辑')+'">'
         +'<input type="checkbox" data-perm="'+k+'" '+(fCk?'checked':'')+' onclick="event.stopPropagation();permTriToggle(\''+k+'\',this.checked)" style="flex:none;cursor:pointer">'
         +'<span style="color:var(--text);white-space:nowrap">'+PERM_FORMS[k]+'</span>'
@@ -5508,14 +5519,15 @@ function userModal(username){
     +'</div>'
     +'<div style="flex:1;border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:140px;background:#fbfcfe;overflow:auto;max-height:320px">'
     +Object.keys(PERM_FORMS).map(k=>{
-      const acts=FORM_ACTS[k]?Object.keys(FORM_ACTS[k]):[];
+      const fmKey=permFormKeyOf(k);   /* .121：右栏动作按表单键渲染（data-act 用 fmKey.动作，与 canAct/线上 perms.acts 键一致） */
+      const acts=fmKey?Object.keys(FORM_ACTS[fmKey]):[];
       const fCk=p.perms&&p.perms[k]===true;
       const actsObj=p.perms&&p.perms.acts;
       return '<div id="permActs_'+k+'" style="display:none">'
         +'<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">'+PERM_FORMS[k]+' · 业务动作按钮</div>'
         +'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">勾选＝拥有该按钮操作权（保存生效）；按钮可见还需左侧本表单已勾选（横杠=部分也放行）。仅勾「动作」未勾「左侧全选框」时，保存自动视为表单已授权。</div>'
         +(acts.length
-          ?'<div style="display:flex;flex-direction:column;gap:2px">'+acts.map(a=>'<label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" data-act="'+k+'.'+a+'" '+(fCk&&(!actsObj||actsObj[k+'.'+a]===true)?'checked':'')+' onchange="recomputePermTri(\''+k+'\')" style="cursor:pointer">'+FORM_ACTS[k][a]+'</label>').join('')+'</div>'
+          ?'<div style="display:flex;flex-direction:column;gap:2px">'+acts.map(a=>'<label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" data-act="'+fmKey+'.'+a+'" '+(fCk&&(!actsObj||actsObj[fmKey+'.'+a]===true)?'checked':'')+' onchange="recomputePermTri(\''+k+'\')" style="cursor:pointer">'+FORM_ACTS[fmKey][a]+'</label>').join('')+'</div>'
           :'<div style="font-size:12px;color:var(--muted)">该表单无独立业务动作按钮——勾选左侧本表单即拥有其全部写权限（新增/编辑/复制/删除）。</div>')
         +'</div>';
     }).join('')
@@ -6529,7 +6541,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.120</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.121</div>
 </body>
 </html>
 
