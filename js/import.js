@@ -117,6 +117,7 @@ var kdReport=null;  // 本次导入的预检报告
 
 function triggerImportKingdee(){
   if(!ensureWrite('order_frame'))return;
+  if(!needAct('order_frame.kingdeeImport'))return;   /* .119：动作键 kingdeeImport（经理） */
   document.getElementById('importKingdeeFile').click();
 }
 

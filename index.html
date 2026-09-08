@@ -494,6 +494,36 @@ function ensureWrite(formKey){
   if(!canWriteForm(formKey)){alert('当前账号无该表单的编辑权限');return false;}
   return true;
 }
+/* ===== 2026-09-08.119：按钮级动作权限（perms.acts）——同一表单写权限内的多人二次分工 =====
+   动作键归属表单（与 PERM_FORMS 键一致），员工面板勾选表单=该表单动作全开、可逐个取消收敛。
+   分工口径：经理=销售侧全动作（金蝶导入/调用库存/交付/退货）；PMC=库存·生成交付计划/调用 + 交付·下推 + 排产·编辑齐套/删除整单 + 产品·生成订单；车间=排产·投产反投产/延后提前/报工/编辑删除报工明细。 */
+const FORM_ACTS={
+  product:{genOrder:'生成订单（按产品批量建库存订单）'},
+  order_frame:{saleDeliver:'交付登记',saleReturn:'退货',kingdeeImport:'导入金蝶订单',saleCall:'调用库存',saleReturnStock:'退回库存'},
+  order_inv:{invGenDelivery:'生成交付计划',invCall:'调用库存（改装/移库补库）'},
+  delivery:{delPushPlan:'下推排产计划'},
+  prodPlan:{ppEdit:'编辑排产/物料齐套',ppLaunch:'投产/反投产',ppShift:'延后/提前计划日期',ppReport:'报工',ppReportEdit:'编辑/删除报工明细',ppDel:'删除排产'}
+};
+function canAct(key){
+  if(!currentUser)return false;
+  if(currentUser.role==='admin')return true;
+  const p=currentUser.perms||{};
+  const acts=p.acts;
+  /* acts 未配置（旧数据/宽松期）→ 放行，等管理员在员工面板保存后固化（保存即写入 perms.acts） */
+  if(!acts)return true;
+  return !!acts[key];
+}
+function needAct(key,msg){
+  if(canAct(key))return true;
+  alert(msg||'当前账号无此按钮权限（请联系管理员在「员工管理 → 表单写权限」下为该动作授权）');
+  return false;
+}
+/* bulkBar 通用按钮按表单二次门控：编辑/删除按钮在排产页分别受 ppEdit/ppDel 约束（PMC 编辑齐套、PMC 删整单），其余表单随表单写权限 */
+function btnOK(m,kind){
+  if(kind==='edit')return m==='prodPlan'?canAct('prodPlan.ppEdit'):true;
+  if(kind==='del')return m==='prodPlan'?canAct('prodPlan.ppDel'):true;
+  return true;
+}
 /* 兼容包装：旧代码 save/load 同步调用 */
 function save(k,v){
   DB.set(k,v);
@@ -2748,15 +2778,23 @@ function nextOrderNo(dateStr,type){
 
 /* ===== 2026-08-30.97/.98：销售订单「交付/退货」操作（已交付=交付−退货驱动） ===== */
 
-/* .98：交付按钮旁下拉展开栏（延后样式）——展开栏内「退货」操作 */
+/* .98：交付按钮旁下拉展开栏（延后样式）——展开栏内「退货」操作。
+   .119：交付=动作键 saleDeliver、退货=saleReturn 分别门控（默认经理同开）——交付按钮独立渲染；仅开退货时主按钮直连退货，不显示▾ */
 function saleOpsBtnHtml(){
-  return '<span id="saleOpsWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
-    '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="saleDeliverDlg()" title="为选中的销售订单记录交付（本次交付≤未交付，合计≤已调用）">交付</button>'+
-    '<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
-    '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();saleToggleOpsMenu()" title="更多销售订单操作">▾</button>'+
-    '<div id="saleOpsMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
-    '<button class="btn btn-sm" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();saleToggleOpsMenu();saleReturnForSel()" title="客户退货：减少选中销售订单已交付数量">退货</button>'+
-    '</div></span>';
+  const d=canAct('order_frame.saleDeliver'),r=canAct('order_frame.saleReturn');
+  if(!d&&!r)return '';
+  if(d){
+    return '<span id="saleOpsWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
+      '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="saleDeliverDlg()" title="为选中的销售订单记录交付（本次交付≤未交付，合计≤已调用）">交付</button>'+
+      (r?('<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
+      '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();saleToggleOpsMenu()" title="更多销售订单操作">▾</button>'+
+      '<div id="saleOpsMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;min-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:70">'+
+      '<button class="btn btn-sm" style="display:block;width:100%;border-radius:6px;text-align:left;padding:6px 10px" onclick="event.stopPropagation();saleToggleOpsMenu();saleReturnForSel()" title="客户退货：减少选中销售订单已交付数量">退货</button>'+
+      '</div>'):'')+
+      '</span>';
+  }
+  /* 仅开退货（无交付键）：主按钮直连退货 */
+  return '<button class="btn btn-sm" onclick="saleReturnForSel()" title="客户退货：减少选中销售订单已交付数量">退货</button>';
 }
 function saleToggleOpsMenu(){
   const el=document.getElementById('saleOpsMenu');
@@ -2769,6 +2807,7 @@ if(!window.__saleOpsMenuBound){window.__saleOpsMenuBound=true;document.addEventL
 });}
 /* 退货入口（下拉菜单）：选中 1 张销售订单 → 弹退货窗 */
 function saleReturnForSel(){
+  if(!needAct('order_frame.saleReturn'))return;   /* .119：动作键 saleReturn（默认经理） */
   const s=selSet('order_frame');
   if(s.size===0){alert('请先勾选 1 张销售订单');return;}
   if(s.size>1){alert('「退货」一次只能选择 1 张销售订单，当前已选 '+s.size+' 张。请只勾选一条再操作。');return;}
@@ -2786,6 +2825,7 @@ function saleMaxCallable(it){
   return Math.max(0,num(it.calledQty)-Math.max(0,num(it.deliveredQty)-num(it.directDelivered)));
 }
 function saleDeliverDlg(){
+  if(!needAct('order_frame.saleDeliver'))return;   /* .119：动作键 saleDeliver（默认经理） */
   const s=selSet('order_frame');
   if(s.size===0){alert('请先勾选 1 张销售订单');return;}
   if(s.size>1){alert('「交付」一次只能选择 1 张销售订单，当前已选 '+s.size+' 张。请只勾选一条再操作。');return;}
@@ -2939,6 +2979,7 @@ function saleReturnSave(orderId){
 
 /* 产品主数据：「生成订单」——选中产品生成库存订单（.87：跳转库存管理页签 inv 并打开新增弹窗，明细预填选中商品；原跳订单管理 order 为 .65 模块移动遗留错误） */
 function bulkGenOrder(){
+  if(!needAct('product.genOrder'))return;   /* .119：动作键 product.genOrder（默认 PMC） */
   const s=selSet('product');
   if(s.size===0){alert('请先在左侧勾选要生成订单的产品');return;}
   const items=[];
@@ -4091,14 +4132,15 @@ function ppExpandRow(p){
   }
   return '<tr class="pp-exp-row"><td colspan="'+(TBL_SCHEMAS.prodPlan.length+2)+'"><div class="pp-exp">'+
     '<div class="pp-exp-head"><span>报工明细（'+reps.length+' 条）</span>'+
-    '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">编辑</button></div>'+
+    (canAct('prodPlan.ppReportEdit')?'<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();ppReportsModal(\''+esc(p.id)+'\')">编辑</button>':'')+'</div>'+   /* .119：展开行「编辑报工明细」随动作键 ppReportEdit（默认车间） */
     inner+'</div></td></tr>';
 }
 /* 方案 B：报工明细编辑弹窗（.13 起可改报工人与各工序数量；.15 起每行恢复删除按钮；.41 起单道工序数量可改 0（min=0），仅不允许全部工序为 0） */
 function ppReportsModal(planId){
+  if(!needAct('prodPlan.ppReportEdit'))return;   /* .119：动作键 ppReportEdit（默认车间）——编辑/删除报工明细 */
   const p=productionPlans.find(x=>x.id===planId);
   const reps=ppReportsOf(planId);
-  const canDel=canWriteForm('prodPlan');
+  const canDel=canAct('prodPlan.ppReportEdit');   /* .119：弹窗内「删除报工」随动作键 ppReportEdit（原随表单写权限） */
   let inner;
   if(reps.length===0){
     inner='<div class="empty">暂无报工明细</div>';
@@ -4217,6 +4259,7 @@ function ppSaveReportEdits(planId){
 /* 删除一条报工明细：同步回退排产单对应工序累计完成数；已完成后回退则状态回到生产中 */
 function ppDelReport(id){
   if(!ensureWrite('prodPlan'))return;
+  if(!needAct('prodPlan.ppReportEdit'))return;   /* .119：删除单条报工与编辑报工同键 ppReportEdit（默认车间） */
   const idx=productionReports.findIndex(r=>r.id===id);
   if(idx<0){alert('未找到该报工记录');return;}
   const rec=productionReports[idx];
@@ -4449,6 +4492,7 @@ function renderProdPlanAgg(view,writable){
 
 /* 交付计划 → 下推排产计划（仅限 1 条；planQty=0 行跳过；可重复下推支持分批生产） */
 function genProdPlan(){
+  if(!needAct('delivery.delPushPlan'))return;   /* .119：动作键 delPushPlan（默认 PMC） */
   const s=selSet('delivery');
   if(s.size===0){alert('请先勾选 1 条交付计划');return;}
   if(s.size>1){alert('「下推排产计划」一次只能选择 1 条交付计划，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
@@ -4641,6 +4685,7 @@ function copyProdPlan(i){
 }
 /* 2026-08-25.27：排产计划禁止复制/新增，只能从交付计划下推——copyProdPlan 保留定义无入口（FORM_ACTIONS 无 copy 映射、批量栏无复制按钮） */
 function delProdPlan(i){
+  if(!needAct('prodPlan.ppDel'))return;   /* .119：动作键 prodPlan.ppDel（默认 PMC 删整单） */
   /* 2026-08-25.29：只有「待排产」的排产计划才能删除（生产中/已完成禁止，防破坏报工/订单回写） */
   if(productionPlans[i].status!=='待排产'){alert('仅「待排产」的排产计划可以删除（当前：'+productionPlans[i].status+'）');return;}
   if(!confirm('确认删除该排产计划「'+productionPlans[i].id+'」？'))return;
@@ -4658,6 +4703,7 @@ function delProdPlan(i){
 /* 2026-08-25.27/28：投产——支持多选批量投产（选中多条「待排产」排产计划 → 置「生产中」）；
    非待排产（生产中/已完成）自动跳过并在完成后提示；全部不可投产则拦截 */
 function ppLaunch(){
+  if(!needAct('prodPlan.ppLaunch'))return;   /* .119：动作键 ppLaunch（默认车间） */
   const s=selSet('prodPlan');
   if(s.size===0){alert('请先勾选要投产的排产计划');return;}
   const idxs=[...s].map(Number);
@@ -4732,6 +4778,7 @@ function ppShiftCustom(type,inp){
 }
 /* 批量延后/提前：待排产/生产中可操作，已完成/已取消跳过；提前不低于今天（钳制+提示）；执行后幽灵勾选清理（.64） */
 function ppShiftDays(type,days){
+  if(!needAct('prodPlan.ppShift'))return;   /* .119：动作键 ppShift（默认车间） */
   const s=selSet('prodPlan');
   if(s.size===0){alert('请先勾选要'+(type==='delay'?'延后':'提前')+'的排产计划');return;}
   const idxs=[...s].map(Number);
@@ -4767,6 +4814,7 @@ function ppShiftDays(type,days){
 /* 2026-08-25.29：反投产——选中多条「生产中」排产计划转回「待排产」；
    已报工（有报工明细记录 或 任一行累计完成>0）无法反投产；仅生产中可反投产（待排产/已完成跳过） */
 function ppReverseLaunch(){
+  if(!needAct('prodPlan.ppLaunch'))return;   /* .119：反投产与投产同键 ppLaunch */
   const s=selSet('prodPlan');
   if(s.size===0){alert('请先勾选要反投产的排产计划');return;}
   const idxs=[...s].map(Number);
@@ -4797,6 +4845,7 @@ function ppReverseLaunch(){
    必报工序=模板 mandatory（可填 0，填 0 视为已填写）；报工累计硬性不能超过本次排产数（超量直接拦截）；
    首次报工自动置「生产中」 */
 function reportProdPlan(){
+  if(!needAct('prodPlan.ppReport'))return;   /* .119：动作键 ppReport（默认车间） */
   const s=selSet('prodPlan');
   if(s.size===0){alert('请先勾选 1 条排产计划');return;}
   if(s.size>1){alert('「报工」一次只能选择 1 条排产计划，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
@@ -5395,6 +5444,14 @@ function renderUsers(){
   html+='</tbody></table></div></div>';
   return html;
 }
+/* .119：员工权限面板——勾选/取消表单联动展开其「业务动作」子项（勾表单=子项全勾；取消=隐藏；子项可逐个取消收敛） */
+function permRootToggle(k,checked){
+  const box=document.getElementById('acts_'+k);
+  if(box){
+    box.style.display=checked?'flex':'none';
+    box.querySelectorAll('input[data-act]').forEach(c=>{c.checked=checked;});
+  }
+}
 function userModal(username){
   const list=window.__usersCache||[];
   const u=username?list.find(x=>x.username===username):null;
@@ -5404,9 +5461,20 @@ function userModal(username){
     +'<div class="form-row"><div><label>角色</label><select id="uf_role"><option value="staff" '+(p.role!=='admin'?'selected':'')+'>员工</option><option value="admin" '+(p.role==='admin'?'selected':'')+'>管理员</option></select></div>'
     +'<div><label>状态</label><select id="uf_status"><option value="active" '+(p.status!=='disabled'?'selected':'')+'>启用</option><option value="disabled" '+(p.status==='disabled'?'selected':'')+'>停用</option></select></div></div>'
     +'<div class="form-row"><div><label>'+(u?'重置密码（留空则不修改）':'初始密码')+'</label><input id="uf_pwd" type="text" value=""></div></div>'
-    +'<div><label style="font-weight:600">表单写权限（勾选=该表单可编辑；不勾=只读）</label></div>'
-    +'<div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px">'
-    +Object.keys(PERM_FORMS).map(k=>'<label style="display:flex;align-items:center;gap:4px;min-width:130px;font-size:13px;color:var(--text)"><input type="checkbox" data-perm="'+k+'" '+(p.perms&&p.perms[k]===true?'checked':'')+'>'+PERM_FORMS[k]+'</label>').join('')
+    +'<div><label style="font-weight:600">表单写权限（勾选=该表单可编辑；不勾=只读）</label>'
+    +'<div style="font-size:12px;color:var(--muted);margin-top:2px">.119 起：勾选表单后其下展开「业务动作」，可把同一表单内的按钮细分给不同人（如排产页：PMC 只勾编辑/删除整单、车间只勾投产/报工）</div></div>'
+    +'<div style="margin-top:6px">'
+    +Object.keys(PERM_FORMS).map(k=>{
+      const acts=FORM_ACTS[k]?Object.keys(FORM_ACTS[k]):[];
+      const fCk=p.perms&&p.perms[k]===true;
+      const actsObj=p.perms&&p.perms.acts;
+      return '<div style="margin-bottom:4px">'
+        +'<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text)"><input type="checkbox" data-perm="'+k+'" '+(fCk?'checked':'')+' onchange="permRootToggle(\''+k+'\',this.checked)">'+PERM_FORMS[k]+'</label>'
+        +(acts.length?('<div id="acts_'+k+'" style="display:'+(fCk?'flex':'none')+';flex-wrap:wrap;gap:2px 14px;padding-left:22px;margin-top:2px">'
+          +acts.map(a=>'<label style="display:flex;align-items:center;gap:3px;font-size:12px;color:var(--muted)"><input type="checkbox" data-act="'+k+'.'+a+'" '+(fCk&&(!actsObj||actsObj[k+'.'+a]===true)?'checked':'')+' >'+FORM_ACTS[k][a]+'</label>').join('')
+          +'</div>'):'')
+        +'</div>';
+    }).join('')
     +'</div>';
   showModal(u?'编辑员工':'新增员工',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveUser('+(u?"'"+u.username+"'":'null')+')">保存</button>');
@@ -5419,6 +5487,10 @@ async function saveUser(username){
   const pwd=document.getElementById('uf_pwd').value;
   const perms={};
   document.querySelectorAll('#modal input[data-perm]').forEach(c=>{perms[c.dataset.perm]=c.checked;});
+  /* .119：按钮级动作权限收集——勾选的「业务动作」子项写入 perms.acts（未勾=该动作收敛；保存后 canAct 即严格生效） */
+  const acts={};
+  document.querySelectorAll('#modal input[data-act]').forEach(c=>{acts[c.dataset.act]=c.checked;});
+  perms.acts=acts;
   /* .118：权限点拆分固化——编辑历史员工若曾勾「订单管理(orders)」则自动转为销售/库存双开（该员工权限面板不再有 orders 项） */
   if(username){
     const _ou=(window.__usersCache||[]).find(x=>x.username===username);
@@ -5958,18 +6030,18 @@ function bulkBar(m){
   const allChecked=ids.length>0 && ids.every(id=>selSet(m).has(String(id)));
   btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' data-sel-all="'+m+'" onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   if(writable){
-    btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');
+    if(btnOK(m,'edit'))btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');   /* .119：排产页编辑=ppEdit（PMC 填物料齐套时间；车间默认无此按钮） */
     /* 2026-08-25.21/.27：交付计划、排产计划只能由上游下推生成，禁止复制 */
     if(m!=='delivery'&&m!=='prodPlan')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
-    if(m==='product')btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
-    if(m==='order_frame')btns.push(saleOpsBtnHtml());   /* 2026-08-30.97/.98：销售订单交付（+下拉退货） */
-    if(m==='order_inv')btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的库存订单生成交付计划（仅限 1 条）">生成交付计划</button>');   /* 2026-08-30.95：交付计划仅库存订单可生成（销售订单按钮隐藏） */
-    if(writable&&m==='order_inv')btns.push('<button class="btn btn-sm" onclick="openInvCallStock()" title="为选中的库存订单调用库存/改装补库（仅限 1 张）：从其他产品库存订单调入，跨料号=改装、同料号=移库，写入调拨台账">调用库存</button>');   /* 2026-09-06.115：库存订单调用库存（改装/移库补库） */
-    if(m==='delivery')btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');
+    /* .119：产品「生成订单」改动作键 product.genOrder 门控（默认归 PMC），按钮移至下方只读导航区——无需产品主数据写权限即可执行（落库走 invOrders 校验） */
+    if(m==='order_frame')btns.push(saleOpsBtnHtml());   /* 2026-08-30.97/.98：销售订单交付（+下拉退货）｜.119：交付/退货动作键 gate 见函数内 */
+    if(m==='order_inv'&&canAct('order_inv.invGenDelivery'))btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的库存订单生成交付计划（仅限 1 条）">生成交付计划</button>');   /* 2026-08-30.95：交付计划仅库存订单可生成（销售订单按钮隐藏）｜.119：动作键 invGenDelivery（PMC） */
+    if(m==='order_inv'&&canAct('order_inv.invCall'))btns.push('<button class="btn btn-sm" onclick="openInvCallStock()" title="为选中的库存订单调用库存/改装补库（仅限 1 张）：从其他产品库存订单调入，跨料号=改装、同料号=移库，写入调拨台账">调用库存</button>');   /* 2026-09-06.115：库存订单调用库存（改装/移库补库）｜.119：动作键 invCall */
+    if(m==='delivery'&&canAct('delivery.delPushPlan'))btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');   /* .119：动作键 delPushPlan（PMC） */
     /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
        下拉等宽于按钮组、下拉项与主按钮同款 btn-primary。
        .31 修复：容器**不能加 overflow:hidden**（会裁剪 absolute 定位的下拉菜单，点击▾无反应）——按钮直角改由按钮自身圆角承担 */
-    if(m==='prodPlan')btns.push('<span id="ppLaunchWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
+    if(m==='prodPlan'&&canAct('prodPlan.ppLaunch'))btns.push('<span id="ppLaunchWrap" style="position:relative;display:inline-flex;align-items:stretch;background:var(--primary);border:1px solid var(--primary);border-radius:6px;vertical-align:middle">'+
       '<button class="btn btn-sm" style="border:none;border-radius:5px 0 0 5px;margin:0;color:#fff;background:transparent;padding:5px 10px" onclick="ppLaunch()" title="投产选中的排产计划（多选，待排产→生产中，投产后才能报工）">投产</button>'+
       '<span style="width:1px;background:rgba(255,255,255,.45)"></span>'+
       '<button class="btn btn-sm" style="border:none;border-radius:0 5px 5px 0;margin:0;color:#fff;background:transparent;padding:5px 7px" onclick="event.stopPropagation();ppToggleLaunchMenu()" title="更多投产操作">▾</button>'+
@@ -5978,14 +6050,16 @@ function bulkBar(m){
       '</div></span>');
     /* 2026-08-29.73：延后/提前计划日期（样式复用投产|▾ 融合按钮规范；主按钮=±1 天，下拉=3/7/自定义）。
        .74/.75：提前、延后、报工均改常规白底（含下拉选项白底化） */
-    if(m==='prodPlan')btns.push(ppShiftBtnHtml('delay','延后',true));
-    if(m==='prodPlan')btns.push(ppShiftBtnHtml('advance','提前',true));
-    if(m==='prodPlan')btns.push('<button class="btn btn-sm" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');
-    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');
-    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');
-    if(writable&&m==='order_frame')btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');
-    btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');
+    if(m==='prodPlan'&&canAct('prodPlan.ppShift'))btns.push(ppShiftBtnHtml('delay','延后',true));   /* .119：动作键 ppShift（车间） */
+    if(m==='prodPlan'&&canAct('prodPlan.ppShift'))btns.push(ppShiftBtnHtml('advance','提前',true));
+    if(m==='prodPlan'&&canAct('prodPlan.ppReport'))btns.push('<button class="btn btn-sm" onclick="reportProdPlan()" title="为选中的排产计划报工（仅限 1 条，需先投产）">报工</button>');   /* .119：动作键 ppReport（车间） */
+    if(writable&&m==='order_frame'&&canAct('order_frame.kingdeeImport'))btns.push('<button class="btn btn-sm btn-primary" onclick="triggerImportKingdee()" title="从金蝶ERP导出的销售订单Excel批量导入销售订单">导入金蝶订单</button>');   /* .119：动作键 kingdeeImport（经理） */
+    if(writable&&m==='order_frame'&&canAct('order_frame.saleCall'))btns.push('<button class="btn btn-sm" onclick="openCallStock()" title="为选中的销售订单调用库存（仅限 1 张）">调用库存</button>');   /* .119：动作键 saleCall（经理） */
+    if(writable&&m==='order_frame'&&canAct('order_frame.saleReturnStock'))btns.push('<button class="btn btn-sm" onclick="openReturnStock()" title="为选中的销售订单退回库存（仅限 1 张）">退回库存</button>');   /* .119：动作键 saleReturnStock（经理） */
+    if(btnOK(m,'del'))btns.push('<button class="btn btn-sm btn-danger" onclick="bulkDelete(\''+m+'\')">删除</button>');   /* .119：排产页删除=ppDel（PMC 删整单）；车间默认无删除按钮 */
   }
+  /* .119：产品「生成订单」按钮移至只读区——动作键 product.genOrder 门控（默认归 PMC，不要求产品主数据写权限；落库时后端按 invOrders 校验） */
+  if(m==='product'&&canAct('product.genOrder'))btns.push('<button class="btn btn-sm btn-primary" onclick="bulkGenOrder()" title="为选中的产品生成库存订单">生成订单</button>');
   /* 2026-08-25.59：调拨查询为只读导航操作，置于写权限块外（只读账号也可用）——销售筛 salesOrderId、库存筛 invOrderId */
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryTransfersOfOrder(\''+m+'\')" title="跳转到调拨台账并筛选本订单关联的调拨单（仅限 1 张）">调拨查询</button>');
   /* 2026-08-29.76：计划查询（只读导航，写权限块外）——跳转交付计划并筛选本订单 */
@@ -6013,6 +6087,7 @@ function bulkSingle(m,act){
 
 /* 订单管理：为选中的订单生成交付计划（仅限 1 条）→ 跳转交付计划页并打开预填的新增交付计划弹窗 */
 function genDeliveryPlan(m){
+  if(!needAct('order_inv.invGenDelivery'))return;   /* .119：动作键 invGenDelivery（默认 PMC） */
   const s=selSet(m);
   if(s.size===0){alert('请先勾选 1 条订单');return;}
   if(s.size>1){alert('「生成交付计划」一次只能选择 1 条订单，当前已选 '+s.size+' 条。请只勾选一条再操作。');return;}
@@ -6407,7 +6482,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.118</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-08.119</div>
 </body>
 </html>
 

@@ -51,7 +51,9 @@ let revs = {};
 Object.keys(data).forEach(k => revs[k] = 0);
 
 /* 用户（兼容旧格式：补 name/status/perms） */
-const STAFF_PERMS = { products: false, saleOrders: false, invOrders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, processTemplates: false, fields: false };   /* .118：orders 拆为 saleOrders(销售)/invOrders(库存) */
+const STAFF_PERMS = { products: false, saleOrders: false, invOrders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, processTemplates: false, fields: false, acts: {} };   /* .118：orders 拆为 saleOrders(销售)/invOrders(库存)；.119：acts=按钮级业务动作（空=仅 CRUD，由管理员在员工面板按动作授权） */
+/* .119：按钮级动作键全集（与前端 FORM_ACTS 键一致，供存量员工迁移全开与前端逐键收敛） */
+const ACT_KEYS = ['product.genOrder', 'order_frame.saleDeliver', 'order_frame.saleReturn', 'order_frame.kingdeeImport', 'order_frame.saleCall', 'order_frame.saleReturnStock', 'order_inv.invGenDelivery', 'order_inv.invCall', 'delivery.delPushPlan', 'prodPlan.ppEdit', 'prodPlan.ppLaunch', 'prodPlan.ppShift', 'prodPlan.ppReport', 'prodPlan.ppReportEdit', 'prodPlan.ppDel'];
 let users = load(USERS_FILE, null);
 if (!users || !Array.isArray(users)) {
   users = [
@@ -74,6 +76,13 @@ if (!users || !Array.isArray(users)) {
         if (u.perms.saleOrders === undefined) u.perms.saleOrders = true;
         if (u.perms.invOrders === undefined) u.perms.invOrders = true;
       }
+      changed = true;
+    }
+    /* .119：按钮级动作权限迁移——存量员工无 perms.acts 时全键开启（升级后按钮显隐与 .118 一致不缩水）；
+       管理员在员工面板重新保存该员工后 acts 固化，可逐键收敛（如车间只留投产/报工） */
+    if (u.perms && u.perms.acts === undefined && u.role !== 'admin') {
+      u.perms.acts = {};
+      ACT_KEYS.forEach(k => { u.perms.acts[k] = true; });
       changed = true;
     }
     if (!u.salt || !u.hash) { const s = crypto.randomBytes(16).toString('hex'); u.salt = s; u.hash = hashPwd('123456', s); changed = true; }

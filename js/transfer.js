@@ -154,6 +154,7 @@ function csFillByOrder(){
   document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
 }
 function openCallStock(){
+  if(!needAct('order_frame.saleCall'))return;   /* .119：动作键 saleCall（默认经理） */
   const s=selSet('order_frame');
   if(s.size===0){alert('请先勾选 1 张销售订单');return;}
   if(s.size>1){alert('「调用库存」只能选择 1 张销售订单，当前已选 '+s.size+' 张。');return;}
@@ -228,6 +229,7 @@ function doCallStock(o){
   closeModal();
 }
 function openReturnStock(){
+  if(!needAct('order_frame.saleReturnStock'))return;   /* .119：动作键 saleReturnStock（默认经理） */
   const s=selSet('order_frame');
   if(s.size===0){alert('请先勾选 1 张销售订单');return;}
   if(s.size>1){alert('「退回库存」只能选择 1 张销售订单，当前已选 '+s.size+' 张。');return;}
@@ -517,6 +519,7 @@ function ivAutoFill(){
   });
 }
 function openInvCallStock(){
+  if(!needAct('order_inv.invCall'))return;   /* .119：动作键 invCall（默认 PMC） */
   const s=selSet('order_inv');
   if(s.size===0){alert('请先勾选 1 张库存订单');return;}
   if(s.size>1){alert('「调用库存」只能选择 1 张库存订单，当前已选 '+s.size+' 张。');return;}
