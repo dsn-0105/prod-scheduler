@@ -14,15 +14,15 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 
 const DEFAULT_DATA = {
-  products: [], orders: [], dailyPlans: [], dailyPkgs: [],
-  deliveries: [], productionPlans: [], productionReports: [], processTemplates: [],
+  products: [], orders: [], deliveries: [], productionPlans: [], productionReports: [], processTemplates: [],
   logs: [], fields: null, meta: { seq: 0 },
   fieldsAudit: 'audited', fieldsDraft: null, tblLayout: {},
   transfers: []
 };
 
-/* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写） */
-const BIZ_KEYS = ['products', 'orders', 'dailyPlans', 'dailyPkgs', 'deliveries', 'productionPlans', 'processTemplates', 'fields'];
+/* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写）。
+   .122：日排产模块（备货 dailyPlans/包装 dailyPkgs 表）整体移除——dailyPlans 仅余为排产计划页的权限键（见 STAFF_PERMS），不再是数据表 */
+const BIZ_KEYS = ['products', 'orders', 'deliveries', 'productionPlans', 'processTemplates', 'fields'];
 const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers', 'productionReports'];
 
 function load(file, def) {
@@ -51,7 +51,8 @@ let revs = {};
 Object.keys(data).forEach(k => revs[k] = 0);
 
 /* 用户（兼容旧格式：补 name/status/perms） */
-const STAFF_PERMS = { products: false, saleOrders: false, invOrders: false, dailyPlans: false, dailyPkgs: false, deliveries: false, processTemplates: false, fields: false, acts: {} };   /* .118：orders 拆为 saleOrders(销售)/invOrders(库存)；.119：acts=按钮级业务动作（空=仅 CRUD，由管理员在员工面板按动作授权） */
+/* .122：日排产模块移除——dailyPkgs（包装排产）权限键删除；dailyPlans 权限键保留=「排产计划」页写权限（prodPlan 用） */
+const STAFF_PERMS = { products: false, saleOrders: false, invOrders: false, dailyPlans: false, deliveries: false, processTemplates: false, fields: false, acts: {} };   /* .118：orders 拆为 saleOrders(销售)/invOrders(库存)；.119：acts=按钮级业务动作（空=仅 CRUD，由管理员在员工面板按动作授权） */
 /* .119：按钮级动作键全集（与前端 FORM_ACTS 键一致，供存量员工迁移全开与前端逐键收敛） */
 const ACT_KEYS = ['product.genOrder', 'order_frame.saleDeliver', 'order_frame.saleReturn', 'order_frame.kingdeeImport', 'order_frame.saleCall', 'order_frame.saleReturnStock', 'order_inv.invGenDelivery', 'order_inv.invCall', 'delivery.delPushPlan', 'prodPlan.ppEdit', 'prodPlan.ppLaunch', 'prodPlan.ppShift', 'prodPlan.ppReport', 'prodPlan.ppReportEdit', 'prodPlan.ppDel'];
 let users = load(USERS_FILE, null);

@@ -84,7 +84,7 @@ function importXLSX(e){
           }
         }
         if(plan.length===0){alert('未识别到任何有效数据。请确认文件包含正确的 Sheet 名称和表头。');importFormKey='';e.target.value='';return;}
-        var existTotal=currentDataCount('products')+currentDataCount('orders')+currentDataCount('dailyPlans')+currentDataCount('dailyPkgs')+currentDataCount('deliveries');
+        var existTotal=currentDataCount('products')+currentDataCount('orders')+currentDataCount('deliveries');
         if(existTotal>0){
           var detail=plan.map(function(p){return '「'+p.cfg.sheet+'」'+p.data.length+' 条';}).join('、');
           if(!confirm('即将全量导入，覆盖以下表单数据：\n'+detail+'\n\n当前共有 '+existTotal+' 条记录将被覆盖。\n\n（已自动备份当前数据，可用顶部「恢复」还原）\n此操作不可撤销，确定继续？')){
