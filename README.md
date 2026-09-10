@@ -2,7 +2,7 @@
 
 面向智能低压电器（断路器）制造企业的**单文件网页版**销售订单 / 生产排产 / 交付管理系统。零依赖、纯前端实现，数据默认存于浏览器本地，可无缝升级到服务器后台。
 
-> 当前版本：`build 2026-08-18.3`
+> 当前版本：`build 2026-09-10.123`
 
 ## 功能模块
 
@@ -33,6 +33,9 @@
 
 本仓库已包含 GitHub Actions 工作流（`.github/workflows/deploy.yml`），代码推送到 `main` 分支后自动构建并发布到 GitHub Pages。
 
+> ⚠️ **发布为显式安全白名单**：工作流只把前端运行必需的文件（`index.html`、`js/` 整个目录、`.nojekyll`）拷到临时目录 `_site/` 后发布，**不再使用 `path: .`**（那会把 `server/`、`docs/`、`backups/`、运维脚本、部署脚本等一并暴露到公网）。
+> **维护约定：新增前端静态资源（新 `.html` / js 模块 / css / 图标等）时，必须同步把该文件或目录加进 `deploy.yml` 的 Stage 步骤，否则线上会 404。** 工作流内置了「必需文件缺失」与「误发布敏感内容」两道 fail-fast 校验。
+
 1. 在 GitHub 新建一个仓库（公开或私有均可，Pages 现已支持私有仓库）
 2. 推送本仓库：
    ```bash
@@ -41,6 +44,55 @@
    ```
 3. 仓库 **Settings → Pages**，Source 选择 **GitHub Actions**
 4. 等待 Actions 运行完成，访问 `https://<你的用户名>.github.io/<仓库名>/`
+
+## 服务器模式与安全须知
+
+服务器模式下（`API_BASE='/api'`，见 `server/server.js`）涉及以下安全约定，运维与二次开发请务必遵循：
+
+### 初始账号密码（.123 起不再硬编码）
+
+首次启动（`users.json` 不存在）时自动创建 `admin` / `pmc` / `chejian` / `zongjingli` 四个账号，密码来源优先级：
+
+1. 环境变量 `PROD_INIT_PWD` 已设置 → 所有初始账号统一使用该密码
+2. 未设置 → **每个账号生成独立的 12 位随机密码**，并打印到 stdout
+
+查看方式（systemd 服务 `prod-server`）：
+
+```bash
+journalctl -u prod-server | grep -A 10 '首次初始化'
+```
+
+新账号带 `mustChangePwd` 标记，登录后前端会提示尽快改密，`/api/change-pwd` 成功后自动清除。**首次登录后请立即修改所有账号密码。**
+
+### 手动重置账号密码
+
+线上存量账号若仍使用弱口令，可由运维手动重置（不启动服务，执行后退出）：
+
+```bash
+node server/server.js --reset-pwd <username> <newpassword>
+```
+
+重置后该账号会被重新置上 `mustChangePwd` 标记。
+
+### 鉴权方式：token 走请求头
+
+`/api/login` 成功后返回的 token 由前端放在 `Authorization: Bearer <token>` **请求头**中传递，**不再拼到 URL query**（避免写入 nginx access log / 浏览器历史 / Referer）。
+
+服务端仍保留 query token 作为兼容兜底，可通过环境变量硬关闭：
+
+```bash
+DEPRECATE_QUERY_TOKEN=1   # 建议在旧版前端全量下线并稳定 1 周后开启
+```
+
+### 并发保存：revision 乐观锁
+
+`/api/save` 支持可选的 `expectedRev` 字段。前端保存时会带上本地已知版本号：
+
+- 版本号与服务器一致 → 正常写入，返回新 `rev`
+- 版本号过期（他人已改过该表）→ **HTTP 409 `{ error: '数据已被他人修改', rev }`**，前端**拒绝本次保存**并提示「请刷新后重新操作」，同时自动拉取最新数据
+
+这是为了避免**静默丢数据**（用户 B 用旧快照保存、无声覆盖用户 A 的改动）。按业务要求，冲突时**不做自动合并/自动重试**——宁可让用户重做，也不做可能算错的合并。
+
 
 ## 数据说明（重要）
 

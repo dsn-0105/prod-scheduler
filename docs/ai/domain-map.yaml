@@ -1,0 +1,680 @@
+# ============================================================================
+# domain-map.yaml —— 领域 / 实体 / 投影 / 命令清单
+# 系统：辰微生产排产系统（prod-scheduler）
+# 对应 build：2026-09-09.122
+# 说明：本文件描述「系统里有什么」。回答「改 A 会牵连谁」请用 dependency-map.yaml。
+#
+# 铁律：
+#   - kind 三态：fact=事实来源（用户/导入直接写入） / projection=派生投影（可重算） / appendonly=追加流水
+#   - 每条内容必须能从真实代码推导；找不到证据的写 status: 未核实
+#   - 描述「现状」用陈述句；「应该改但还没改」必须带 status: 现状缺陷 或 gap: true
+# ============================================================================
+version: 1
+updated: '2026-09-09'
+build: '2026-09-09.122'
+source_of_truth: 代码优先（本文件与代码冲突时以代码为准，并立即修正本文件）
+
+# ----------------------------------------------------------------------------
+# 领域（业务分区，对应侧边栏/表单区块）
+# ----------------------------------------------------------------------------
+domains:
+  - id: product-master
+    name: 产品主数据
+    form_key: product
+    storage_keys: [products, fields]
+    files: [index.html, js/import.js]
+    entities: [products]
+    commands: [product.upsert, product.genOrder]
+    note: 产品的 stock 字段是派生投影，不是事实来源；事实由库存订单支撑（见 projections.products.stock）
+
+  - id: order-sales
+    name: 订单管理·销售订单
+    form_key: order_frame
+    storage_keys: [orders, transfers, logs]
+    files: [index.html, js/transfer.js, js/import.js]
+    entities: [orders, transfers]
+    commands: [order.upsert, jindie.import, transfer.call, transfer.return]
+    note: 销售订单调用库存走 applyTransfers('call')，已交付由「交付/退货」驱动（.97 起不回写）
+
+  - id: order-inventory
+    name: 订单管理·库存订单
+    form_key: order_inv
+    storage_keys: [orders, transfers, products, logs]
+    files: [index.html, js/transfer.js]
+    entities: [orders, transfers, products]
+    commands: [order.upsert, transfer.conv, transfer.move, delivery.upsert]
+    note: 库存订单是该系统唯一的库存事实来源；其 deliveredQty 汇总即产品库存
+
+  - id: delivery
+    name: 交付计划
+    form_key: delivery
+    storage_keys: [deliveries, logs]
+    files: [index.html]
+    entities: [deliveries]
+    commands: [delivery.upsert, prodPlan.push]
+    note: 交付计划只能从订单管理下推；排产单只能从交付计划下推
+
+  - id: production
+    name: 排产计划 / 生产报工
+    form_key: prodPlan
+    storage_keys: [productionPlans, productionReports, orders, products, logs]
+    files: [index.html, js/prodplan-core.js]
+    entities: [productionPlans, productionReports, orders, products]
+    commands: [prodPlan.upsert, prodPlan.cancel, prodPlan.delete, productionReport.complete, productionReport.edit, productionReport.delete]
+    note: 报工入库通过 writebackInbound 回写订单 deliveredQty —— 系统中最长的跨表写链
+
+  - id: transfer-ledger
+    name: 调拨台账
+    form_key: transfers
+    storage_keys: [transfers, orders, products, logs]
+    files: [js/transfer.js]
+    entities: [transfers, orders, products]
+    commands: [transfer.call, transfer.return, transfer.conv, transfer.move, transfer.reverse]
+    note: appendonly 流水；记录只冲销不删除
+
+  - id: process-template
+    name: 工序模板
+    form_key: processTpl
+    storage_keys: [processTemplates, products, logs]
+    files: [index.html]
+    entities: [processTemplates, products]
+    commands: [processTpl.upsert]
+    note: 产品通过 processTpl 字段引用工序模板；改模板影响后续下推的排产单
+
+  - id: field-engine
+    name: 字段设置（表单自定义字段引擎）
+    form_key: fields
+    storage_keys: [fields, fieldsDraft, fieldsAudit, logs]
+    files: [index.html]
+    entities: [fields, fieldsDraft, fieldsAudit]
+    commands: [fields.save, fields.audit]
+    note: fields 是「元数据」，改动会改变所有表单的渲染与保存收集逻辑
+
+  - id: system-ui
+    name: 系统 / 表格布局 / 操作日志
+    form_key: logs
+    storage_keys: [logs, meta, tblLayout]
+    files: [index.html, js/logs.js]
+    entities: [logs, meta, tblLayout]
+    commands: [log.append, layout.save]
+    note: tblLayout / meta 属系统表（登录用户均可写，不受表单权限约束）
+
+  - id: auth
+    name: 认证与权限
+    form_key: null
+    storage_keys: [users.json]
+    files: [server/server.js]
+    entities: [users]
+    commands: [auth.login, user.manage]
+    note: 权限点在 server（表单级）与前端（表单级 + 按钮级 FORM_ACTS）双层控制
+
+# ----------------------------------------------------------------------------
+# 实体（持久化单元）
+# ----------------------------------------------------------------------------
+entities:
+  - id: products
+    name: 产品主数据
+    kind: fact
+    storage_key: products
+    container: array
+    registered: [DEFAULT_DATA, BIZ_KEYS]
+    id_field: id
+    key_fields: [id, name, spec, model, unit, stock, stockMin, stockMax, dailyCap, processTpl, status]
+    writers: [product.upsert, kdDoImport, syncStockFromInvOrders, backfillInvDeliveredFromStock, seed, restoreBackup, confirmClear]
+    write_functions:
+      - "save('products') @ index.html:3507（syncStockFromInvOrders 内）"
+      - "save('products') @ index.html:3484（backfillInvDeliveredFromStock 内；仅 changed 时）"
+      - "save('products') @ js/import.js:484（kdDoImport 内，条件性）"
+    readers: [renderProducts, renderOrderTable, renderDeliveryTable, renderProdPlan, applyTransfers, kdDoImport]
+    permission_form: product
+    note: stock 字段为派生投影（见 projections.products.stock），其余字段为事实
+
+  - id: orders
+    name: 订单（销售订单 + 库存订单，同表）
+    kind: fact
+    storage_key: orders
+    container: array
+    registered: [DEFAULT_DATA, BIZ_KEYS]
+    id_field: id
+    discriminator: orderType（'销售订单' | '库存订单'）
+    key_fields: [id, orderType, status, customer, contractNo, startDate, deadline, items, src, srcFile]
+    item_key_fields: [productId, productName, spec, model, orderQty, stockMax, stockMin, deliveredQty, calledQty, directDelivered, lineNotes]
+    writers: [saveOrder, delOrder, saleDeliverSave, saleReturnSave, applyTransfers, writebackInbound, syncOrderAutoStatus, kdDoImport, migrateOrderCalledQty, migrateOrderStatusData, backfillInvDeliveredFromStock, restoreBackup, confirmClear]
+    readers: [renderOrderTable, renderDeliveryTable, renderProdPlan, buildPlannedUndelMap, applyTransfers, writebackInbound, syncStockFromInvOrders, syncOrderAutoStatus, orderUndelTotal]
+    permission_form: order_frame / order_inv（分拆权限点，server 侧 orders 表两权限点任一放行）
+    note: |
+      同表双语义：orderType 决定 deliveredQty 语义与符号规则。
+      销售订单：deliveredQty >= 0（由交付/退货驱动，.97 起 writebackInbound 不回写；写方 = saleDeliverSave/saleReturnSave）。
+      库存订单：deliveredQty 可为负（欠货）；orderQty 语义被 stockMax 取代（.92）；calledQty 恒 0。
+      ⚠️ deliveredQty 的写入方按其所属命令族：
+        ① 库存订单行：saveOrder / applyTransfers(调拨) / writebackInbound(报工) / backfillInvDeliveredFromStock(迁移) / restore / clear
+        ② 销售订单行：saleDeliverSave(交付) / saleReturnSave(退货) / transfer.apply(调拨调用/退回也改销售行 deliveredQty)
+      其中【只有库存订单行】参与「库存投影」（syncStockFromInvOrders 只汇总 orderType==='库存订单'）；
+      销售订单行的 deliveredQty 仅驱动订单状态（syncOrderAutoStatus），不动 products.stock。
+
+  - id: deliveries
+    name: 交付计划
+    kind: fact
+    storage_key: deliveries
+    container: array
+    registered: [DEFAULT_DATA, BIZ_KEYS]
+    id_field: null（以 orderId + 数组索引 idx 为逻辑主键）
+    key_fields: [orderId, customer, finalDate, firstDate, createdAt, items, orderTotal, delivered, undelivered, planQty]
+    item_key_fields: [productId, productName, orderQty, deliveredQty, planQty, orderLine, dlLine]
+    writers: [doSaveDelivery, delDelivery, restoreBackup, confirmClear]
+    readers: [renderDeliveryTable, buildPlannedUndelMap, ppTotalOfLine, saveProdPlan, renderProdPlan]
+    permission_form: delivery
+    note: |
+      逻辑主键为「数组索引 idx」——productionPlans[].deliveryIdx 直接引用该索引（见 flows.prodPlan.upsert 的破坏性风险）。
+      items[].orderLine = 来源订单行索引；items[].dlLine = 本交付计划内的行索引（供排产单归行）。
+
+  - id: productionPlans
+    name: 排产计划（排产单）
+    kind: fact
+    storage_key: productionPlans
+    container: array
+    registered: [DEFAULT_DATA, BIZ_KEYS]
+    id_field: id（格式 PSCD-YYYYMMDD-NNN）
+    key_fields: [id, deliveryIdx, orderId, customer, planDate, finalDate, materialReadyDate, status, notes, items]
+    item_key_fields: [productId, productName, planQty, doneQty, steps, stepsDef, dlLine]
+    writers: [saveProdPlan, delProdPlan, applyReport, ppSaveReportEdits, ppDelReport, restoreBackup, confirmClear]
+    readers: [renderProdPlan, buildPlannedUndelMap, applyReport, ppDelReport, ppDoneOf, ppPlanOf]
+    permission_form: prodPlan（权限键名 dailyPlans，见 formToKey）
+    note: |
+      status 四态：待排产 / 生产中 / 已完成 / 已取消。status 不可手动编辑（由投产/报工自动转变）。
+      只有「待排产」可删除（.29 保护：防破坏报工/订单回写）。
+
+  - id: productionReports
+    name: 生产报工记录
+    kind: appendonly
+    storage_key: productionReports
+    container: array
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    id_field: id（prNextId() 生成）
+    key_fields: [id, planId, date, time, worker, items, createdAt]
+    item_key_fields: [productId, productName, step, label, qty, dlLine]
+    writers: [applyReport, ppSaveReportEdits, ppDelReport, restoreBackup, confirmClear]
+    readers: [renderProdPlanReport, ppDelReport, ppSaveReportEdits, applyReport(累计回退)]
+    permission_form: report
+    note: |
+      appendonly 语义：只 push，不做原地业务编辑（编辑走 ppSaveReportEdits 覆盖 rec.items[].qty）。
+      注意：它在 SYSTEM_KEYS 中，因此 server 侧「登录用户均可写」，不受表单权限约束（前端由 act prodPlan.ppReportEdit 收敛）。
+
+  - id: transfers
+    name: 调拨台账
+    kind: appendonly
+    storage_key: transfers
+    container: array
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    id_field: id（'TR'+Date.now()+'-'+idx）
+    direction_model: '.115 双侧方向模型'
+    key_fields: [id, type, outOrderId, outOrderType, outLineIdx, outProductId, inOrderId, inOrderType, inLineIdx, inProductId, qty, ts, user, reversed, reverseOf, customer, contractNo, productName, spec, model]
+    type_enum: [call, return, conv, move, conv_back, move_back]
+    writers: [applyTransfers, reverseTransfer(经 applyTransfers)]
+    readers: [renderTransfers, reverseTransfer, trSide, trSnapOf, migrateOrderCalledQty, queryTransfersOfOrder]
+    permission_form: transfers
+    note: |
+      appendonly + 冲销：不作物理删除（reverseTransfer 通过 applyTransfers 生成反向记录 + 原记录 reversed=true）。
+      历史事故：transfers 曾漏登记 DEFAULT_DATA，导致静默丢失 103 条台账（见 change-log.yaml）。
+      旧键 salesOrderId / invOrderId 已废止（2026-09-06 迁移 122 条 → out/in 双侧模型）。
+
+  - id: processTemplates
+    name: 工序模板
+    kind: fact
+    storage_key: processTemplates
+    container: array
+    registered: [DEFAULT_DATA, BIZ_KEYS]
+    id_field: id
+    key_fields: [id, name, steps]
+    writers: [saveTpl, delTpl, ensureDefaultTpl, restoreBackup, confirmClear]
+    readers: [stepsDefOf, renderProdPlan, prodPlanModal]
+    permission_form: processTpl
+    note: 产品通过 products[].processTpl 引用；改模板只影响之后下推的排产单（已下推的 stepsDef 已固化在排产单行上）
+
+  - id: fields
+    name: 字段设置（全局元数据）
+    kind: fact
+    storage_key: fields
+    container: object（按 formKey 分组的字段配置数组）
+    registered: [DEFAULT_DATA, BIZ_KEYS]
+    id_field: null
+    key_fields: [products, order, delivery, prodPlan, processTpl, logs, transfers(按 form 分组)]
+    writers: [normalizeFields, migrateSpecSplit, migrateRemoveProductFields, migrateProductFieldsOptional, migrateProductDailyCap, migrateOrderTypeField, migrateOrderStatusField, migrateOrderContractNo, migrateDeliveryFields, restoreBackup, confirmClear]
+    write_call_sites:
+      - "save('fields',fields) @ index.html:1976 / 1996 / 2013 / 2046 / 2077 / 2116 / 2157 / 2188（各 normalize*/migrate* 内）"
+      - "save('fields',fields) @ index.html:2221 / 2236 / 2258 / 2337（字段类迁移，仅 changed 时）"
+      - "save('fields',fields) @ index.html:5924（restoreBackup 批量 save）"
+    readers: [所有 render* / save* 表单逻辑（isLineField / orderHeadFields / orderLineFields / lookupRef）]
+    permission_form: fields
+    note: |
+      元数据实体：改 fields 会同时改变「渲染」与「保存收集」两侧逻辑（saveOrder 按 fields.order 遍历收集）。
+      已知耦合：saveOrder 依赖 fields 中存在 orderType 字段，缺失时靠代码兜底（index.html:3282）。
+      ⚠️ 现状口径（2026-09-09 核对）：**当前 build 无「字段设置」编辑页签**（NAV 见 index.html:717-731，无 fields 项），
+      因此 fields 只能被启动期标准迁移函数与 restoreBackup 改写；不存在独立的 saveFields/auditFields UI 命令。
+
+  - id: fieldsDraft
+    name: 字段设置草稿
+    kind: fact
+    storage_key: fieldsDraft
+    container: object | null
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    writers: [normalizeFields, migrateSpecSplit, restoreBackup]
+    write_call_sites:
+      - "save('fieldsDraft',fieldsDraft) @ index.html:1977 / 1997 / 2014 / 2047 / 2078 / 2117 / 2158 / 2189（条件性：仅 fieldsDraft 非空时）"
+      - "save('fieldsDraft',null) @ index.html:5914（restoreBackup：草稿作废）"
+    readers: []
+    permission_form: fields
+    note: |
+      草稿与正式配置分离；fieldsAudit='audited' 时草稿作废。
+      ⚠️ 现状口径：当前 build 无字段草稿编辑入口，fieldsDraft 恒为 null（初值 index.html:744），
+      相关读取方（renderFields）在当前 build 中亦不存在。保留该键仅为兼容旧数据。
+
+  - id: fieldsAudit
+    name: 字段设置审核标记
+    kind: fact
+    storage_key: fieldsAudit
+    container: scalar（'audited'）
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    writers: [restoreBackup]
+    write_call_sites:
+      - "let fieldsAudit='audited' @ index.html:743（初值，非持久化写）"
+      - "save('fieldsAudit','audited') @ index.html:5914（restoreBackup：恢复后重置为已审核）"
+      - "DB.get('fieldsAudit','audited') @ index.html:5980（initApp 加载）"
+    readers: []
+    permission_form: fields
+    note: |
+      ⚠️ 现状口径：当前 build 中 fieldsAudit 只会被写成 'audited'（无 draft 状态流转、无审核动作）。
+      即「字段审核」机制在当前版本已退化；改动前请先确认该机制是否仍被需要。
+
+  - id: logs
+    name: 操作日志
+    kind: appendonly
+    storage_key: logs
+    container: array
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    id_field: null
+    key_fields: [time, action, target, detail, field, oldv, newv]
+    cap: 500
+    writers: [logOp（全系统 73 处调用）]
+    readers: [renderLogs]
+    permission_form: logs
+    note: 上限 500 条，超出 slice(0,500)；logOp 内部 save('logs') 属独立网络写，不在调用方事务内
+
+  - id: meta
+    name: 系统元数据
+    kind: fact
+    storage_key: meta
+    container: object
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    key_fields: [seq, seeded]
+    writers: [initApp(seed 灌入示例数据)]
+    readers: [nextSeq, initApp]
+    permission_form: null（系统表）
+
+  - id: tblLayout
+    name: 表格列布局
+    kind: fact
+    storage_key: tblLayout
+    container: object
+    registered: [DEFAULT_DATA, SYSTEM_KEYS]
+    writers: [saveLayout（index.html:1168）]
+    readers: [applyTable, thCol]
+    permission_form: null（系统表）
+
+  - id: users
+    name: 员工账号
+    kind: fact
+    storage_key: users.json（独立文件，不在 DEFAULT_DATA 中）
+    container: array
+    registered: [server/users.json 文件]
+    id_field: username
+    key_fields: [username, name, role, status, salt, hash, perms]
+    writers: [auth.js 全部 /api/users* 端点 + 启动迁移]
+    readers: [auth(), canWrite(), publicUser()]
+    permission_form: null（仅 admin）
+
+# ----------------------------------------------------------------------------
+# 投影（派生数据 / recompute-on-demand）
+# ----------------------------------------------------------------------------
+projections:
+  - id: products.stock
+    name: 产品库存
+    kind: projection
+    storage: 落库于 entities.products[].stock（但由投影函数全量覆写，不是事实来源）
+    formula: 'Σ(所有库存订单的明细行 deliveredQty)，按 productId 汇总'
+    recompute: syncStockFromInvOrders()
+    file: index.html:3494
+    full_alignment: true
+    note: 全量对齐（不是增量）：无库存订单支撑的产品库存一律归零
+    callers:
+      - { file: 'index.html:3346', context: 'saveOrder 保存库存订单后' }
+      - { file: 'index.html:3442', context: 'delOrder 删除库存订单后' }
+      - { file: 'index.html:4583', context: 'writebackInbound 内' }
+      - { file: 'index.html:5921', context: 'restoreBackup 从备份恢复后' }
+      - { file: 'index.html:6034', context: 'initApp 启动迁移链' }
+      - { file: 'js/transfer.js:328', context: 'applyTransfers 内（调拨后）' }
+    consumers: [renderProducts, renderOrderTable, renderDeliveryTable, applyTransfers(库存候选/警示), kdDoImport]
+    risk: high
+    invariant_refs: [INV-001, INV-002]
+
+  - id: orders.status
+    name: 订单审核状态（自动部分）
+    kind: projection
+    storage: 落库于 entities.orders[].status（自动规则覆写「执行中/已完成」，保留手动态「已取消/已暂停」）
+    formula: "整单未交付合计 orderUndelTotal(o) <= 0 → '已完成'；否则 → '执行中'；跳过 '已取消'/'已暂停'"
+    recompute: syncOrderAutoStatus(silent)
+    file: index.html:2266
+    note: |
+      只对「执行中/已完成」生效；「已取消」/「已暂停」为手动状态不被覆盖。
+      自动变更时内部 save('orders') 且逐条 logOp（silent=true 时仅统计不记日志）。
+    callers:
+      - { file: 'index.html:2319', context: '返回变更条数（函数内）' }
+      - { file: 'index.html:2846', context: 'migrateOrderStatusData 内' }
+      - { file: 'index.html:2898', context: 'migrateOrderCalledQty 内' }
+      - { file: 'index.html:3345', context: 'saveOrder 保存后' }
+      - { file: 'js/import.js:486', context: 'kdDoImport 导入后' }
+      - { file: 'js/transfer.js:329', context: 'applyTransfers 调拨后' }
+    risk: medium
+    invariant_refs: [INV-010, INV-011, INV-012, INV-013]
+
+  - id: order.plannedUndelivered
+    name: 已计划未交付
+    kind: projection
+    storage: 不落库（每次渲染实时计算）
+    formula: 'Σ(该订单该产品交付计划.planQty) − Σ(名下排产单该产品入库累计 doneQty，排除已取消)'
+    recompute: buildPlannedUndelMap()
+    file: index.html:2493
+    key_model: '行级 key = orderId|L{orderLine}；无 orderLine 回退产品级 key = orderId|productId'
+    note: |
+      口径 2026-08-25.17：只跟「生产入库」走。调拨/导入初始的订单行 deliveredQty 不再参与减数。
+      独立单（deliveryIdx=null）不占交付计划额度、不计入。
+      排产单删除/取消后其入库自动移出减数（与全链路反向同步自洽）。
+    known_defect: '订单编辑增删行后 orderLine 索引漂移可能错位（代码注释 index.html:2490 已自陈，同 .24 dlLine 同款）'
+    callers: [{ file: 'index.html:2516', context: 'renderOrderTable 预计算' }]
+    consumers: [renderOrderTable(未交付列), renderProdPlan]
+    risk: medium
+    invariant_refs: [INV-014]
+
+  - id: delivery.scheduledStatus
+    name: 交付计划「已排产」标记
+    kind: projection
+    storage: 不落库（渲染实时计算）
+    formula: '由 productionPlans 中匹配 deliveryIdx 的记录实时推导'
+    recompute: renderDeliveryTable（渲染期）
+    file: index.html（renderDeliveryTable）
+    risk: low
+
+  - id: dashboard.kpi
+    name: 看板 KPI 数值
+    kind: projection
+    storage: 不落库（渲染实时计算）
+    formula: '由 products / orders / deliveries / productionPlans 实时聚合'
+    recompute: renderDashboard（渲染期）
+    file: index.html
+    risk: low
+
+  - id: order.calledQty
+    name: 销售订单明细「已调用」累计
+    kind: projection
+    storage: 落库于 entities.orders[].items[].calledQty
+    formula: '增量维护（非全量重算）：applyTransfers 对 out/in 侧销售行 ±qty（下限 0）；冲销产生反向记录自动滚回'
+    recompute: '无全量 recompute 函数；仅 migrateOrderCalledQty() 做一次性存量回填'
+    file: 'js/transfer.js:322-325（增量） / index.html:2286（存量回填 migrateOrderCalledQty）'
+    note: |
+      与 products.stock 不同，calledQty 是「增量维护 + 一次性迁移」模式，没有幂等全量重建函数。
+      这是本系统投影里最脆弱的一处：一旦 applyTransfers 的中途失败，无法通过重算自愈。
+    risk: high
+    invariant_refs: [INV-005, INV-020]
+
+  - id: products.deliveredTotal
+    name: 产品「已交付数量」视图列
+    kind: projection
+    storage: 不落库（复用 products.stock，与库存同源）
+    formula: '同 products.stock'
+    recompute: syncStockFromInvOrders()
+    file: index.html:3494
+    risk: low
+
+# ----------------------------------------------------------------------------
+# 命令（建议的目标形态；status 区分现状/目标）
+# ----------------------------------------------------------------------------
+commands:
+  - id: product.upsert
+    name: 新增/编辑产品
+    entry: saveProduct(idx)
+    status: 现状
+    writes: [products]
+    file: 'index.html:1908'
+    permission: { form: product, act: null }
+
+  - id: product.genOrder
+    name: 按产品批量生成库存订单
+    entry: bulkGenOrder()
+    status: 现状
+    writes: [orders, products, logs]
+    writes_note: 'products 仅在同步库存/状态时可能被写（需核实 bulkGenOrder 具体实现）'
+    permission: { form: product, act: 'product.genOrder' }
+    note: 生成库存订单后需同步 products.stock 与订单状态
+
+  - id: order.upsert
+    name: 订单保存（销售/库存通用）
+    entry: saveOrder(idx)
+    status: 现状
+    writes: [orders（主）, products（库存订单时经 syncStockFromInvOrders）, logs]
+    file: 'index.html:3270'
+    permission: { form: 'order_frame / order_inv', act: null }
+    see_also: flows.yaml#order.upsert
+
+  - id: order.delete
+    name: 删除订单
+    entry: delOrder(idx)
+    status: 现状
+    writes: [orders, products（库存订单时）, logs]
+    file: 'index.html:3423'
+    guards: ['已下推交付计划的订单禁删（hasDeliveryOf）', '销售订单有业务痕迹（已交付/已调用>0）禁删']
+    see_also: flows.yaml#order.delete
+
+  - id: order.deliver
+    name: 销售订单交付
+    entry: saleDeliverDlg() → saleDeliverSave(oi)
+    status: 现状
+    writes: [orders（主）, logs]
+    writes_not: [products —— 不改库存]
+    file: 'index.html:2751 / 2821'
+    permission: { form: order_frame, act: 'order_frame.saleDeliver' }
+    perspective_recompute: [projections.orders.status（经 syncOrderAutoStatus）]
+    guards: ['仅 1 张销售订单', '已取消/已暂停禁交付', '交付 ≤ min(未交付, saleMaxCallable)']
+    see_also: flows.yaml#order.deliver
+
+  - id: order.return
+    name: 销售订单退货
+    entry: saleReturnDlg(orderId) → saleReturnSave(orderId)
+    status: 现状
+    writes: [orders（主）, logs]
+    writes_not: [products —— 不改库存]
+    file: 'index.html:2852 / 2874'
+    permission: { form: order_frame, act: 'order_frame.saleReturn' }
+    perspective_recompute: [projections.orders.status（经 syncOrderAutoStatus）]
+    guards: ['退货 ≤ 当前已交付（可退货=已交付）', '同时下调 directDelivered 防负基数']
+    see_also: flows.yaml#order.return
+
+  - id: jindie.import
+    name: 金蝶 xlsx 导入销售订单
+    entry: kdDoImport()
+    status: 现状
+    writes: [products（新建产品时）, orders, logs]
+    file: 'js/import.js:423'
+    permission: { form: order_frame, act: 'order_frame.kingdeeImport' }
+    idempotency_key: "src='kingdee' + srcFile + 原始行号 三元组"
+    see_also: flows.yaml#jindie.import
+
+  - id: delivery.upsert
+    name: 交付计划保存
+    entry: saveDelivery(idx) → doSaveDelivery(d, idx)
+    status: 现状
+    writes: [deliveries, logs]
+    file: 'index.html:4766 / 4805'
+    permission: { form: delivery, act: null }
+    see_also: flows.yaml#delivery.upsert
+
+  - id: prodPlan.push
+    name: 从交付计划下推排产单
+    entry: prodPlanModal / saveProdPlan(idx<0)
+    status: 现状
+    writes: [productionPlans, logs]
+    file: 'index.html:4185'
+    permission: { form: prodPlan, act: 'delivery.delPushPlan' }
+    note: 禁止新增/复制（copyProdPlan 保留定义但无入口）；一行 qty>0 生成一张独立排产单
+
+  - id: prodPlan.upsert
+    name: 编辑排产单（含数量调整）
+    entry: saveProdPlan(idx>=0)
+    status: 现状
+    writes: [orders（状态变化时经 writebackInbound）, products, logs, productionPlans（主）]
+    file: 'index.html:4185'
+    permission: { form: prodPlan, act: 'prodPlan.ppEdit' }
+
+  - id: prodPlan.cancel
+    name: 取消/恢复排产单
+    entry: saveProdPlan(idx>=0) 内状态分支（index.html:4235-4241）
+    status: 现状
+    writes: [orders, products, productionPlans, logs]
+    note: '非取消 ↔ 已取消 时调 writebackInbound 回滚/重加（已取消不占交付额度）'
+
+  - id: prodPlan.delete
+    name: 删除排产单
+    entry: delProdPlan(i)
+    status: 现状
+    writes: [orders（扣回）, products, productionPlans, logs]
+    file: 'index.html:4293'
+    permission: { form: prodPlan, act: 'prodPlan.ppDel' }
+    guards: ["status 必须为 '待排产'（.29）"]
+
+  - id: productionReport.complete
+    name: 生产报工
+    entry: applyReport(pi, entries, items, worker)
+    status: 现状
+    writes: [productionPlans, orders, products, productionReports, logs]
+    file: 'index.html:4586'
+    permission: { form: prodPlan, act: 'prodPlan.ppReport' }
+    see_also: flows.yaml#productionReport.complete
+
+  - id: productionReport.edit
+    name: 编辑报工明细
+    entry: ppSaveReportEdits(id, ...)
+    status: 现状
+    writes: [productionPlans, productionReports, orders, products, logs]
+    file: 'index.html:3856（区块起点）'
+    permission: { form: prodPlan, act: 'prodPlan.ppReportEdit' }
+
+  - id: productionReport.delete
+    name: 删除单条报工
+    entry: ppDelReport(id)
+    status: 现状
+    writes: [productionPlans, productionReports, orders, products, logs]
+    file: 'index.html:3856（ppDelReport 定义处附近）'
+    permission: { form: prodPlan, act: 'prodPlan.ppReportEdit' }
+    see_also: flows.yaml#productionReport.delete
+
+  - id: transfer.call
+    name: 销售订单调用库存
+    entry: doCallStock(o) → applyTransfers('call', moves)
+    status: 现状
+    writes: [orders, products, transfers, logs]
+    file: 'js/transfer.js:207 → 224'
+    permission: { form: order_frame, act: 'order_frame.saleCall' }
+
+  - id: transfer.return
+    name: 销售订单退回库存
+    entry: doReturnStock(o) → applyTransfers('return', moves)
+    status: 现状
+    writes: [orders, products, transfers, logs]
+    file: 'js/transfer.js:271 → 291'
+    permission: { form: order_frame, act: 'order_frame.saleReturnStock' }
+
+  - id: transfer.conv
+    name: 库存→库存 跨料号改装
+    entry: doInvCallStock() → applyTransfers(null, moves, {type:'conv'})
+    status: 现状
+    writes: [orders, products, transfers, logs]
+    file: 'js/transfer.js:573 → 594'
+    permission: { form: order_inv, act: 'order_inv.invCall' }
+
+  - id: transfer.move
+    name: 库存→库存 同料号移库
+    entry: doInvCallStock() → applyTransfers(null, moves, {type:'move'})
+    status: 现状
+    writes: [orders, products, transfers, logs]
+    file: 'js/transfer.js:573 → 594'
+    permission: { form: order_inv, act: 'order_inv.invCall' }
+
+  - id: transfer.reverse
+    name: 冲销调拨记录
+    entry: reverseTransfer(id)
+    status: 现状
+    writes: [orders, products, transfers, logs]
+    file: 'js/transfer.js:355'
+    permission: { form: transfers, act: null }
+    note: '方向对调 + 类型翻转（trRevType）；原记录 reversed=true，不删原记录'
+
+  - id: inventory.rebuild
+    name: 库存全量重算
+    entry: syncStockFromInvOrders()
+    status: 现状
+    writes: [products]
+    file: 'index.html:3494'
+    permission: null
+    note: 幂等；可由任何调用方安全重复执行
+
+  - id: fields.save
+    name: 字段配置写入（无独立 UI 命令，仅迁移函数/恢复）
+    entry: '无独立入口 —— 由 normalizeFields / migrate* 系列 / restoreBackup 内联 save'
+    status: 现状
+    writes: [fields, fieldsDraft, fieldsAudit]
+    file: 'index.html:1976-1977（normalizeFields）/ 5924（restoreBackup）'
+    permission: { form: fields, act: null }
+    note: |
+      ⚠️ 现状修订（2026-09-09）：当前 build **不存在** saveFields / saveFieldsDraft / auditFields 函数，
+      NAV 中也无「字段设置」页签（index.html:717-731）。字段配置只能被启动期迁移函数与 restoreBackup 改写。
+      改字段行为请直接改 fields 的初值（defaultFields）或迁移函数。
+
+  - id: log.append
+    name: 写操作日志
+    entry: logOp(action, target, detail, field, oldv, newv)
+    status: 现状
+    writes: [logs]
+    file: 'js/logs.js:2'
+    note: '内部独立 save(''logs'')，不在调用方事务内'
+
+  - id: layout.save
+    name: 保存表格列布局
+    entry: saveLayout()
+    status: 现状
+    writes: [tblLayout]
+    file: 'index.html:1168'
+    permission: null
+
+  - id: auth.login
+    name: 登录
+    entry: POST /api/login
+    status: 现状
+    writes: [tokens（内存 Map，非持久化）]
+    file: 'server/server.js:133-143'
+    note: 'token 存内存，重启失效；存在默认凭据 admin123/123456'
+
+# ----------------------------------------------------------------------------
+# 未核实项（保留占位，待人工确认后再补）
+# ----------------------------------------------------------------------------
+unverified:
+  - id: UV-001
+    subject: 'renderDashboard / 看板 KPI 的精确聚合公式与调用点'
+    reason: '本次未展开渲染层代码，仅确认「不落库、渲染期实时计算」'
+    status: 未核实
+  - id: UV-002
+    subject: 'js/prodplan-core.js 中 ppTotalOfLine / ppPlannedOfLine / ppStepDone 的完整实现细节'
+    reason: '仅确认其被 saveProdPlan 用于校验，未逐行核对'
+    status: 未核实
+  - id: UV-003
+    subject: 'orderLine / dlLine / directDelivered 在订单编辑增删行后的实际漂移复现路径'
+    reason: '代码注释自陈存在风险，本次未构造复现用例'
+    status: 未核实

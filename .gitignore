@@ -12,3 +12,16 @@ server/users.json
 server/backups/
 deploy_tencent/
 rollback.sh
+
+# 本地备份目录（含线上后端副本 online_server_*.js.bak 等），绝不入库
+backups/
+*.bak
+*.bak[0-9]*
+
+# 一次性运维脚本（含数据批量操作，仅本地执行）
+_*.js
+!js/**
+_inv_*.js
+
+# 工作区记忆（本地数据，非代码资产）
+.workbuddy/

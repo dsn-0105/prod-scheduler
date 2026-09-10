@@ -365,13 +365,23 @@ let serverData=null;
 let serverRevs={};
 let syncTimer=null;
 
+/* 【安全 P0·③】token 统一走 Authorization: Bearer 请求头，不再拼到 URL query
+   （原因：query 会进 nginx access log / 浏览器历史 / Referer 头）。
+   调用方只需传 path 与 opts，本函数自动注入鉴权头。 */
+function authHeaders(extra){
+  const h=Object.assign({},extra||{});
+  if(authToken)h['Authorization']='Bearer '+authToken;
+  return h;
+}
 async function apiReq(path,opts){
+  opts=opts||{};
+  opts.headers=authHeaders(opts.headers);
   const r=await fetch(API_BASE+path,opts);
   if(r.status===401){showLogin();throw new Error('unauthorized');}
   return r;
 }
 async function pullAll(){
-  const r=await apiReq('/data?token='+authToken);
+  const r=await apiReq('/data');
   const j=await r.json();
   serverData=j.data;serverRevs=j.revs||{};
 }
@@ -385,10 +395,19 @@ const DB={
     }
     try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}
   },
+  /* 【安全 P0·④】保存时携带 expectedRev（乐观锁）：
+     服务端 rev 与本地不同 → 409，说明他人已改过该表，本次保存被拒绝并提示刷新，
+     **不做自动合并/自动重试**（宁可让用户重做，也不做可能算错的合并）。 */
   async set(k,v,silent){
     if(API_BASE){
       try{
-        const r=await apiReq('/save?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v})});
+        const r=await apiReq('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v,expectedRev:(serverRevs[k]||0)})});
+        if(r.status===409){
+          /* 冲突：先拉最新数据让页面显示当前真实状态，再提示用户刷新后重做 */
+          try{await pullAll();}catch(_e){}
+          if(!silent)alert('数据已被他人修改，请刷新后重新操作。\n（本次保存未生效，为避免覆盖他人改动已拦截）');
+          return false;
+        }
         if(!r.ok){
           if(!silent){
             let msg='保存失败('+r.status+')';
@@ -397,6 +416,12 @@ const DB={
           }
           return false;
         }
+        /* 关键：用服务端返回的新 rev 刷新本地版本号，否则下一次保存会立刻误报 409 */
+        try{
+          const j=await r.json();
+          if(j&&typeof j.rev==='number')serverRevs[k]=j.rev;
+          else serverRevs[k]=(serverRevs[k]||0)+1;
+        }catch(_e){serverRevs[k]=(serverRevs[k]||0)+1;}
         if(serverData)serverData[k]=v;
         return true;
       }catch(e){if(!silent&&e&&e.message!=='unauthorized')alert('保存失败（网络异常）：'+e.message);return false;}
@@ -409,8 +434,7 @@ const DB={
 async function pollRevs(){
   if(!API_BASE||!authToken)return;
   try{
-    const r=await fetch(API_BASE+'/revs?token='+authToken);
-    if(r.status===401){showLogin();return;}
+    const r=await apiReq('/revs');
     const j=await r.json();
     let changed=false;
     for(const k in j.revs){if(j.revs[k]!==(serverRevs[k]||0)){changed=true;break;}}
@@ -456,12 +480,15 @@ async function doLogin(){
     const j=await r.json();
     if(!r.ok){err.textContent=j.error||'登录失败';return;}
     authToken=j.token;
-    currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{}};
+    /* 【安全 P0·②】记录服务端下发的「待改密」标记（存量用户无该字段 → false） */
+    currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{},mustChangePwd:j.mustChangePwd===true};
     try{sessionStorage.setItem(KEY+'token',authToken);}catch(e){}
     serverData=null;serverRevs={};
     const lb=document.getElementById('loginBox');if(lb)lb.style.display='none';
     try{await pullAll();}catch(e){}
     await initApp();
+    /* 【安全 P0·②】初始/被重置的弱口令登录后提示尽快改密（不阻断操作，避免影响业务） */
+    if(j.mustChangePwd){setTimeout(function(){alert('当前账号使用的是初始密码或已被重置的密码，存在安全风险。\n请尽快通过右上角「修改密码」修改为个人密码。');},300);}
   }catch(e){err.textContent='无法连接服务器';}
 }
 function logout(){
@@ -5017,7 +5044,7 @@ function delTpl(i){
 const PERM_FORMS={products:'产品主数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人｜.122：包装排产权限点移除 */
 async function loadUsers(){
   try{
-    const r=await apiReq('/users?token='+authToken);
+    const r=await apiReq('/users');
     const j=await r.json();
     window.__usersCache=j.users||[];
   }catch(e){window.__usersCache=[];}
@@ -5158,7 +5185,7 @@ async function saveUser(username){
   const payload={username:uname||username,name:name||uname||username,role:role,status:status,perms:perms};
   if(pwd)payload.password=pwd;
   try{
-    const r=await apiReq('/users?token='+authToken,{method:username?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const r=await apiReq('/users',{method:username?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json();
     if(!r.ok){alert(j.error||'保存失败');return;}
     closeModal();
@@ -5170,7 +5197,7 @@ async function saveUser(username){
 async function delUser(username){
   if(!confirm('确认删除员工「'+username+'」？此操作不可恢复。'))return;
   try{
-    const r=await apiReq('/users?token='+authToken+'&username='+encodeURIComponent(username),{method:'DELETE'});
+    const r=await apiReq('/users?username='+encodeURIComponent(username),{method:'DELETE'});
     const j=await r.json();
     if(!r.ok){alert(j.error||'删除失败');return;}
     await loadUsers();renderContent();
@@ -5191,9 +5218,10 @@ async function savePwd(){
   if(n1.length<6){alert('新密码至少6位');return;}
   if(n1!==n2){alert('两次新密码不一致');return;}
   try{
-    const r=await apiReq('/change-pwd?token='+authToken,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old:old,new:n1})});
+    const r=await apiReq('/change-pwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old:old,new:n1})});
     const j=await r.json();
     if(!r.ok){alert(j.error||'修改失败');return;}
+    currentUser=currentUser||{};delete currentUser.mustChangePwd;
     alert('密码已修改');closeModal();
   }catch(e){alert('修改失败');}
 }
@@ -5963,9 +5991,9 @@ async function initApp(){
   /* 服务器模式：刷新页面后恢复当前用户信息（权限） */
   if(API_BASE&&!currentUser){
     try{
-      const r=await apiReq('/me?token='+authToken);
+      const r=await apiReq('/me');
       const j=await r.json();
-      currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{}};
+      currentUser={username:j.username,name:j.name,role:j.role,perms:j.perms||{},mustChangePwd:j.mustChangePwd===true};
     }catch(e){}
   }
   products=await DB.get('products',[]);
@@ -6119,7 +6147,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-09.122</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-10.123</div>
 </body>
 </html>
 

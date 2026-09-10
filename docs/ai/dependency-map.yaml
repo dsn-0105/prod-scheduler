@@ -1,0 +1,890 @@
+# ============================================================================
+# dependency-map.yaml —— 依赖索引（本手册最重要的一份）
+# 系统：辰微生产排产系统（prod-scheduler）
+# 对应 build：2026-09-09.122
+#
+# 用途：按 changed id 直接反查出受影响方，不用扫全仓库。
+# 用法：先在 reverse_index 里查 changed id → 拿到边 id → 只展开这些边 → 得到受影响节点。
+#
+# kind 语义（边类型）：
+#   derives  —— from 的数据被 to 全量/增量推导出来（to 是投影）
+#   writes   —— from 的执行会修改 to 的持久化数据
+#   reads    —— to 在执行时需要读取 from 的数据（只读，但改 from 的字段会改变 to 的行为）
+#   guards   —— from 的取值会阻断/放行 to 的执行（校验/闸门）
+#   triggers —— from 的变化会触发 to 执行（副作用调用）
+#
+# sync: true = 同一调用栈内同步完成（但不等于同事务！本系统无事务，见 invariants.yaml#INV-020）
+# risk: high / medium / low
+# 每条边必须带 file:行号 证据。
+# ============================================================================
+version: 1
+updated: '2026-09-09'
+build: '2026-09-09.122'
+transaction_model: 无（每次 save/DB.set 都是一次独立的整键替换网络写，失败不回滚）
+
+# ----------------------------------------------------------------------------
+# 节点（与 domain-map.yaml 的实体/投影 id 对应，便于交叉引用）
+# ----------------------------------------------------------------------------
+nodes:
+  - { id: entities.products, map: domain-map.yaml#entities.products, kind: fact }
+  - { id: entities.orders, map: domain-map.yaml#entities.orders, kind: fact }
+  - { id: entities.orders.items.deliveredQty, kind: field, of: entities.orders }
+  - { id: entities.orders.items.calledQty, kind: field, of: entities.orders }
+  - { id: entities.orders.items.stockMax, kind: field, of: entities.orders }
+  - { id: entities.orders.items.directDelivered, kind: field, of: entities.orders }
+  - { id: entities.orders.status, kind: field, of: entities.orders }
+  - { id: entities.deliveries, map: domain-map.yaml#entities.deliveries, kind: fact }
+  - { id: entities.deliveries.items.orderLine, kind: field, of: entities.deliveries }
+  - { id: entities.productionPlans, map: domain-map.yaml#entities.productionPlans, kind: fact }
+  - { id: entities.productionPlans.items.doneQty, kind: field, of: entities.productionPlans }
+  - { id: entities.productionPlans.items.dlLine, kind: field, of: entities.productionPlans }
+  - { id: entities.productionReports, map: domain-map.yaml#entities.productionReports, kind: appendonly }
+  - { id: entities.transfers, map: domain-map.yaml#entities.transfers, kind: appendonly }
+  - { id: entities.logs, map: domain-map.yaml#entities.logs, kind: appendonly }
+  - { id: entities.processTemplates, map: domain-map.yaml#entities.processTemplates, kind: fact }
+  - { id: entities.fields, map: domain-map.yaml#entities.fields, kind: fact }
+  - { id: projections.products.stock, map: domain-map.yaml#projections.products.stock, kind: projection }
+  - { id: projections.orders.status, map: domain-map.yaml#projections.orders.status, kind: projection }
+  - { id: projections.order.plannedUndelivered, map: domain-map.yaml#projections.order.plannedUndelivered, kind: projection }
+  - { id: projections.order.calledQty, map: domain-map.yaml#projections.order.calledQty, kind: projection }
+  - { id: entities.products.stock, map: domain-map.yaml#projections.products.stock, kind: field, of: entities.products, note: '别名：products[].stock 字段，语义等于 projections.products.stock（落到事实表同一字段的投影）' }
+  - { id: commands.transfer.apply, map: flows.yaml#transfer.apply, kind: command }
+  - { id: commands.productionReport.complete, map: flows.yaml#productionReport.complete, kind: command }
+  - { id: commands.jindie.import, map: flows.yaml#jindie.import, kind: command }
+  - { id: commands.order.upsert, map: flows.yaml#order.upsert, kind: command }
+  - { id: commands.order.delete, map: flows.yaml#order.delete, kind: command }
+  - { id: commands.order.deliver, map: flows.yaml#order.deliver, kind: command }
+  - { id: commands.order.return, map: flows.yaml#order.return, kind: command }
+  - { id: commands.system.bootstrap, map: flows.yaml#system.bootstrap, kind: command }
+  - { id: commands.system.restore, map: flows.yaml#system.restore, kind: command }
+  - { id: commands.system.clear, map: flows.yaml#system.clear, kind: command }
+  - { id: migrations.backfillInvDeliveredFromStock, map: flows.yaml#system.bootstrap, kind: command, note: '一次性迁移：按订单量比例把 products.stock 反填到库存订单行 deliveredQty（幂等）' }
+
+# ----------------------------------------------------------------------------
+# 边（依赖关系）
+# ----------------------------------------------------------------------------
+edges:
+
+  # ===== A. 库存投影链（最高频，风险最高）=====
+  - id: E-001
+    from: entities.orders.items.deliveredQty
+    to: projections.products.stock
+    kind: derives
+    mechanism: "syncStockFromInvOrders()：map[p.id] += num(it.deliveredQty)（仅库存订单） → products[].stock = map[p.id] || 0（全量对齐）"
+    sync: true
+    full_alignment: true
+    file: 'index.html:3494'
+    risk: high
+    note: '全量对齐而非增量：无库存订单支撑的产品库存会被归零。手工改 products.stock 会在下次重算时被抹掉。'
+    invariant_refs: [INV-001, INV-002]
+
+  - id: E-002
+    from: projections.products.stock
+    to: entities.products
+    kind: writes
+    mechanism: "syncStockFromInvOrders() 末尾 if(changed) save('products', products)"
+    sync: true
+    file: 'index.html:3503-3507'
+    risk: high
+    note: '投影回写事实表——products.stock 是唯一「投影落到事实表同一个字段」的案例'
+
+  - id: E-003
+    from: commands.transfer.apply
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "applyTransfers：out.inv → deliveredQty -= qty；in.inv → deliveredQty += qty（允许负数=欠货）"
+    sync: true
+    file: 'js/transfer.js:322-324'
+    risk: high
+    invariant_refs: [INV-002, INV-003]
+
+  - id: E-004
+    from: commands.transfer.apply
+    to: projections.order.calledQty
+    kind: writes
+    mechanism: "applyTransfers：out.sales → calledQty = max(0, calledQty - qty)；in.sales → calledQty = max(0, calledQty + qty)"
+    sync: true
+    file: 'js/transfer.js:323 / 325'
+    risk: high
+    note: '向下限 0 截断 —— 截断会静默吞掉差额，导致 calledQty 与实际调拨台账 Σ 不一致（不可自愈，无全量重算函数）'
+    invariant_refs: [INV-005]
+
+  - id: E-005
+    from: commands.transfer.apply
+    to: projections.products.stock
+    kind: triggers
+    mechanism: "applyTransfers 内联调 syncStockFromInvOrders()"
+    sync: true
+    file: 'js/transfer.js:328'
+    risk: high
+    chain_of: E-003
+    note: '传递链：applyTransfers → orders.deliveredQty → products.stock'
+
+  - id: E-006
+    from: commands.transfer.apply
+    to: projections.orders.status
+    kind: triggers
+    mechanism: "applyTransfers 内联调 syncOrderAutoStatus()"
+    sync: true
+    file: 'js/transfer.js:329'
+    risk: medium
+    chain_of: E-003
+
+  - id: E-007
+    from: commands.transfer.apply
+    to: entities.transfers
+    kind: writes
+    mechanism: "moves.forEach → transfers.unshift({...}) → DB.set('transfers', transfers, true)"
+    sync: false
+    file: 'js/transfer.js:336-348'
+    risk: high
+    note: |
+      ⚠️ 这是本系统最典型的一致性缺口：save('orders') 在 :325（独立网络写 A），
+      DB.set('transfers') 在 :348（独立网络写 B）。两者之间失败 → orders 已改、台账未落账，
+      :349-351 仅有 alert 提示，无回滚。见 invariants.yaml#INV-020。
+
+  - id: E-008
+    from: entities.transfers
+    to: projections.order.calledQty
+    kind: reads
+    mechanism: "migrateOrderCalledQty()：从 transfers（未冲销记录）统计 type=call 累加 / type=return 扣减 → 回填 calledQty"
+    sync: true
+    file: 'index.html:2286'
+    risk: medium
+    note: '启动期一次性迁移（幂等：已有 calledQty 的行跳过）。改了 transfers 的结构/类型枚举必须同步改这里。'
+    invariant_refs: [INV-005]
+
+  - id: E-009
+    from: projections.order.calledQty
+    to: entities.orders
+    kind: writes
+    mechanism: "migrateOrderCalledQty / applyTransfers 均最终 save('orders', orders)"
+    sync: true
+    file: 'index.html:2311 / js/transfer.js:327'
+    risk: medium
+
+  # ===== B. 订单状态机链 =====
+  - id: E-010
+    from: entities.orders.items.deliveredQty
+    to: projections.orders.status
+    kind: derives
+    mechanism: "orderUndelTotal(o) = Σ max(0, 数量 - deliveredQty)（数量：库存订单取 stockMax，销售取 orderQty） → <=0 则 '已完成'，否则 '执行中'；跳过 '已取消'/'已暂停'"
+    sync: true
+    file: 'index.html:2261-2278'
+    risk: high
+    invariant_refs: [INV-010, INV-011, INV-012, INV-013]
+
+  - id: E-011
+    from: projections.orders.status
+    to: entities.orders
+    kind: writes
+    mechanism: "syncOrderAutoStatus 内 if(changed.length) save('orders', orders) + 逐条 logOp('状态变更', ...)"
+    sync: true
+    file: 'index.html:2273-2277'
+    risk: medium
+
+  - id: E-012
+    from: entities.orders.status
+    to: entities.deliveries
+    kind: guards
+    mechanism: "已取消/已暂停的订单禁止下推交付计划（前端入口处校验）"
+    sync: true
+    file: 'index.html（openDeliveryModal / 交付下推入口）'
+    risk: medium
+    invariant_refs: [INV-016]
+    status: 未核实
+    note: '本次未逐行定位该守卫的精确行号；已确认业务规则存在（见 inv-spec 铁律与 delOrder 相关提示），落笔前需补 file:行号'
+
+  - id: E-013
+    from: entities.orders.status
+    to: commands.transfer.apply
+    kind: guards
+    mechanism: "已取消/已暂停的订单禁止调拨退回（doReturnStock 内校验 o.status）"
+    sync: true
+    file: 'js/transfer.js:239-240'
+    risk: medium
+    invariant_refs: [INV-017]
+
+  - id: E-014
+    from: entities.orders.status
+    to: commands.jindie.import
+    kind: guards
+    mechanism: "已取消/已暂停的订单禁止被金蝶导入覆盖（kdDoImport 内 blockedCancel 分支）"
+    sync: true
+    file: 'js/import.js:476-477'
+    risk: medium
+    invariant_refs: [INV-018]
+
+  # ===== C. 订单保存命令 =====
+  - id: E-015
+    from: entities.orders
+    to: entities.orders.items.deliveredQty
+    kind: reads
+    mechanism: "saveOrder 按行序从旧行补回 directDelivered（须产品一致，防索引漂移错位）"
+    sync: true
+    file: 'index.html:3321-3323'
+    risk: medium
+    note: '字段重建会丢未在弹窗中出现的内部字段（directDelivered），必须靠行序补回——这是索引漂移风险的来源之一'
+
+  - id: E-016
+    from: entities.orders.items.directDelivered
+    to: projections.order.calledQty
+    kind: guards
+    mechanism: "directDelivered（期初直接交付基数）在导入时标记，避免行级上限把全部已交付当作已消耗调用额度"
+    sync: true
+    file: 'js/import.js:463-466'
+    risk: medium
+    note: |
+      .108 引入。kdDoImport 中：if(_impDq>0 && !(num(it.calledQty)>0)) _impItem.directDelivered=_impDq。
+      删除 directDelivered 或改变其语义会让「已交付」被误判为「已消耗调用额度」，导致后续交付被拦。
+    invariant_refs: [INV-006]
+
+  - id: E-017
+    from: entities.orders
+    to: entities.products
+    kind: reads
+    mechanism: "lookupRef + 渲染期 prodMap 反查产品（saveOrder 引字段重算、renderOrderTable 显示规格/型号/单位）"
+    sync: true
+    file: 'index.html:3327-3328'
+    risk: low
+
+  - id: E-018
+    from: entities.fields
+    to: entities.orders
+    kind: guards
+    mechanism: "saveOrder 遍历 fields.order 收集表头/表体字段；isLineField 区分；orderType 字段缺失时靠代码兜底补回"
+    sync: true
+    file: 'index.html:3271-3283'
+    risk: high
+    note: |
+      强耦合：saveOrder 的「收集什么」完全由 fields.order 决定。在「字段设置」里删/改字段会静默改变订单保存效果。
+      .88 隐藏了 orderType 控件后，.93 需要专门兜底代码；.92 把库存订单数量改成取 stockMax，同样是 fields 驱动。
+    invariant_refs: [INV-019]
+
+  # ===== D. 报工回写链（最长跨表链）=====
+  - id: E-019
+    from: entities.productionPlans.items.doneQty
+    to: entities.orders.items.deliveredQty
+    kind: derives
+    mechanism: "writebackInbound(orderId, productId, delta, orderLine)：it.deliveredQty = num(it.deliveredQty) + delta"
+    sync: true
+    file: 'index.html:4569-4583'
+    risk: high
+    invariant_refs: [INV-004, INV-007]
+
+  - id: E-020
+    from: entities.orders
+    to: entities.orders.items.deliveredQty
+    kind: guards
+    mechanism: "writebackInbound 内 if(orderTypeOf(o)!=='库存订单')return —— 仅回写库存订单"
+    sync: true
+    file: 'index.html:4580'
+    risk: high
+    note: |
+      ⚠️ 注释与代码矛盾：index.html:4615 的注释写「销售/库存订单都回写」，
+      但 4580 行代码实际只回写库存订单（.97 起销售订单由「交付/退货」驱动）。
+      这是注释滞后 —— 手册以代码为准。修改此处会让销售订单被排产单二次计价。
+    invariant_refs: [INV-008]
+
+  - id: E-021
+    from: entities.orders.items.deliveredQty
+    to: entities.products
+    kind: triggers
+    mechanism: "writebackInbound 末尾调 syncStockFromInvOrders()"
+    sync: true
+    file: 'index.html:4583'
+    risk: high
+    chain_of: E-019
+
+  - id: E-022
+    from: commands.productionReport.complete
+    to: entities.productionPlans
+    kind: writes
+    mechanism: "entries 遍历改 it.steps[step]（done/plan）；入库类工序 it.doneQty += qty；p.status '待排产'→'生产中'；save('productionPlans')"
+    sync: true
+    file: 'index.html:4593-4607 / 4612-4614'
+    risk: high
+
+  - id: E-023
+    from: commands.productionReport.complete
+    to: entities.orders.items.deliveredQty
+    kind: triggers
+    mechanism: "inboundDelta.forEach(r => writebackInbound(p.orderId, r.productId, r.qty, r.orderLine))"
+    sync: true
+    file: 'index.html:4616'
+    risk: high
+    note: 'inboundDelta 行级聚合键 = productId + dlLine（dlLine=null 时按 productId 合并）'
+
+  - id: E-024
+    from: commands.productionReport.complete
+    to: entities.productionReports
+    kind: writes
+    mechanism: "productionReports.push(rec) → save('productionReports')"
+    sync: true
+    file: 'index.html:4627-4628'
+    risk: high
+    note: '与 E-022 / E-023 是三次独立网络写，任一失败即不一致（见 INV-020）'
+
+  - id: E-025
+    from: entities.productionPlans
+    to: entities.productionReports
+    kind: reads
+    mechanism: "ppDelReport/ppSaveReportEdits 通过 rec.planId 反查 productionPlans 中的排产单"
+    sync: true
+    file: 'index.html:3764 / 3860'
+    risk: medium
+    note: '弱引用：productionPlans 被删后 rec.planId 成为悬空引用（ppDelReport 用 find 返回 undefined 后静默跳过回退）'
+
+  # ===== E. 交付计划链 =====
+  - id: E-026
+    from: entities.deliveries.items.orderLine
+    to: projections.order.plannedUndelivered
+    kind: derives
+    mechanism: "buildPlannedUndelMap：key = x.orderLine != null ? (d.orderId+'|L'+x.orderLine) : (d.orderId+'|'+(x.productId||''))"
+    sync: true
+    file: 'index.html:2497'
+    risk: high
+    invariant_refs: [INV-014, INV-015]
+
+  - id: E-027
+    from: entities.productionPlans
+    to: projections.order.plannedUndelivered
+    kind: derives
+    mechanism: "buildPlannedUndelMap：遍历 productionPlans，跳过 status='已取消' 与 deliveryIdx!==di；m[k].done += ppDoneOf(y)"
+    sync: true
+    file: 'index.html:2501-2502'
+    risk: high
+
+  - id: E-028
+    from: entities.productionPlans.items.doneQty
+    to: projections.order.plannedUndelivered
+    kind: derives
+    mechanism: "ppDoneOf(y) 取该行入库累计，作为减数"
+    sync: true
+    file: 'index.html:2514'
+    risk: high
+
+  - id: E-029
+    from: entities.deliveries
+    to: entities.productionPlans
+    kind: guards
+    mechanism: "saveProdPlan 校验：本次排产 ≤ 未排产（ppTotalOfLine/ppPlannedOfLine）；且不低于已完成（ppStepDone）"
+    sync: true
+    file: 'index.html:4208-4210'
+    risk: high
+    invariant_refs: [INV-021, INV-022]
+
+  - id: E-030
+    from: entities.productionPlans
+    to: entities.deliveries
+    kind: reads
+    mechanism: "productionPlans[].deliveryIdx 是 deliveries 的数组索引——直接引用"
+    sync: true
+    file: 'index.html:2502'
+    risk: high
+    note: |
+      ⚠️ 高危弱引用：deliveryIdx 是数组下标，不是稳定 id。
+      delDelivery 使用 deliveries.splice(idx,1) 删除后，所有 > idx 的 deliveryIdx 全部指向错误的交付计划，
+      且 buildPlannedUndelMap 会静默算错「已计划未交付」。目前无重建/修复函数。
+    invariant_refs: [INV-023]
+
+  # ===== F. 排产单删除/取消链 =====
+  - id: E-031
+    from: commands.productionReport.complete
+    to: entities.orders
+    kind: reads
+    mechanism: "writebackInbound 通过 orders.find(x => x.id === orderId) 定位订单，再按 orderLine / productId 定位明细"
+    sync: true
+    file: 'index.html:4571-4576'
+    risk: medium
+
+  - id: E-032
+    from: entities.productionPlans.items.dlLine
+    to: entities.orders.items.deliveredQty
+    kind: derives
+    mechanism: "applyReport 中 rec.orderLine = ppOrderLineOf(p, it)：排产单行 dlLine → 交付计划行 orderLine → 订单行索引"
+    sync: true
+    file: 'index.html:4602-4606'
+    risk: high
+    note: '三级索引传递（排产行 → 交付行 → 订单行），任一级索引漂移都会导致回写到错误订单行'
+
+  - id: E-033
+    from: entities.fields
+    to: entities.productionPlans
+    kind: reads
+    mechanism: "stepsDefOf(p, it) 依据 processTemplates / fields 推导工序定义；ppEnsureSteps 补键"
+    sync: true
+    file: 'index.html:4597'
+    risk: medium
+
+  - id: E-034
+    from: entities.processTemplates
+    to: entities.productionPlans
+    kind: guards
+    mechanism: "products[].processTpl → stepsDefOf 决定排产单的工序集合；改模板影响后续下推"
+    sync: true
+    file: 'index.html（stepsDefOf）'
+    risk: medium
+    status: 未核实
+    note: '已确认调用关系；未逐行核对 stepsDefOf 实现（在 js/prodplan-core.js 或 index.html）'
+
+  # ===== G. 金蝶导入链 =====
+  - id: E-035
+    from: commands.jindie.import
+    to: entities.products
+    kind: writes
+    mechanism: "未知编码决策=新建 → newProducts.push(np) → products.push.apply(products, newProducts) → save('products')"
+    sync: true
+    file: 'js/import.js:457-458 / 484'
+    risk: high
+    note: '新建产品 stock=0 / dailyCap=0，需人工补全（导入完成 alert 中明确提示）'
+
+  - id: E-036
+    from: commands.jindie.import
+    to: entities.orders
+    kind: writes
+    mechanism: "覆盖时 orders.splice(exIdx,1)；随后 orders.push.apply(orders,newOrders) → save('orders')"
+    sync: true
+    file: 'js/import.js:478 / 483-485'
+    risk: high
+    note: |
+      splice 导致索引漂移 → 导入末尾 clearSel('order_frame') 清理勾选（.5 修复）。
+      这是同一类问题的既有补丁，说明「数组索引即主键」是本系统的系统性脆弱点。
+
+  - id: E-037
+    from: commands.jindie.import
+    to: projections.orders.status
+    kind: triggers
+    mechanism: "kdDoImport 末尾调 syncOrderAutoStatus()（Excel 已交付全量 → 已完成）"
+    sync: true
+    file: 'js/import.js:486'
+    risk: medium
+
+  - id: E-038
+    from: entities.orders
+    to: commands.jindie.import
+    kind: guards
+    mechanism: "三元组判重 src='kingdee'+srcFile+原始行号 → 弹「跳过 / 覆盖」选择；已取消/已暂停订单禁覆盖"
+    sync: true
+    file: 'js/import.js:437 / 473 / 477'
+    risk: high
+    invariant_refs: [INV-018, INV-024]
+
+  # ===== H. 权限与日志（横切）=====
+  - id: E-039
+    from: entities.fields
+    to: commands.transfer.apply
+    kind: guards
+    mechanism: "前端 needAct / canAct / canWriteForm 按 FORM_ACTS + perms 门控各调拨入口"
+    sync: true
+    file: 'index.html:496-516'
+    risk: medium
+    note: '前端门控；server 侧仅做表单级 canWrite（transfers 在 SYSTEM_KEYS 中 → 登录用户均可写）'
+
+  - id: E-040
+    from: entities.transfers
+    to: entities.logs
+    kind: writes
+    mechanism: "transfer.call/return/conv/move 在调用方 logOp；reverseTransfer 内 logOp('冲销',...)"
+    sync: false
+    file: 'js/transfer.js:225 / 292 / 595 / 383'
+    risk: low
+    note: 'logOp 是独立网络写，失败不影响主流程（也不记日志）'
+
+  - id: E-041
+    from: commands.transfer.apply
+    to: entities.logs
+    kind: writes
+    mechanism: '4 个调用点各自的 logOp（applyTransfers 本身不记日志）'
+    sync: false
+    file: 'js/transfer.js:225, 292, 383, 595'
+    risk: low
+
+# ===== I. 销售订单「交付 / 退货」链（单表命令，但触发订单状态投影重算）=====
+# 说明：这一类是「只写 orders 单表」的命令，不跨表、不写库存，
+#       因此容易被「跨表命令」视角遗漏；但它们会触发 syncOrderAutoStatus()
+#       （投影重算），属于必须登记的写入方。
+  - id: E-042
+    from: commands.order.deliver
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "saleDeliverSave：o.items[u.li].deliveredQty = num(...) + u.qty（行级增量 +，仅销售订单）"
+    sync: true
+    file: 'index.html:2844'
+    risk: high
+    invariant_refs: [INV-030]
+    note: |
+      ⚠️ 销售订单交付【不改库存】：与 E-003（调拨）/ E-019（报工回写）的关键区别——
+      本路径只改 orders.items[].deliveredQty，随后【不调用】syncStockFromInvOrders()，
+      因此对 products.stock 无影响（销售订单行本来就参与库存投影）。
+      行级校验（.108）：本次交付 ≤ min(未交付, saleMaxCallable(it))，见 index.html:2831-2843。
+
+  - id: E-043
+    from: commands.order.deliver
+    to: entities.orders
+    kind: writes
+    mechanism: "saleDeliverSave 内 save('orders', orders)"
+    sync: true
+    file: 'index.html:2845'
+    risk: high
+
+  - id: E-044
+    from: commands.order.deliver
+    to: projections.orders.status
+    kind: triggers
+    mechanism: "saleDeliverSave 末尾内联调 syncOrderAutoStatus()（交付使未交付合计降至 0 → 自动「已完成」）"
+    sync: true
+    file: 'index.html:2846'
+    risk: high
+    chain_of: E-042
+    invariant_refs: [INV-011]
+
+  - id: E-045
+    from: commands.order.deliver
+    to: entities.logs
+    kind: writes
+    mechanism: "logOp('新增','销售订单','交付「'+o.id+'」...')"
+    sync: false
+    file: 'index.html:2847'
+    risk: low
+
+  - id: E-046
+    from: commands.order.return
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "saleReturnSave：_it.deliveredQty = max(0, num(...) - u.qty)；并同步下调 directDelivered = min(directDelivered, deliveredQty)（防负基数/超额豁免）"
+    sync: true
+    file: 'index.html:2891-2895'
+    risk: high
+    invariant_refs: [INV-006, INV-030]
+    note: '同类关键区别：退货同样【不改库存】。可退货上限 = 当前已交付（maxR = num(it.deliveredQty)），见 index.html:2883。'
+
+  - id: E-047
+    from: commands.order.return
+    to: entities.orders
+    kind: writes
+    mechanism: "saleReturnSave 内 save('orders', orders)"
+    sync: true
+    file: 'index.html:2897'
+    risk: high
+
+  - id: E-048
+    from: commands.order.return
+    to: projections.orders.status
+    kind: triggers
+    mechanism: "saleReturnSave 末尾内联调 syncOrderAutoStatus()（退货使未交付合计回升 → 「已完成」可能退回「执行中」）"
+    sync: true
+    file: 'index.html:2898'
+    risk: high
+    chain_of: E-046
+
+  - id: E-060
+    from: commands.order.upsert
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "saveOrder：遍历 #orderItemsTbl 重建 items，行内 deliveredQty 取自表单（f.type==='number' → num(el.value)），整体替换 o.items"
+    sync: true
+    file: 'index.html:3305-3314'
+    risk: high
+    invariant_refs: [INV-024]
+    note: |
+      订单保存是 deliveredQty 的「整体重建」写入方：它不是增量、而是把弹窗里的值直接覆盖到该行。
+      因此订单编辑会【覆盖】该行此前的交付累计——这正是「订单编辑也会改变已交付量」的隐藏入口，
+      容易被「只有交付/调拨/报工才改 deliveredQty」的直觉误导。
+      相关：E-015（重建时按行序补回 directDelivered，防索引漂移）。
+
+  - id: E-049
+    from: commands.order.upsert
+    to: projections.orders.status
+    kind: triggers
+    mechanism: "saveOrder 末尾 syncOrderAutoStatus()（:3345）——按未交付合计兜底校正状态"
+    sync: true
+    file: 'index.html:3345'
+    risk: medium
+    note: '该调用点已见于 flows.yaml#order.upsert（write_set order 5），此处补登记为依赖边。'
+
+  - id: E-050
+    from: commands.order.upsert
+    to: projections.products.stock
+    kind: triggers
+    mechanism: "saveOrder：if(o.orderType==='库存订单') syncStockFromInvOrders()"
+    sync: true
+    file: 'index.html:3346'
+    risk: high
+
+  - id: E-051
+    from: commands.order.delete
+    to: projections.products.stock
+    kind: triggers
+    mechanism: "delOrder：if(del && orderTypeOf(del)==='库存订单') syncStockFromInvOrders()（删除库存订单后重算产品库存）"
+    sync: true
+    file: 'index.html:3442'
+    risk: high
+
+# ===== J. 库存打通一次性迁移（写单表 orders，但触发投影重算）=====
+  - id: E-052
+    from: migrations.backfillInvDeliveredFromStock
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "按订单量比例把 products.stock 反填到库存订单行 deliveredQty（无 orderQty 时均分，余数给首行）"
+    sync: true
+    file: 'index.html:3456-3482'
+    risk: high
+    invariant_refs: [INV-001]
+    note: |
+      幂等条件：仅对「该产品全部库存订单行 deliveredQty 合计为 0 且 products.stock>0」执行；
+      已有交付（totalDel>0）或库存≤0 的产品跳过（index.html:3459,3468）。
+      目的：使 INV-001（库存 = Σ(库存订单已交付)）在存量数据上立即成立，
+      防止随后的 syncStockFromInvOrders 全量对齐把存量库存清零。
+
+  - id: E-053
+    from: migrations.backfillInvDeliveredFromStock
+    to: entities.orders
+    kind: writes
+    mechanism: "if(changed) save('orders', orders) + logOp('系统','库存打通',...)"
+    sync: true
+    file: 'index.html:3483-3486'
+    risk: high
+
+  - id: E-054
+    from: migrations.backfillInvDeliveredFromStock
+    to: projections.products.stock
+    kind: triggers
+    mechanism: "同一迁移链内由 syncStockFromInvOrders() 紧随其后执行（先反填 → 后对齐，顺序有语义）"
+    sync: true
+    file: 'index.html:6033-6034 / 5920-5921'
+    risk: high
+    note: |
+      ⚠️ 顺序语义：backfill 必须在 syncStockFromInvOrders 之前。
+      顺序颠倒（先对齐后反填）会让「无库存订单支撑的产品」在 syncStock 阶段被归零，
+      之后反填无处可填 → 存量库存永久丢失。见 invariants.yaml#INV-031。
+
+# ===== K. 启动/恢复/清空 迁移链的依赖边 =====
+  - id: E-055
+    from: commands.system.bootstrap
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "initApp 迁移链：backfillInvDeliveredFromStock → syncStockFromInvOrders → migrateOrderStatusData → migrateOrderCalledQty 均会改 orders（内存+save）"
+    sync: true
+    file: 'index.html:6033-6038'
+    risk: high
+    note: '整条启动迁移链写 orders 单表，属「单表命令」家族；须与跨表命令一同登记。'
+
+  - id: E-056
+    from: commands.system.bootstrap
+    to: projections.products.stock
+    kind: writes
+    mechanism: "initApp：syncStockFromInvOrders() 全量对齐 products.stock"
+    sync: true
+    file: 'index.html:6034'
+    risk: high
+
+  - id: E-057
+    from: commands.system.bootstrap
+    to: projections.orders.status
+    kind: triggers
+    mechanism: "initApp：migrateOrderStatusData() 内调 syncOrderAutoStatus(true)（静默，仅统计）"
+    sync: true
+    file: 'index.html:6036 / 2319'
+    risk: medium
+
+  - id: E-058
+    from: commands.system.restore
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "restoreBackup(e)：覆盖内存 orders → 重跑迁移链（backfillInvDeliveredFromStock + syncStockFromInvOrders）→ 批量 save"
+    sync: true
+    file: 'index.html:5916-5924'
+    risk: high
+    note: 'restoreBackup(e) 定义于 index.html:5894（入口 onclick=restoreBackup(event) @ :330）。恢复路径内联 backfill（:5920）+ syncStock（:5921），顺序与 initApp 一致。'
+
+  - id: E-059
+    from: commands.system.clear
+    to: entities.orders.items.deliveredQty
+    kind: writes
+    mechanism: "confirmClear：products=[];orders=[];… → save('orders',orders)（整体清空）"
+    sync: true
+    file: 'index.html:5943-5944'
+    risk: high
+    note: 'confirmClear 定义于 index.html:5940；:5943 置空全部业务数组，:5944 起为 6 次 save。'
+
+# ----------------------------------------------------------------------------
+# 反向索引：changed id → 命中的边 id
+# AI 反查入口。按此表定位边，再展开边的 from/to。
+# ----------------------------------------------------------------------------
+reverse_index:
+  entities.products: [E-002, E-017, E-035]
+  entities.products.stock: [E-001, E-002, E-005]
+  entities.orders: [E-009, E-011, E-015, E-017, E-020, E-031, E-036, E-038, E-043, E-047, E-053]
+  entities.orders.items.deliveredQty: [E-001, E-003, E-010, E-019, E-020, E-021, E-023, E-032, E-042, E-046, E-052, E-055, E-058, E-059, E-060]
+  entities.orders.items.calledQty: [E-004, E-008, E-016]
+  entities.orders.items.stockMax: [E-010]
+  entities.orders.items.directDelivered: [E-015, E-016]
+  entities.orders.status: [E-010, E-011, E-012, E-013, E-014]
+  entities.deliveries: [E-012, E-026, E-029, E-030]
+  entities.deliveries.items.orderLine: [E-026, E-032]
+  entities.productionPlans: [E-022, E-025, E-027, E-028, E-029, E-030, E-033, E-034]
+  entities.productionPlans.items.doneQty: [E-019, E-028]
+  entities.productionPlans.items.dlLine: [E-032]
+  entities.productionReports: [E-024, E-025]
+  entities.transfers: [E-007, E-008, E-040]
+  entities.processTemplates: [E-033, E-034]
+  entities.fields: [E-018, E-033, E-039]
+  entities.logs: [E-040, E-041, E-045]
+  projections.products.stock: [E-001, E-002, E-005, E-050, E-051, E-054, E-056]
+  projections.orders.status: [E-006, E-010, E-011, E-037, E-044, E-048, E-049, E-057]
+  projections.order.plannedUndelivered: [E-026, E-027, E-028]
+  projections.order.calledQty: [E-004, E-008, E-016]
+  commands.transfer.apply: [E-003, E-004, E-005, E-006, E-007, E-013, E-039, E-041]
+  commands.productionReport.complete: [E-022, E-023, E-024, E-031]
+  commands.jindie.import: [E-014, E-035, E-036, E-037, E-038]
+  commands.order.upsert: [E-049, E-050, E-060]
+  commands.order.delete: [E-051]
+  commands.order.deliver: [E-042, E-043, E-044, E-045]
+  commands.order.return: [E-046, E-047, E-048]
+  commands.system.bootstrap: [E-055, E-056, E-057]
+  commands.system.restore: [E-058]
+  commands.system.clear: [E-059]
+  migrations.backfillInvDeliveredFromStock: [E-052, E-053, E-054]
+
+# ----------------------------------------------------------------------------
+# 三条高风险链路的完整写集与影响面（AI 必读）
+# ----------------------------------------------------------------------------
+high_risk_chains:
+
+  - id: HR-001
+    name: 调拨执行（transfer.apply）
+    command: commands.transfer.apply
+    entry: 'js/transfer.js:308'
+    callers:
+      - { file: 'js/transfer.js:224', type: call,    desc: '库存 → 销售（调用库存）' }
+      - { file: 'js/transfer.js:291', type: return,  desc: '销售 → 库存（退回库存）' }
+      - { file: 'js/transfer.js:379', type: reverse, desc: '冲销（方向对调 + 类型翻转，reverseOf=原记录 id）' }
+      - { file: 'js/transfer.js:594', type: 'null',  desc: '库存 → 库存（conv 改装 / move 移库，自动判定）' }
+    write_set:
+      - { order: 1, target: entities.orders.items.deliveredQty, via: 'in-memory（out.inv 减 / in.inv 加，可为负）', file: 'js/transfer.js:322-324' }
+      - { order: 2, target: entities.orders.items.calledQty,    via: 'in-memory（out.sales 减 / in.sales 加，下限 0）', file: 'js/transfer.js:323 / 325' }
+      - { order: 3, target: entities.orders,                    via: "save('orders', orders)  ← 独立网络写 A", file: 'js/transfer.js:327' }
+      - { order: 4, target: projections.products.stock,         via: 'syncStockFromInvOrders()', file: 'js/transfer.js:328' }
+      - { order: 5, target: projections.orders.status,          via: 'syncOrderAutoStatus()', file: 'js/transfer.js:329' }
+      - { order: 6, target: entities.transfers,                 via: "transfers.unshift(...) → DB.set('transfers', transfers, true)  ← 独立网络写 B", file: 'js/transfer.js:336-348' }
+    perspective_recompute: [projections.products.stock, projections.orders.status]
+    log: '由调用方 logOp（applyTransfers 自身不记日志）'
+    failure_behavior: "网络写 A 成功 + 写 B 失败 → :349-351 仅 alert 提示，不回滚（orders 已改、台账未落账）"
+    known_defects:
+      - '两次独立网络写，无事务、无补偿（INV-020）'
+      - 'calledQty 向下限 0 截断，静默吞差额，无全量重算函数（projections.order.calledQty 不可自愈）'
+    guards: ['前置校验：全部参与方订单/明细须存在，任一缺失整批放弃（:311-319）']
+
+  - id: HR-002
+    name: 生产报工（applyReport）
+    command: commands.productionReport.complete
+    entry: 'index.html:4586'
+    write_set:
+      - { order: 1, target: entities.productionPlans,            via: "in-memory（steps[step].done += qty / it.doneQty += qty / p.status='生产中'）", file: 'index.html:4593-4606 / 4612' }
+      - { order: 2, target: entities.productionPlans,            via: "save('productionPlans', productionPlans)  ← 独立网络写 1", file: 'index.html:4614' }
+      - { order: 3, target: entities.orders.items.deliveredQty,  via: 'inboundDelta.forEach → writebackInbound()', file: 'index.html:4616' }
+      - { order: 4, target: entities.orders,                     via: "writebackInbound 内 save('orders', orders)  ← 独立网络写 2", file: 'index.html:4582' }
+      - { order: 5, target: projections.products.stock,          via: 'writebackInbound 内 syncStockFromInvOrders()', file: 'index.html:4583' }
+      - { order: 6, target: entities.productionReports,          via: "productionReports.push(rec) + save('productionReports', productionReports)  ← 独立网络写 3", file: 'index.html:4627-4628' }
+      - { order: 7, target: entities.logs,                       via: "logOp('报工', ...)  ← 独立网络写 4", file: 'index.html:4630' }
+      - { order: 8, target: entities.productionPlans,            via: "若 allDone 且用户 confirm → p.status='已完成' + save('productionPlans')  ← 独立网络写 5", file: 'index.html:4633-4636' }
+    perspective_recompute: [projections.products.stock, projections.orders.status（经 writebackInbound→syncStockFromInvOrders）]
+    failure_behavior: '至少 5 次独立网络写，任意一步失败即不一致（INV-020；本次未验证——见 unverified）'
+    known_defects:
+      - '多次独立 save，无事务'
+      - '⚡ 注释矛盾：index.html:4615 注释写「销售/库存订单都回写」，实际 :4580 只回写库存订单'
+    guards:
+      - 'e.qty<=0 的工序跳过（:4589）'
+      - '存量单首次写入新工序键时 ppEnsureSteps 补键（:4592）'
+
+  - id: HR-003
+    name: 金蝶导入（kdDoImport）
+    command: commands.jindie.import
+    entry: 'js/import.js:423'
+    write_set:
+      - { order: 1, target: entities.orders,   via: '覆盖时 orders.splice(exIdx, 1)（原地删除旧单，触发索引漂移）', file: 'js/import.js:478' }
+      - { order: 2, target: entities.products, via: "products.push.apply(newProducts) + save('products', products)  ← 独立网络写 1", file: 'js/import.js:484' }
+      - { order: 3, target: entities.orders,   via: "orders.push.apply(newOrders) + save('orders', orders)  ← 独立网络写 2", file: 'js/import.js:483-485' }
+      - { order: 4, target: projections.orders.status, via: 'syncOrderAutoStatus()', file: 'js/import.js:486' }
+      - { order: 5, target: entities.logs,     via: "logOp('导入', ...)  ← 独立网络写 3", file: 'js/import.js:493' }
+    idempotency_key: "src='kingdee' + srcFile + 原始行号（三元组判重）"
+    unknown_code_state_machine: ['未决策（不导入）', '新建（黄）', '替换（绿）', '忽视（红）']
+    empty_value_rules:
+      - '日期空 = 错误（blocked）'
+      - '数字空 = 0 + 警告'
+      - '文本空 = "空"'
+      - '商品编码空 = 跳过该行'
+    failure_behavior: '多表多步网络写，无事务；splice 后失败会留下「旧单已删、新单未加」的中间态'
+    known_defects:
+      - 'orders.splice 导致全局索引漂移（既有补丁：clearSel 清勾选，js/import.js:495）'
+      - '新建产品 stock=0/dailyCap=0 需人工补全，无后续提醒机制'
+    guards:
+      - '未知编码全部决策后才允许导入（js/import.js:426-439）'
+      - '已取消/已暂停订单禁覆盖（js/import.js:477）'
+
+  - id: HR-004
+    name: 销售订单交付 / 退货（saleDeliverSave / saleReturnSave）
+    command: commands.order.deliver / commands.order.return
+    entry: 'index.html:2821（saleDeliverSave）/ index.html:2874（saleReturnSave）'
+    callers:
+      - { file: 'index.html:2785', type: deliver, desc: '销售订单区块「交付」按钮 → 弹窗 → 确认交付' }
+      - { file: 'index.html:2871', type: return,  desc: '销售订单区块「退货」按钮 → 弹窗 → 确认退货' }
+    write_set:
+      - { order: 1, target: entities.orders.items.deliveredQty, via: 'in-memory：交付 +qty（行级上限 min(未交付, saleMaxCallable)）；退货 −qty 并下调 directDelivered', file: 'index.html:2844 / 2891-2895' }
+      - { order: 2, target: entities.orders,                    via: "save('orders', orders)  ← 独立网络写", file: 'index.html:2845 / 2897' }
+      - { order: 3, target: projections.orders.status,          via: 'syncOrderAutoStatus()（内部可能再 save(''orders'')）', file: 'index.html:2846 / 2898' }
+      - { order: 4, target: entities.logs,                      via: "logOp('新增','销售订单', '交付/退货「id」...')  ← 独立网络写", file: 'index.html:2847 / 2899' }
+    perspective_recompute: [projections.orders.status（经 syncOrderAutoStatus）]
+    NOT_in_write_set:
+      - '⚠️ projections.products.stock —— 本路径【不】改库存、也【不】调用 syncStockFromInvOrders()（与调拨 E-003/报工 E-019 的关键区别）'
+    failure_behavior: 'save(''orders'') 成功 + syncOrderAutoStatus 失败 → 订单行已交付已改、订单状态未跟随（下次打开页面由迁移链兜底纠正）'
+    known_defects:
+      - '不写库存是刻意口径（销售订单 deliveredQty 仅驱动订单状态），但若误认为"交付应扣库存"会引入错误依赖'
+      - '退货下调 directDelivered 的边界（min 到新 deliveredQty）依赖 .108 语义，改动需同步 saleMaxCallable'
+    guards:
+      - '仅允许勾选 1 张销售订单（:2755）'
+      - '已取消/已暂停订单禁交付（:2759）'
+      - '行级校验：交付 ≤ min(未交付, saleMaxCallable)（:2831-2843）；退货 ≤ 当前已交付（:2883）'
+
+# ----------------------------------------------------------------------------
+# 未核实（保留占位，人工确认后补全 file:行号）
+# ----------------------------------------------------------------------------
+unverified:
+  - id: DUV-001
+    edge: E-012
+    subject: '「已取消/已暂停订单禁止下推交付计划」守卫的精确行号'
+    status: 部分核实
+    note: |
+      本次已定位到「交付」入口的守卫：index.html:2759（saleDeliverDlg 内 if(o.status==='已取消'||o.status==='已暂停') → alert + return）。
+      E-012 的 from=entities.orders.status / to=entities.deliveries 指的是「下推交付计划」入口，
+      其守卫位置仍待逐行核对；saleDeliverDlg 属「销售交付」（order.deliver），二者是不同入口。
+      建议后续将 E-012 的 to 明确为 order.deliver 入口，或拆分两条守卫边。
+  - id: DUV-002
+    edge: E-034
+    subject: 'stepsDefOf 的实现位置与其对 processTemplates/fields 的读取方式'
+    status: 未核实
+  - id: DUV-003
+    subject: '5 秒轮询窗口内多端并发写导致 lost update 的实际复现路径（server 无 rev 校验）'
+    status: 未核实
+    evidence: 'server/server.js:169-170（无条件整键替换）+ index.html:409（pollRevs 5 秒）'
+  - id: DUV-004
+    subject: 'syncStockFromInvOrders / syncOrderAutoStatus 全部调用点是否均已登记为 flow 或 edge'
+    status: 已核实（2026-09-09 复核）
+    finding: |
+      syncStockFromInvOrders 调用点（6 处，另定义 1 处）：
+        index.html:3346 → E-050（order.upsert）
+        index.html:3442 → E-051（order.delete）
+        index.html:4583 → E-021（writebackInbound ← productionReport.complete）
+        index.html:5921 → E-054/E-058（system.restore）
+        index.html:6034 → E-056（system.bootstrap）
+        js/transfer.js:328 → E-005（transfer.apply）
+      syncOrderAutoStatus 调用点（5 处，另定义 1 处）：
+        index.html:2319 → E-057（system.bootstrap，经 migrateOrderStatusData）
+        index.html:2846 → E-044（order.deliver）
+        index.html:2898 → E-048（order.return）
+        index.html:3345 → E-049（order.upsert）
+        js/import.js:486 → E-037（jindie.import）
+        js/transfer.js:329 → E-006（transfer.apply）
+      结论：12 个调用点全部已有归属，无遗漏。反向亦成立——「改 deliveredQty 的写入方」已补全 order.upsert(E-060)/deliver/return/backfill/system.*。
+      相关新增边：E-042~E-060（本轮补登的「单表命令」家族）。

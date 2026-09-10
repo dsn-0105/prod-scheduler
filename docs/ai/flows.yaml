@@ -1,0 +1,621 @@
+# ============================================================================
+# flows.yaml —— 关键命令流程
+# 系统：辰微生产排产系统（prod-scheduler）
+# 对应 build：2026-09-09.122
+#
+# 用途：回答「一次操作按什么顺序写了哪些表、失败会怎样」。
+#       排查数据不一致时，对照 write_set 的 order 找「哪一步可能断」。
+#
+# 通用前提（所有命令共享，不再逐条重复）：
+#   - 持久化模型：save(key, value) → DB.set → POST /api/save?token=... {key, value}
+#     server 侧 data[key] = value（整键替换）、revs[key]++、saveJson()。无事务、无 CAS。
+#   - 前端 save(k,v) 是同步签名但内部异步（DB.set 返回 Promise），调用方不 await → 只能 fire-and-forget。
+#   - logOp 内部 save('logs') 亦是独立网络写。
+#   - 权限：前端 ensureWrite(表单) + needAct(动作)；server 侧 canWrite(表单)。
+# ============================================================================
+version: 1
+updated: '2026-09-09'
+build: '2026-09-09.122'
+
+# ----------------------------------------------------------------------------
+flows:
+
+  # ===== 1. 调拨执行（含 5 个入口）=====
+  - id: transfer.apply
+    name: 调拨执行 —— 唯一的调拨写入器
+    entry: applyTransfers(type, moves, opts)
+    file: 'js/transfer.js:308-352'
+    entry_points:
+      - id: transfer.call
+        name: 调用库存（库存 → 销售）
+        trigger_ui: '销售订单区块 → 勾选 1 张 → 「调用库存」按钮 → 弹窗填量 → 确认调用'
+        func_chain: 'openCallStock() → doCallStock(o) → applyTransfers(''call'', moves)'
+        file: 'js/transfer.js:207 → 224'
+        permission: { form: order_frame, act: 'order_frame.saleCall' }
+        precheck: ['必须恰好勾选 1 张销售订单', '每行调用数量 ≤ 该行未交付（放开库存可用量校验，可超调=库存订单记欠货）']
+      - id: transfer.return
+        name: 退回库存（销售 → 库存）
+        trigger_ui: '销售订单区块 → 勾选 1 张 → 「退回库存」按钮'
+        func_chain: 'openReturnStock() → doReturnStock(o) → applyTransfers(''return'', moves)'
+        file: 'js/transfer.js:271 → 291'
+        permission: { form: order_frame, act: 'order_frame.saleReturnStock' }
+        precheck: ['订单必须是销售订单', '订单状态不得为 已取消/已暂停', '至少一行 deliveredQty > 0', '退回数量 ≤ 该行销售已交付']
+      - id: transfer.conv
+        name: 改装（库存 → 库存，跨料号）
+        trigger_ui: '库存订单区块 → 调用库存补库 → 跨料号行自动判定为 conv'
+        func_chain: 'openInvCallStock() → doInvCallStock() → applyTransfers(null, moves)（moves[i].type=''conv''）'
+        file: 'js/transfer.js:594（type 判定在 :584）'
+        permission: { form: order_inv, act: 'order_inv.invCall' }
+        precheck: ['调用数量不可为负', '每行须选择调出库存订单']
+      - id: transfer.move
+        name: 移库（库存 → 库存，同料号）
+        trigger_ui: 同 transfer.conv（同料号时自动判定为 move）
+        func_chain: 'doInvCallStock() → applyTransfers(null, moves)（moves[i].type=''move''）'
+        file: 'js/transfer.js:594'
+        permission: { form: order_inv, act: 'order_inv.invCall' }
+        precheck: 同 transfer.conv
+      - id: transfer.reverse
+        name: 冲销（生成反向记录）
+        trigger_ui: '调拨台账 → 某行「冲销」按钮'
+        func_chain: 'reverseTransfer(id) → applyTransfers(revType, [反转的 move], {reverseOf: t.id})'
+        file: 'js/transfer.js:355-386'
+        permission: { form: transfers, act: null }
+        precheck: ['记录存在', '未被冲销（reversed=false）', 'trSide 可取到双侧 orderId', 'trRevType 能映射出反向类型', '关联订单与明细仍存在']
+
+    direction_model: |
+      .115 双侧方向模型：每条记录存 out*（调出）/ in*（调入）两侧，
+      各带 orderType（'sales'|'inv'）+ lineIdx + productId。
+      台账快照：参与方含销售订单 → 取销售侧（客户/合同/商品名）；纯库存互调 → 取调入侧库存行。
+      旧键 salesOrderId / invOrderId 已废止（2026-09-06 迁移 122 条）。
+    type_enum: [call, return, conv, move, conv_back, move_back]
+    aux_functions:
+      - { name: trRevType(type), file: 'js/transfer.js:23', desc: '冲销类型映射：call↔return? 见代码；conv→conv_back、move→move_back' }
+      - { name: trSide(t, side), file: 'js/transfer.js:33', desc: '取侧（含旧结构推导兜底）' }
+      - { name: trSnapOf(t), file: 'js/transfer.js:48', desc: '台账快照兜底（存量单渲染反查）' }
+      - { name: TR_TYPE_LABEL, file: 'js/transfer.js:19', desc: '类型中文标签' }
+
+    prechecks:
+      - 'moves 非空'
+      - '全部参与方订单存在且 items 为数组（缺任一 → 整批 return false，不改任何数据）'
+      - '全部 out/in 明细行存在（同上，整批放弃）'
+
+    write_set:
+      - { order: 1, step: '改内存：out 侧', detail: 'out.inv → deliveredQty -= qty；out.sales → calledQty = max(0, calledQty - qty)', file: 'js/transfer.js:322-323' }
+      - { order: 2, step: '改内存：in 侧',  detail: 'in.inv → deliveredQty += qty；in.sales → calledQty = max(0, calledQty + qty)',  file: 'js/transfer.js:324-325' }
+      - { order: 3, step: "save('orders')", detail: '整键替换 orders —— 【独立网络写 A】', file: 'js/transfer.js:327' }
+      - { order: 4, step: 'syncStockFromInvOrders()', detail: '重算 products.stock（内部可能再 save(''products'')）', file: 'js/transfer.js:328' }
+      - { order: 5, step: 'syncOrderAutoStatus()', detail: '重算订单状态（内部可能再 save(''orders'')）', file: 'js/transfer.js:329' }
+      - { order: 6, step: 'transfers.unshift(记录)', detail: '逐 move 生成一条记录（含台账快照 customer/contractNo/productName/spec/model）', file: 'js/transfer.js:337-346' }
+      - { order: 7, step: "DB.set('transfers', transfers, true)", detail: '整键替换 transfers（silent=true）—— 【独立网络写 B】', file: 'js/transfer.js:348' }
+    perspective_recompute: [projections.products.stock, projections.orders.status]
+    log: '由调用方 logOp（applyTransfers 自身不记）；冲销在 reverseTransfer 内 logOp(''冲销'',...)'
+    idempotency: '无。重复执行会重复增减（唯一防重是 UI 层 confirm + transfers[].reversed 标记）'
+    failure_behavior: |
+      【独立网络写 A 成功 + 写 B 失败】→ js/transfer.js:349-351 仅 alert
+      「调拨台账保存失败：订单库存变更已生效，但台账记录未保存，请刷新后核对调拨台账。」
+      **不回滚**。结果：orders 已改、transfers 未落账 → 库存已变但无台账痕迹，无法追溯。
+    rollback: '无自动回滚。人工手段：冲销（但台账缺失时无记录可冲销）→ 只能手工改订单行 + 补录台账。'
+    known_defects:
+      - '两次独立网络写，无事务/无补偿（invariants.yaml#INV-020）'
+      - 'calledQty 向下限 0 截断静默吞差额，无全量重算函数（INV-005）'
+      - '前置校验通过后到实际写入之间无并发保护（INV-027）'
+    sync: '同步执行，但含异步网络写（不 await）'
+
+  # ===== 2. 生产报工 =====
+  - id: productionReport.complete
+    name: 生产报工（一次报工 = 一条记录）
+    entry: applyReport(pi, entries, items, worker)
+    file: 'index.html:4586-4643'
+    trigger_ui: '排产计划 → 某排产单「报工」按钮 → 弹窗逐工序填量 + 报工人（必填）→ 确认'
+    permission: { form: prodPlan, act: 'prodPlan.ppReport' }
+    prechecks:
+      - 'productionPlans[pi] 存在'
+      - '报工人为弹窗必填'
+      - 'entries 中 e.qty<=0 的工序跳过（无增量、不进日志/明细）'
+
+    write_set:
+      - { order: 1, step: '改内存：工序累计', detail: 'entries.forEach → st[e.step].done += e.qty（或 st[e.step] += qty）；存量单首次写新键时 ppEnsureSteps 补键', file: 'index.html:4593-4599' }
+      - { order: 2, step: '改内存：入库累计 + 行级聚合', detail: "e.step ∈ {inbound, finInbound} → it.doneQty += e.qty 并累积 inboundDelta（键 = productId + dlLine）", file: 'index.html:4600-4607' }
+      - { order: 3, step: "p.status='生产中'", detail: "if(p.status==='待排产') → '生产中'", file: 'index.html:4612' }
+      - { order: 4, step: "save('productionPlans')", detail: '【独立网络写 1】', file: 'index.html:4614' }
+      - { order: 5, step: 'inboundDelta.forEach → writebackInbound()', detail: '逐产品行回写订单 deliveredQty（仅库存订单），内部再 save(''orders'') + syncStockFromInvOrders()', file: 'index.html:4616' }
+      - { order: 6, step: "productionReports.push(rec) + save('productionReports')", detail: '【独立网络写 2】rec = {id: prNextId(), planId, date, time, worker, items, createdAt}', file: 'index.html:4618-4628' }
+      - { order: 7, step: "logOp('报工', ...)", detail: '【独立网络写 3，写 logs】', file: 'index.html:4630' }
+      - { order: 8, step: 'renderContent()', detail: '整量重渲染', file: 'index.html:4632' }
+      - { order: 9, step: '若 allDone → confirm → 标记已完成', detail: "p.status='已完成' + save('productionPlans') + logOp（【独立网络写 4/5】，需用户确认）", file: 'index.html:4620-4626' }
+    perspective_recompute: [projections.products.stock（经 writebackInbound）, projections.orders.status（经 syncStockFromInvOrders 链路）]
+    log: "logOp('报工', '排产计划', '排产单「id」报工：产品·工序+qty、…')"
+    idempotency: '无。重复提交会重复累加（依赖用户不重复点击；已报工的修正需走「编辑报工」）'
+    failure_behavior: |
+      【至少 5 次独立网络写】，任意一步失败即不一致：
+        - 写 1 失败 → 已有报工明细但工序累计未保存
+        - 写 1 成功 + writebackInbound 失败 → 工序累计已增、订单已交付未增（库存少）
+        - writebackInbound 成功 + 写 2 失败 → 库存已变、无报工记录可追溯（无法通过删除报工回退）
+      无任何回滚。
+    rollback: '无自动回滚。人工手段：删除该条报工（ppDelReport）或改回数量（ppSaveReportEdits），但无报工记录时无入口可回退。'
+    known_defects:
+      - '多次独立 save，无事务（INV-020）'
+      - '⚡ 注释矛盾：index.html:4615 注释写「销售/库存订单都回写」，实际 :4580 代码 if(orderTypeOf(o)!==''库存订单'')return 只回写库存订单（.97 起销售订单由交付/退货驱动）'
+      - 'inboundDelta 聚合键用 dlLine 区分（dlLine=null 时按 productId 合并）→ 存量无 dlLine 的多行同产品订单会被合并回写'
+    related_flows: [productionReport.delete, productionReport.edit, prodPlan.upsert]
+    note: 'inboundDelta 中 rec.orderLine = ppOrderLineOf(p, it)，即「排产行 → 交付行 → 订单行」三级索引传递（invariants.yaml#INV-024）'
+
+  # ===== 3. 删除单条报工 =====
+  - id: productionReport.delete
+    name: 删除单条报工（同步回退工序累计 + 扣回订单已交付）
+    entry: ppDelReport(id)
+    file: 'index.html:3856-3900'
+    trigger_ui: '排产计划 → 报工明细 → 某行「删除」'
+    permission: { form: prodPlan, act: 'prodPlan.ppReportEdit' }
+    prechecks:
+      - ensureWrite('prodPlan')
+      - needAct('prodPlan.ppReportEdit')
+      - 'productionReports.findIndex(r => r.id===id) 命中'
+      - '用户 confirm（提示会同步回退累计，不可撤销）'
+
+    write_set:
+      - { order: 1, step: '改内存：工序累计回退', detail: 'dec = min(record.qty, 当前累计)；st[step] = max(0, 当前 - dec)；入库类工序同时 it.doneQty -= dec', file: 'index.html:3873-3883' }
+      - { order: 2, step: '若 p.status===''已完成'' 且 !allDone → 状态回退为 ''生产中''', file: 'index.html:3886-3887' }
+      - { order: 3, step: "save('productionPlans')", detail: '【独立网络写 1】', file: 'index.html:3888' }
+      - { order: 4, step: 'productionReports.splice(idx,1)', detail: '物理删除（注意：非软删除）', file: 'index.html:3889' }
+      - { order: 5, step: "save('productionReports')", detail: '【独立网络写 2】', file: 'index.html:3890' }
+      - { order: 6, step: 'inboundDelta → writebackInbound(负增量)', detail: '扣回订单 deliveredQty（内部再 save(''orders'') + syncStockFromInvOrders()）', file: 'index.html:3892' }
+      - { order: 7, step: "logOp('删除报工', ...)", detail: '【独立网络写 3】', file: 'index.html:3893' }
+    perspective_recompute: [projections.products.stock, projections.orders.status]
+    log: "logOp('删除报工', '排产计划', '删除排产单「planId」报工 日期 时间：明细（累计已回退）')"
+    idempotency: '幂等性由「记录存在性」保证（删除后 findIndex 返回 -1 → 提前 return）'
+    failure_behavior: '3 次独立网络写；若写 3（writebackInbound）失败 → 报工记录已删但订单已交付未扣回（订单虚增交付），且无入口再回退'
+    rollback: '无。需手工改订单行 deliveredQty'
+    known_defects:
+      - '物理 splice 删除报工记录（有损可追溯性，invariants.yaml#INV-009）'
+      - 'inboundDelta 用对象键聚合（inboundDelta[productId]）→ 同产品多行会被合并为一次回写（产品级，非行级）'
+      - 'planId 悬空：若排产单已不存在，p=undefined → 只删报工记录，不回退工序累计与订单（静默跳过）'
+
+  # ===== 4. 编辑报工明细 =====
+  - id: productionReport.edit
+    name: 编辑报工明细（报工人 / 各工序数量）
+    entry: ppSaveReportEdits(id, updates, agg, oldInbound, itMap)
+    file: 'index.html:3764 / 3860-3890'
+    trigger_ui: '排产计划 → 报工明细 → 「编辑报工」'
+    permission: { form: prodPlan, act: 'prodPlan.ppReportEdit' }
+    prechecks: ['修改后累计不得超过本次排产量（overMsg 校验）']
+    write_set:
+      - { order: 1, step: '改内存：覆盖累计', detail: 'st[step].done = agg[k][step]；入库类同时 it.doneQty = agg[k][step]，inboundDelta 记 (新-旧)', file: 'index.html:3874-3884' }
+      - { order: 2, step: '覆盖报工记录', detail: 'rec.worker = u.worker；(rec.items||[]).forEach → x.qty = num(u.qtyMap[x.step])', file: 'index.html:3885-3887' }
+      - { order: 3, step: '状态回退', detail: "若 p.status==='已完成' 且 !allDone → '生产中'", file: 'index.html:3889-3890' }
+      - { order: 4, step: "save('productionPlans')", detail: '【独立网络写 1】', file: 'index.html:3891' }
+      - { order: 5, step: "save('productionReports')", detail: '【独立网络写 2】', file: 'index.html:3892' }
+      - { order: 6, step: 'inboundDelta → writebackInbound()', detail: '回写订单（内部再 save(''orders'')）', file: 'index.html:3894' }
+      - { order: 7, step: "logOp('编辑报工', ...)", detail: '【独立网络写 3】', file: 'index.html:3895' }
+    perspective_recompute: [projections.products.stock, projections.orders.status]
+    failure_behavior: '同 productionReport.complete：多次独立写，无事务'
+    known_defects: ['inboundDelta 按产品聚合（非行级）', '报工记录的 qty 被原地覆盖，历史值不可追溯（仅 logOp 留一条汇总日志）']
+
+  # ===== 5. 排产单下推（新建）=====
+  - id: prodPlan.upsert
+    name: 下推/编辑排产单（拆单 + 状态机 + 回写回滚）
+    entry: saveProdPlan(idx)
+    file: 'index.html:4185-4282'
+    trigger_ui:
+      - '交付计划 → 勾选 → 「下推排产计划」→ 弹窗填本次排产数量 → 保存（idx<0，新建）'
+      - '排产计划 → 某单「编辑」→ 改数量/日期/备注 → 保存（idx>=0）'
+    permission: { form: prodPlan, act: 'delivery.delPushPlan（下推）/ prodPlan.ppEdit（编辑）' }
+
+    prechecks:
+      - 'pp_id 非空、pp_planDate 非空'
+      - "本次排产 ≤ 未排产（total - already，按 dlLine 行级；存量无 dlLine 回退产品级）→ 超出则 alert 并 return"
+      - '本次排产不低于已完成（ppStepDone > q 则 alert 并 return）'
+      - '至少保留一行「本次排产数量 > 0」的明细'
+    splitting_logic: |
+      .25 拆单：每个「本次排产数量 > 0」的明细行生成一张独立排产单。
+      单号格式 PSCD-YYYYMMDD-NNN（当日最大序号 +1，padStart(3,'0')）。
+      （目标：已定稿为现状实现，非建议）
+
+    write_set:
+      - order: 1
+        step: '（编辑场景）状态变化 → 回滚/重加订单已交付'
+        detail: |
+          if(status !== old.status)：
+            cancelTo = (status === '已取消')；cancelFrom = (old.status === '已取消')
+            对旧单每行：d = ppDoneOf(it)；若 d>0 且 (cancelTo||cancelFrom)
+              → writebackInbound(p.orderId, it.productId, cancelTo ? -d : d, ppOrderLineOf(p, it))
+          （内部再 save('orders') + syncStockFromInvOrders()）
+        file: 'index.html:4235-4241'
+      - { order: 2, step: '改内存：覆盖排产单', detail: 'p.planDate/finalDate/status/notes/materialReadyDate/items = finalItems', file: 'index.html:4242-4243' }
+      - { order: 3, step: "save('productionPlans')", detail: '【独立网络写 1】（新建场景为 push 多张新单后保存）', file: 'index.html:4275' }
+      - { order: 4, step: "logOp('编辑'/'新增', ...) + logFieldDiffs", detail: '【独立网络写 2】（写 logs）', file: 'index.html:4244 / 4272' }
+      - { order: 5, step: 'closeModal() + renderContent()', detail: '整量重渲染', file: 'index.html:4276-4277' }
+    perspective_recompute: [projections.order.plannedUndelivered（渲染期）, projections.products.stock（当触发回滚时）, projections.orders.status]
+    log: "logOp('编辑'|'新增', '排产计划', '排产单「id」调整排产数量/信息' | '新增「id」（订单xxx）')"
+    idempotency: '无。编辑为覆盖式（幂等）；下推为追加式（重复下推会多次拆单，靠 UI 入口 + 未排产上限校验收窄）'
+    failure_behavior: '多次独立网络写；回滚分支（writebackInbound）失败 → 排产单已取消但订单已交付未回退（订单虚增交付）'
+    rollback: '编辑场景可再改回原状态（会触发反向回滚）；但若中途失败产生的不一致无自动修复'
+    known_defects:
+      - 'status 不可手动编辑（:4198）——由投产/报工自动转变，但 saveProdPlan 仍会把 status 写入（值来自原对象）'
+      - '回滚粒度基于 ppDoneOf(old) 全量（不是差量），若历史上其他路径已部分回滚，会重复扣减'
+      - 'deliveryIdx 为数组索引（INV-023）；新建时由 p.deliveryIdx 继承自交付计划下推上下文'
+    note: '排产单禁新增/复制：copyProdPlan 保留定义但无 UI 入口（FORM_ACTIONS 无 copy 映射、批量栏无复制按钮），见 index.html:4291 注释'
+
+  - id: prodPlan.cancel
+    name: 取消 / 恢复排产单
+    entry: saveProdPlan(idx>=0) 内的状态分支
+    file: 'index.html:4235-4241'
+    trigger_ui: '排产计划 → 编辑弹窗（状态下拉相关分支）'
+    permission: { form: prodPlan, act: 'prodPlan.ppEdit' }
+    write_set:
+      - { order: 1, step: '非取消 → 已取消', detail: 'writebackInbound(orderId, productId, -d, orderLine) —— 扣回已回写交付（已取消不占交付额度）', file: 'index.html:4239' }
+      - { order: 2, step: '已取消 → 非取消', detail: 'writebackInbound(orderId, productId, +d, orderLine) —— 重新加回', file: 'index.html:4239' }
+      - { order: 3, step: "save('productionPlans')", detail: '回滚写之后', file: 'index.html:4275' }
+    note: '回滚发生在 save 之前（先改 orders 再改 plans）——顺序意味着若 orders 写失败，plans 仍会被保存为已取消，产生不一致'
+    failure_behavior: |
+      回滚写（writebackInbound → save('orders')）先行，save('productionPlans') 后行。
+      若回滚写失败 → 订单 deliveredQty 未回退，但后续 save('productionPlans') 仍会把状态改为「已取消」/恢复
+      → 状态与交付数据背离。无回滚机制。
+    rollback: '再次触发生态变化（改回原状态）会执行反向回滚；若已产生不一致，需人工核算订单 deliveredQty。'
+
+  # ===== 6. 删除排产单 =====
+  - id: prodPlan.delete
+    name: 删除排产单
+    entry: delProdPlan(i)
+    file: 'index.html:4293-4305'
+    trigger_ui: '排产计划 → 批量栏「删除」（或行内删除）'
+    permission: { form: prodPlan, act: 'prodPlan.ppDel' }
+    prechecks:
+      - needAct('prodPlan.ppDel')
+      - "status 必须为 '待排产'（否则 alert 并 return）—— .29 保护"
+      - '用户 confirm'
+    write_set:
+      - { order: 1, step: '扣回订单已交付', detail: 'ppItems(p).forEach: d = ppDoneOf(it); if(d>0) writebackInbound(p.orderId, it.productId, -d, ppOrderLineOf(p, it))', file: 'index.html:4298' }
+      - { order: 2, step: "logOp('删除', '排产计划', ...)", detail: '【独立网络写】', file: 'index.html:4299' }
+      - { order: 3, step: 'productionPlans.splice(i, 1)', detail: '物理删除（触发索引漂移）', file: 'index.html:4300' }
+      - { order: 4, step: "save('productionPlans')", detail: '【独立网络写】', file: 'index.html:4301' }
+      - { order: 5, step: "selSet('prodPlan').delete(String(i))", detail: '清理勾选防幽灵选择', file: 'index.html:4303' }
+    perspective_recompute: [projections.products.stock, projections.order.plannedUndelivered, projections.orders.status]
+    log: "logOp('删除', '排产计划', '删除「id」')"
+    failure_behavior: 'writebackInbound 成功 + save 失败 → 订单已交付已扣回，排产单仍在（少算交付）'
+    rollback: '无'
+    known_defects:
+      - '先扣回订单、后删排产单 → 若第二步失败，排产单仍在但已交付已扣（不可通过再次删除修复，因 status 可能已变）'
+      - 'splice 删除触发 productionPlans 索引漂移（勾选集合依赖索引，已打补丁清理）'
+    note: "仅「待排产」可删 → 一旦报工（status='生产中'），无 UI 途径删除（这是保护，也可能成为运维痛点）"
+
+  - id: delivery.upsert
+    name: 交付计划保存
+    entry: saveDelivery(idx) → doSaveDelivery(d, idx)
+    file: 'index.html:4766-4815'
+    trigger_ui: '交付计划 → 新增/编辑 → 选订单带出明细 → 填本批计划 → 保存'
+    permission: { form: delivery, act: null }
+    prechecks:
+      - '订单已选（d.orderId 非空）'
+      - '明细非空（d.items.length > 0）'
+      - '本批计划合计 > 0'
+      - '行级超量：it.planQty > it.orderQty - it.deliveredQty → showConfirmOverlay（软提示，可放行）'
+    write_set:
+      - { order: 1, step: '组装 d', detail: 'd = {orderId, customer, finalDate, firstDate, notes, createdAt, items, orderTotal, delivered, undelivered, planQty}；planQty = Σ各行 planQty（表头自动汇总）', file: 'index.html:4767-4784' }
+      - { order: 2, step: '写内存', detail: 'idx>=0 → deliveries[idx] = d（整体替换，logFieldDiffs 记字段差异）；idx<0 → deliveries.push(d)', file: 'index.html:4806-4807' }
+      - { order: 3, step: "save('deliveries')", detail: '【独立网络写，唯一】', file: 'index.html:4808' }
+      - { order: 4, step: 'logOp', detail: '新增时 logOp(''新增'',...)；编辑时 logFieldDiffs（内部 logOp）', file: 'index.html:4806-4807' }
+    perspective_recompute: [projections.order.plannedUndelivered（渲染期）]
+    idempotency: '编辑幂等（整体替换）；新增不幂等（重复保存产生重复交付计划）'
+    failure_behavior: '相对干净：仅 deliveries 一次网络写 + logOp（logs）一次。失败影响面小。'
+    rollback: '无自动回滚；编辑场景可重新保存覆盖'
+    known_defects:
+      - 'deliveries 无稳定主键（逻辑主键=数组索引），delDelivery 的 splice 会破坏 productionPlans[].deliveryIdx（INV-023）'
+      - '行级超量仅软提示（INV-014）'
+      - 'createdAt 在编辑时保留原值，老数据缺失时兜底回填 2026-08-23（常量硬编码在代码里）'
+    note: '本命令是全系统「写集最干净」的命令，可作为改造范式参考（单表单写）'
+
+  - id: order.upsert
+    name: 订单保存（销售/库存通用）
+    entry: saveOrder(idx)
+    file: 'index.html:3270-3352'
+    trigger_ui: '订单管理（销售订单 / 库存订单区块）→ 新增/编辑 → 填表头 + 明细行 → 保存'
+    permission: { form: 'order_frame / order_inv（分拆）', act: null }
+    prechecks:
+      - '订单编号必填'
+      - '客户必填'
+      - '销售订单：合同号必填'
+      - '状态机校验：old=已完成 → 不可改；old∈{已取消,已暂停} → 仅可改回执行中；old=执行中 → 不可手设已完成'
+      - '至少一行明细；每行须有 productId 且数量>0（库存订单以 stockMax 为数量）'
+      - '新增场景：订单编号不得重复'
+    write_set:
+      - { order: 1, step: '组装表头 o', detail: '遍历 fields.order 非行字段，从 of_<key> 取值；orderType 控件缺失时兜底补回；引字段（type=ref）经 lookupRef 重算', file: 'index.html:3271-3332' }
+      - { order: 2, step: '组装明细 items', detail: '遍历 #orderItemsTbl 行；按行序从旧行补回 directDelivered（须 productId 一致）；引字段重算', file: 'index.html:3312-3328' }
+      - { order: 3, step: '写内存', detail: 'idx>=0 → orders[idx] = o（保留 src/srcFile）；idx<0 → orders.push(o)', file: 'index.html:3335-3343' }
+      - { order: 4, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:3344' }
+      - { order: 5, step: 'syncOrderAutoStatus()', detail: '自动判定状态（内部可能再 save(''orders'')）—— 【独立网络写 2，条件性】', file: 'index.html:3345' }
+      - { order: 6, step: 'syncStockFromInvOrders()', detail: '仅库存订单 → 【独立网络写 3，条件性】', file: 'index.html:3346' }
+      - { order: 7, step: 'logOp / logFieldDiffs / logOrderLineDiffs', detail: '【独立网络写 4】（写 logs）', file: 'index.html:3336-3341' }
+      - { order: 8, step: 'closeModal + renderContent', detail: '整量重渲染', file: 'index.html:3347-3348' }
+    perspective_recompute: [projections.products.stock（库存订单）, projections.orders.status]
+    idempotency: '编辑幂等（覆盖）；新增靠「订单编号唯一」校验防重'
+    failure_behavior: '2~4 次独立网络写；库存订单场景若 save(''orders'') 成功但 syncStockFromInvOrders 失败 → 订单已交付已改、产品库存未跟随'
+    rollback: '无自动回滚；可重新编辑保存覆盖'
+    known_defects:
+      - '保存会重建行对象（只保留 fields.order 中配置的字段 + 少量兜底），未在弹窗中出现的内部字段（如 directDelivered）必须靠按行序补回 → 增删行后可能挂错（INV-006 / INV-024）'
+      - '库存在 saveOrder 中不重算订单状态的回写顺序问题：状态先算、库存后算，两者都读 orders（内存中已一致）'
+      - '库存订单「数量」口径（stockMax）在 orderUndelTotal 与 saveOrder._oqOf 中重复实现（INV-003）'
+    note: 'saveOrder 与 fields 配置强耦合（INV-019）：改「字段设置」等价于改本命令的收集逻辑'
+
+  - id: jindie.import
+    name: 金蝶 xlsx 导入销售订单
+    entry: kdDoImport()
+    file: 'js/import.js:423-497'
+    trigger_ui: '销售订单区块 → 「导入金蝶订单」→ 选 xlsx → 预览 + 决策未知编码/冲突 → 确认导入'
+    permission: { form: order_frame, act: 'order_frame.kingdeeImport' }
+    idempotency:
+      key: "src='kingdee' + srcFile + 原始行号（三元组判重）"
+      behavior: '重新导入同一文件时弹出「跳过 / 覆盖」选择；ignore 每次重新决策'
+    unknown_code_state_machine:
+      states: ['未决策（默认不导入）', '新建（黄）', '替换（绿）', '忽视（红）']
+      guard: '全部未知编码决策完毕后才允许导入（未决策 → alert + 滚动定位到第一个未决策行）'
+    empty_value_rules:
+      - '日期空 → 错误（被 blocked 拦截，blocked 行不进 R.list）'
+      - '数字空 → 0 + 警告'
+      - '文本空 → 字符串 "空"（customer / contractNo 用）'
+      - '商品编码空 → 跳过该行（:448 if(!pid)return）'
+    prechecks:
+      - 'R（kdReport）与 kdState 存在'
+      - '未知编码全部已决策'
+      - '每行 startDate / deadline 非空'
+      - '覆盖时目标订单不得为已取消/已暂停'
+    write_set:
+      - { order: 1, step: '（覆盖时）orders.splice(exIdx, 1)', detail: '原地删除旧单 —— 立即触发全局索引漂移', file: 'js/import.js:478' }
+      - { order: 2, step: 'products.push.apply(newProducts)', detail: '未知编码选「新建」时构造产品 {id,name,spec,model,unit,stock:0,dailyCap:0,stockMin:0,status:''启用''}', file: 'js/import.js:455-458' }
+      - { order: 3, step: "save('products')", detail: '【独立网络写 1，仅当有新产品的条件性写】', file: 'js/import.js:484' }
+      - { order: 4, step: 'orders.push.apply(newOrders) + save(''orders'')', detail: '【独立网络写 2】新单固定 orderType=销售订单、status=执行中、src=kingdee、srcFile', file: 'js/import.js:483-485' }
+      - { order: 5, step: 'syncOrderAutoStatus()', detail: '按未交付合计自动判定（Excel 已交付全量 → 已完成）—— 【条件性写 3】', file: 'js/import.js:486' }
+      - { order: 6, step: "logOp('导入', '订单管理', detail)", detail: '【独立网络写 4】（写 logs）detail 含导入单数/行数/覆盖数/忽视数/新建产品数/跳过数', file: 'js/import.js:493' }
+      - { order: 7, step: "clearSel('order_frame')", detail: '清理勾选（因 splice 导致索引漂移，.5 修复）', file: 'js/import.js:495' }
+    perspective_recompute: [projections.orders.status]
+    item_construction:
+      - 'productName/spec/model 以产品主数据为准回填（不是 Excel 原值）'
+      - 'deliveredQty > 0 且 calledQty 无值 → 标记 directDelivered（.108）'
+      - 'stockMax / stockMin 置空字符串（销售订单不用）'
+    failure_behavior: |
+      3~4 次独立网络写 + 中途 splice：
+        若 splice 成功、save('orders') 失败 → 旧单已从内存数组中删除但未落库（服务器仍是旧数据，下一次 pullAll 会恢复）——
+        但内存与服务器不一致期间若发生其他 save('orders')，会把「已删旧单」的版本写上去 → 静默丢单。
+    rollback: '无。人工手段：从备份恢复（restoreBackup）。'
+    known_defects:
+      - 'orders.splice 触发索引漂移（既有补丁：clearSel）'
+      - '新建产品 stock=0/dailyCap=0 需人工补全，导入完成仅 alert 提示，无后续待办机制'
+      - '「覆盖」是「删旧 + 插新」（splice + push），不是原地更新 → 订单数组顺序改变，加剧索引漂移'
+
+  # ===== 7. 库存全量重算 =====
+  - id: inventory.rebuild
+    name: 库存全量重算（投影幂等重建）
+    entry: syncStockFromInvOrders()
+    file: 'index.html:3494-3505'
+    trigger_ui: '无直接 UI 按钮；由 saveOrder / delOrder / writebackInbound / applyTransfers / restoreBackup / initApp 调用'
+    permission: null
+    read_set: [entities.orders（orderType=库存订单 的行）, entities.products]
+    write_set:
+      - { order: 1, step: '聚合 map', detail: 'orders.forEach → 仅 orderTypeOf(o)===''库存订单'' → it.productId → map[pid] += num(it.deliveredQty)', file: 'index.html:3495-3500' }
+      - { order: 2, step: '全量对齐 products.stock', detail: 'products.forEach: v = map[p.id] || 0（无库存订单 → 0）；if(num(p.stock)!==v){p.stock=v;changed=true}', file: 'index.html:3501-3502' }
+      - { order: 3, step: "save('products')", detail: '仅当 changed —— 【独立网络写】', file: 'index.html:3503' }
+    idempotency: '完全幂等。可安全重复执行，是系统的「自愈函数」。'
+    failure_behavior: 'save 失败 → 内存已对齐、服务器未更新（下次 pullAll 回滚）'
+    callers:
+      - { file: 'index.html:3346', context: 'saveOrder（库存订单）→ 见 flows#order.upsert / 边 E-050' }
+      - { file: 'index.html:3442', context: 'delOrder（删除库存订单）→ 见 flows#order.delete / 边 E-051' }
+      - { file: 'index.html:4583', context: 'writebackInbound → 见 flows#productionReport.complete / 边 E-021' }
+      - { file: 'index.html:5921', context: 'restoreBackup（从备份恢复）→ 见 flows#system.restore / 边 E-058' }
+      - { file: 'index.html:6034', context: 'initApp 启动迁移链（backfillInvDeliveredFromStock 之后）→ 见 flows#system.bootstrap / 边 E-056' }
+      - { file: 'js/transfer.js:328', context: 'applyTransfers → 见 flows#transfer.apply / 边 E-005' }
+    related_migration: backfillInvDeliveredFromStock（index.html:3456-3487，定义）—— 把产品现有库存按订单量比例反填到库存订单已交付，使本不变量在存量数据上立即成立（幂等：已有交付或库存≤0 的跳过）。调用点：initApp :6033 / restoreBackup :5920。见 flows#system.bootstrap / 边 E-052~E-054。
+    note: |
+      ⚠️ 本系统唯一「可自愈」的投影。对照 projections.order.calledQty —— 那个没有全量重算函数，
+      一旦损坏无法自愈（invariants.yaml#INV-005）。若做健壮性改造，建议以本函数为范式补齐其他投影的重算能力。
+
+  # ===== 8. 订单删除 =====
+  - id: order.delete
+    name: 删除订单
+    entry: delOrder(idx)
+    file: 'index.html:3423-3443'
+    trigger_ui: '订单管理 → 勾选 → 删除'
+    permission: { form: 'order_frame / order_inv', act: null }
+    prechecks:
+      - 'hasDeliveryOf(orderId) → 已下推交付计划的订单禁删'
+      - 'saleOrderTrace(o) → 销售订单有业务痕迹（已交付/已调用 > 0，含期初直接交付历史）禁删'
+      - '用户 confirm'
+    write_set:
+      - { order: 1, step: "logOp('删除', '订单管理', ...)", detail: '【独立网络写】', file: 'index.html:3441' }
+      - { order: 2, step: 'orders.splice(idx, 1)', detail: '物理删除 → 索引漂移', file: 'index.html:3442' }
+      - { order: 3, step: "save('orders')", detail: '【独立网络写】', file: 'index.html:3443' }
+      - { order: 4, step: 'syncStockFromInvOrders()', detail: '仅库存订单 → 【独立网络写】', file: 'index.html:3444' }
+    perspective_recompute: [projections.products.stock]
+    failure_behavior: 'save 成功 + syncStock 失败 → 订单已删、产品库存未跟随（库存虚高）'
+    rollback: '无'
+    known_defects: ['splice 索引漂移（勾选集合依赖索引）', '删除订单后 productionPlans/deliveries 中的 orderId 成为悬空引用（有 hasDeliveryOf 守卫，但仅防交付）']
+
+  # ===== 8b. 销售订单交付 / 退货（单表命令，但触发状态投影重算）=====
+  # 这一类是「只写 orders 单表、不跨表、不改库存」的命令，容易被「跨表命令」视角遗漏。
+  - id: order.deliver
+    name: 销售订单交付（saleDeliverSave）
+    entry: saleDeliverDlg() → saleDeliverSave(oi)
+    file: 'index.html:2751（弹窗 2751-2799）/ 2821（保存 2821-2850）'
+    trigger_ui: '订单管理 → 销售订单区块 → 勾选 1 张 → 「交付」按钮 → 弹窗逐行填本次交付数量 → 确认交付'
+    permission: { form: order_frame, act: 'order_frame.saleDeliver' }
+    prechecks:
+      - '必须恰好勾选 1 张销售订单（saleDeliverDlg：2754-2755）'
+      - '订单存在且状态不得为 已取消/已暂停（:2759）'
+      - '订单有明细行（:2760-2761）'
+      - '至少一行本次交付数量 > 0（:2842）'
+      - '行级上限：本次交付 ≤ min(未交付, saleMaxCallable(it))；越限则整批拒绝（:2831-2843）'
+    write_set:
+      - { order: 1, step: '改内存：行级增量', detail: 'updates.forEach(u => o.items[u.li].deliveredQty = num(...) + u.qty)', file: 'index.html:2844' }
+      - { order: 2, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:2845' }
+      - { order: 3, step: 'syncOrderAutoStatus()', detail: '交付使未交付合计降到 0 → 自动「已完成」—— 【条件性写 2】', file: 'index.html:2846' }
+      - { order: 4, step: "logOp('新增','销售订单','交付「id」N 台（M 行）')", detail: '【独立网络写 3】（写 logs）', file: 'index.html:2847' }
+    perspective_recompute: [projections.orders.status]
+    NOT_in_write_set:
+      - '⚠️ products.stock —— 本命令【不写库存】、不调用 syncStockFromInvOrders()。销售订单 deliveredQty 只驱动订单状态，不参与库存投影（库存只由库存订单行汇总）。'
+    idempotency: '不幂等（每次点确认都是一次增量交付）；重复提交会重复累加 deliveredQty'
+    failure_behavior: "save('orders') 成功 + syncOrderAutoStatus 失败 → 行已交付、订单状态未跟随（下次启动由 migrateOrderStatusData 兜底纠正）"
+    rollback: '无自动回滚；人工手段：用「退货」反向冲减（可退上限=当前已交付）'
+    known_defects:
+      - '与「调拨/报工」的混淆风险：两者都会改 deliveredQty，但只有调拨/报工联动库存。改动时勿把交付误接进 syncStockFromInvOrders'
+      - '行级上限依赖 saleMaxCallable（calledQty − max(0, deliveredQty − directDelivered)），口径与 directDelivered 强耦合（INV-006）'
+    related_edges: [E-042, E-043, E-044, E-045]
+
+  - id: order.return
+    name: 销售订单退货（saleReturnSave）
+    entry: saleReturnDlg(orderId) → saleReturnSave(orderId)
+    file: 'index.html:2852（弹窗 2852-2873）/ 2874（保存 2874-2902）'
+    trigger_ui: '订单管理 → 销售订单区块 → 「退货」按钮 → 弹窗逐行填退货数量 → 确认退货'
+    permission: { form: order_frame, act: 'order_frame.saleReturn' }
+    prechecks:
+      - '订单存在且有明细行（:2854-2856）'
+      - '至少一行退货数量 > 0（:2889）'
+      - '行级上限：退货 ≤ 可退货 = 当前已交付 max(0, num(it.deliveredQty))（:2883, :2890）'
+    write_set:
+      - { order: 1, step: '改内存：行级减量', detail: '_it.deliveredQty = max(0, num(...) - u.qty)', file: 'index.html:2893' }
+      - { order: 2, step: '改内存：直接交付基数下调', detail: 'if(directDelivered != null) _it.directDelivered = min(num(directDelivered), num(deliveredQty))（防负基数/超额豁免；.108）', file: 'index.html:2895' }
+      - { order: 3, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:2897' }
+      - { order: 4, step: 'syncOrderAutoStatus()', detail: '退货使未交付合计回升 → 「已完成」可能退回「执行中」—— 【条件性写 2】', file: 'index.html:2898' }
+      - { order: 5, step: "logOp('新增','销售订单','退货「id」N 台（M 行）')", detail: '【独立网络写 3】', file: 'index.html:2899' }
+    perspective_recompute: [projections.orders.status]
+    NOT_in_write_set:
+      - '⚠️ products.stock —— 与 order.deliver 同：退货不改库存。'
+    idempotency: '不幂等（每次确认都是减量）；可退上限由当前已交付兜住，不会退到负数'
+    failure_behavior: '同 order.deliver：save 成功 + syncOrderAutoStatus 失败 → 状态未跟随（启动迁移兜底）'
+    rollback: '无自动回滚；人工手段：重新「交付」补回（受 saleMaxCallable 上限约束）'
+    known_defects:
+      - '退货同时下调 directDelivered（:2895）——改这里会改变后续所有交付的行级上限，属高影响改动'
+    related_edges: [E-046, E-047, E-048]
+
+  # ===== 9. 启动迁移链 =====
+  - id: system.bootstrap
+    name: 启动迁移链（每次打开页面执行，全部应幂等）
+    entry: bootstrap() → initApp()
+    file: 'index.html:5953-5966 / 5966-6047'
+    trigger_ui: '页面加载 / 登录成功'
+    steps:
+      - { order: 1, step: '服务器模式：pullAll() 全量拉取', file: 'index.html:5957' }
+      - { order: 2, step: '/api/me 恢复 currentUser（权限）', file: 'index.html:5968-5974' }
+      - { order: 3, step: 'DB.get 加载 13 个键', detail: 'products/orders/deliveries/productionPlans/productionReports/processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout', file: 'index.html:5975-5987' }
+      - { order: 4, step: '字段类迁移', detail: 'normalizeFields → migrateSpecSplit → migrateRemoveProductFields → migrateProductFieldsOptional → migrateProductDailyCap', file: 'index.html:5995-6004' }
+      - { order: 5, step: 'seed（仅 meta.seeded 未置且三表皆空）', detail: '避免覆盖已有数据', file: 'index.html:6007-6010' }
+      - { order: 6, step: '数据迁移', detail: 'migrateOrders → migrateOrderStockRange → migrateOrderItemProductAttrs → migrateOrderItemLineNotes → migrateOrderTypeField → migrateOrderContractNo → migrateOrderStatusField → migrateDeliveryFields → migrateDeliveryCreatedAt → migrateDeliveryOrderLine → migrateInventoryOrderIds → migrateFrameworkToSales', file: 'index.html:6013-6030' }
+      - { order: 7, step: 'backfillInvDeliveredFromStock()', detail: '产品库存按订单量比例反填到库存订单已交付（幂等：已有交付或库存≤0 跳过）', file: 'index.html:6033（定义 3456-3487）' }
+      - { order: 8, step: 'syncStockFromInvOrders()', detail: '库存全量对齐（必须在反填之后，见 notes.step_order_semantics）', file: 'index.html:6034' }
+      - { order: 9, step: 'migrateOrderStatusData()', detail: '待排产→执行中 + 按未交付初始化状态（内部调 syncOrderAutoStatus(true)，见 :2319）—— 须在反填之后', file: 'index.html:6036' }
+      - { order: 10, step: 'migrateOrderCalledQty()', detail: '从调拨台账回填 calledQty', file: 'index.html:6038' }
+      - { order: 11, step: 'ensureDefaultTpl() → migrateProductProcessTpl()', detail: '工序模板', file: 'index.html:6040-6041' }
+      - { order: 12, step: 'bootDone=true → renderAll() → initNavDrag() → startSync()', detail: '启动 5 秒轮询', file: 'index.html:6043-6047' }
+    notes:
+      step_order_semantics: |
+        ⚠️ 步骤 7 → 8 的顺序【有语义】，不可颠倒：
+        backfillInvDeliveredFromStock 先把存量 products.stock 反填进库存订单行 deliveredQty，
+        使「库存 = Σ(库存订单已交付)」（INV-001）立刻成立；
+        随后 syncStockFromInvOrders 做全量对齐时，「无库存订单支撑的产品」才会被归零（本就无库存），
+        而「有库存订单支撑的产品」因已反填而不会被清零。
+        若颠倒（先对齐后反填）：syncStock 阶段会先把有订单产品的 stock 按「交付合计=0」清零，
+        反填随后把 0 反填回去 → 存量库存永久丢失（不可逆）。
+        同理步骤 9（migrateOrderStatusData）也须在反填之后，否则状态按未反填的未交付量算错。
+    idempotency: '设计上全部幂等（各迁移函数自带 changed 判断与「已有值不覆盖」逻辑）'
+    failure_behavior: '每个迁移函数内部独立 save；中途失败 → 部分迁移生效。但下次启动会重新执行（幂等），通常可自愈'
+    write_set:
+      - { order: 1, step: 'backfillInvDeliveredFromStock（内存）', detail: '按订单量比例反填库存订单行 deliveredQty', target: entities.orders.items.deliveredQty, file: 'index.html:3456-3482' }
+      - { order: 2, step: "backfill 内 save('orders')", detail: '仅 changed 时', target: entities.orders, file: 'index.html:3484' }
+      - { order: 3, step: 'syncStockFromInvOrders()', detail: '全量对齐 products.stock', target: projections.products.stock, file: 'index.html:6034' }
+      - { order: 4, step: 'syncOrderAutoStatus(true)', detail: '经 migrateOrderStatusData 静默初始化状态', target: projections.orders.status, file: 'index.html:6036 / 2319' }
+      - { order: 5, step: 'migrateOrderCalledQty()', detail: '从 transfers 回填 calledQty', target: entities.orders.items.calledQty, file: 'index.html:6038' }
+    known_defects:
+      - '迁移链较长（约 20 步），每次打开页面都跑一遍——新增迁移时必须保证幂等，否则会反复改写数据'
+      - 'migrateOrderCalledQty 的幂等性是「已有 calledQty 则跳过」，因此一旦写入错误值，后续启动不会修正'
+      - '反填与对齐的顺序语义仅靠代码行序保证，无显式断言；重构 initApp 时极易被无意颠倒'
+    related_edges: [E-052, E-053, E-054, E-055, E-056, E-057]
+
+  # ===== 10. 全量恢复 / 清空（运维命令）=====
+  - id: system.restore
+    name: 从备份文件恢复全部数据
+    entry: restoreBackup（文件 input change 处理）
+    file: 'index.html:5905-5940'
+    trigger_ui: '系统 → 恢复备份 → 选 .json'
+    write_set:
+      - { order: 1, step: '覆盖内存全局数组', detail: 'products/orders/deliveries/... 从备份赋值', file: 'index.html:5908-5912' }
+      - { order: 2, step: 'fieldsAudit=''audited''；fieldsDraft=null', detail: '草稿作废', file: 'index.html:5914' }
+      - { order: 3, step: 'normalizeFields → migrateOrders → migrateFrameworkToSales → backfillInvDeliveredFromStock → syncStockFromInvOrders', detail: '重跑关键迁移', file: 'index.html:5916-5921' }
+      - { order: 4, step: '批量 save 全部键', detail: "save('products'/'orders'/'deliveries'/'productionPlans'/'productionReports'/'processTemplates'/'logs'/'fields'/'meta')", file: 'index.html:5922-5924' }
+      - { order: 5, step: 'renderAll() + logOp(''恢复'',...)', detail: '', file: 'index.html:5925-5930' }
+    known_defects: ['未恢复 transfers / fieldsDraft / tblLayout（恢复后这些键保持当前服务器值，可能与备份不匹配）', '9 次独立 save，无事务']
+    failure_behavior: |
+      9 次独立 save 无事务。中途失败 → 部分键已恢复、部分未恢复（例如 orders 已换为备份值而 products 仍是当前值）
+      → products.stock 与 orders 的库存订单行不再满足 INV-001，需重新执行 syncStockFromInvOrders 对齐。
+      另：transfers / fieldsDraft / tblLayout 不在恢复范围内，恢复后可能形成跨表引用错位。
+    rollback: '从备份文件再恢复一次；或在恢复后手工执行 syncStockFromInvOrders / backfillInvDeliveredFromStock 对齐。'
+
+  - id: system.clear
+    name: 清空全部业务数据
+    entry: confirmClear()
+    file: 'index.html:5944-5950'
+    trigger_ui: '系统 → 清空数据（两次 confirm）'
+    write_set:
+      - { order: 1, step: '置空全局数组', detail: 'products/orders/deliveries/productionPlans/productionReports/processTemplates = []', file: 'index.html:5946' }
+      - { order: 2, step: '批量 save', detail: "6 次 save（不含 logs/fields/meta/transfers/tblLayout）", file: 'index.html:5947-5948' }
+      - { order: 3, step: "logOp('清空','全部数据')", detail: '', file: 'index.html:5949' }
+    known_defects: ['⚠️ 不清 transfers / logs / fields / meta —— 清空后调拨台账仍在（悬空引用），meta.seeded 仍为 true']
+    failure_behavior: |
+      6 次独立 save 无事务；中途失败 → 部分业务表已清空、部分未清空（残留孤儿数据）。
+      另：不清 transfers，清空后调拨台账仍引用已不存在的订单（悬空引用）；
+      不清 meta → meta.seeded 仍为 true，因此「重新初始化示例数据」不会再次触发（清空后系统为空白而非示例态，属预期但易误解）。
+    rollback: '不可逆。只能从备份文件恢复（system.restore）；清空前的自动备份（本地模式，AUTO_BACKUP_MIN=15 分钟间隔）是主要保障。'
+
+# ----------------------------------------------------------------------------
+# 跨命令一致性总览（按 write_set 反查：谁的写集重叠谁就可能互相破坏）
+# ----------------------------------------------------------------------------
+write_set_overlap:
+  entities.orders:
+    writers: [order.upsert, order.delete, order.deliver, order.return, transfer.apply, productionReport.complete(经 writebackInbound), productionReport.edit, productionReport.delete, prodPlan.upsert, prodPlan.cancel, prodPlan.delete, jindie.import, system.bootstrap(迁移:backfillInvDeliveredFromStock/migrateOrderStatusData/migrateOrderCalledQty), system.restore, system.clear]
+    risk: high
+    note: |
+      orders 是全系统竞争最激烈的表：15+ 个写入方，全部走整键替换。并发/中断场景下极易互相覆盖。
+      ⚠️ 注意「单表命令」家族（order.deliver / order.return / backfillInvDeliveredFromStock）：
+      它们只写 orders、不跨表，但会触发 syncOrderAutoStatus（投影重算）——容易被「只盯跨表命令」的反查遗漏。
+  entities.products:
+    writers: [product.upsert, syncStockFromInvOrders(投影), jindie.import, system.bootstrap, system.restore, system.clear]
+    risk: high
+    note: |
+      products 的 stock 字段被投影函数全量覆写；人工编辑 stock 会被静默抹掉。
+      ⚠️ 但「改 stock 的原始数据」另有入口：backfillInvDeliveredFromStock（库存打通迁移）会把 stock 反填进订单，
+      之后由 syncStockFromInvOrders 回写——即 stock 的最终值 = Σ(库存订单已交付)，反填只是首次对齐（见 INV-031）。
+  entities.productionPlans:
+    writers: [prodPlan.upsert, prodPlan.delete, productionReport.complete, productionReport.edit, productionReport.delete, system.restore, system.clear]
+    risk: high
+  entities.transfers:
+    writers: [transfer.apply(唯一)]
+    risk: medium
+    note: '唯一写入器，相对集中；但写入方与 orders 的写入不是同一事务（关键缺口）。'
+  entities.deliveries:
+    writers: [delivery.upsert, delDelivery, system.restore, system.clear]
+    risk: medium
+  entities.productionReports:
+    writers: [productionReport.complete, productionReport.edit, productionReport.delete, system.restore, system.clear]
+    risk: medium
+  entities.logs:
+    writers: [logOp —— 全系统 73 处调用]
+    risk: low
+    note: 'logs 为整键替换（最多 500 条），每次 logOp 都是一次完整表写入；高频操作下网络开销不可忽略。'
+
+# ----------------------------------------------------------------------------
+# 未核实
+# ----------------------------------------------------------------------------
+unverified:
+  - id: FUV-001
+    subject: 'ppSaveReportEdits / ppDelReport 的精确函数起始行与参数签名'
+    status: 未核实
+    evidence: '已确认 ppDelReport 定义在 index.html:3856 附近、其 write_set 见 flow 定义；签名细节未逐行核对'
+  - id: FUV-002
+    subject: 'trRevType 的完整映射表（call/return 是否互逆，conv/move 是否映射到 conv_back/move_back）'
+    status: 未核实
+    evidence: 'js/transfer.js:23-31 已确认存在该函数；未逐行核对映射分支'
+  - id: FUV-003
+    subject: 'prodPlan.ppLaunch（投产/反投产）与 ppShift（延后/提前）两个动作键对应的流程'
+    status: 未核实
+    evidence: 'FORM_ACTS 中定义了 prodPlan.ppLaunch / prodPlan.ppShift（index.html:502），但本次未追踪其实现函数与写集'
+  - id: FUV-004
+    subject: 'product.genOrder（按产品批量生成库存订单）的完整写集'
+    status: 未核实
+    evidence: 'domain-map.yaml 中已登记命令与权限键 product.genOrder；未追踪实现'

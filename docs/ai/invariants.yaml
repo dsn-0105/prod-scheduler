@@ -1,0 +1,469 @@
+# ============================================================================
+# invariants.yaml —— 业务不变量
+# 系统：辰微生产排产系统（prod-scheduler）
+# 对应 build：2026-09-09.122
+#
+# 用途：回答「哪些规则不能破」。改动前必须对照本表，明确本次改动是否使某条
+#       从 enforced 退化为 partial / gap。
+#
+# status 语义：
+#   enforced —— 有明确代码保证（并给出保证函数 + file:行号）
+#   partial  —— 有部分防护（前端拦了、后端没拦 / 只在某路径上保证 / 有已知绕过口）
+#   gap      —— 现状缺陷：规则在业务上成立，但代码没有防护，或已知会被破坏
+#
+# 铁律：绝不把「建议」写成现状。gap 就是 gap。
+# ============================================================================
+version: 1
+updated: '2026-09-09'
+build: '2026-09-09.122'
+
+invariants:
+
+  # ===== 库存域 =====
+  - id: INV-001
+    domain: order-inventory
+    name: 产品库存 == Σ(库存订单行已交付)
+    rule: 'products[].stock === Σ(所有订单中 orderType==="库存订单" 且 items[].productId===p.id 的行 deliveredQty)'
+    expression: 'products.stock = Σ(库存订单行 deliveredQty)'
+    guaranteed_by: syncStockFromInvOrders()
+    file: 'index.html:3494-3505'
+    enforcement_type: 全量对齐（非增量）
+    status: enforced
+    violation_consequence: '库存与实际不符；看板/订单/交付/排产全部读到错误的库存基数'
+    consumers: [renderProducts, renderOrderTable, renderDeliveryTable, applyTransfers(库存候选/上下限警示), kdDoImport]
+    note: |
+      幂等：可安全重复执行（每次全量重算）。
+      因是「全量对齐」，手工直接写 products.stock 会在下一次任何触发重算的操作后被抹掉。
+
+  - id: INV-002
+    domain: order-inventory
+    name: 库存订单已交付允许为负（欠货）
+    rule: 'orderType==="库存订单" 的明细行 deliveredQty 无下限约束，可为负数（表示欠货，向 0 恢复）'
+    expression: 'invOrderItem.deliveredQty ∈ ℝ（无下限）'
+    guaranteed_by: 'applyTransfers 的 out.inv 分支、writebackInbound 均不做下限截断'
+    file: 'js/transfer.js:322-324 / index.html:4581'
+    status: enforced
+    violation_consequence: '若给库存订单 deliveredQty 加下限 0，会导致「调出超过实有」的欠货被静默吞掉，台账与库存永久错账'
+    note: '该口径来自 2026-08-25.20 用户拍板。changes to this invariant MUST be routed through an Impact Report.'
+
+  - id: INV-003
+    domain: order-inventory
+    name: 库存订单「数量」语义 = 最大库存量
+    rule: '库存订单明细的数量字段以 stockMax 为准（orderQty 在同表但语义被 stockMax 取代）'
+    expression: "库存订单行数量 = it.stockMax != null && it.stockMax !== '' ? num(it.stockMax) : num(it.orderQty)"
+    guaranteed_by: [orderUndelTotal, saveOrder._oqOf]
+    file: 'index.html:2262 / 3320'
+    enforcement_type: 代码内的双处独立实现
+    status: partial
+    violation_consequence: '两处实现若不一致，会出现「订单列表显示未交付 X，状态机判定用 Y」的错位'
+    note: |
+      ⚠️ 同一口径在 orderUndelTotal（:2262）与 saveOrder 的 _oqOf（:3320）中各写了一遍，
+      属重复实现（未被抽成单一函数）。改口径时必须同时改两处。
+
+  - id: INV-004
+    domain: production
+    name: 报工入库回写金额可超过订单数量
+    rule: '排产单「入库」工序报工 → 库存订单行 deliveredQty += delta；允许超过订单数量（进度% 可 >100%）'
+    expression: 'it.deliveredQty += delta（无上限）'
+    guaranteed_by: writebackInbound
+    file: 'index.html:4581'
+    status: enforced
+    violation_consequence: '加上限会导致正常超产报工被拦，报工流程中断'
+    note: '2026-08-25.16 用户拍板「允许超过」。'
+
+  - id: INV-005
+    domain: order-sales
+    name: 销售订单已调用数量 calledQty 下限 0
+    rule: 'orderType==="销售订单" 的明细行 calledQty >= 0 恒成立'
+    expression: 'salesOrderItem.calledQty = max(0, calledQty ± qty)'
+    guaranteed_by: applyTransfers
+    file: 'js/transfer.js:323 / 325'
+    status: partial
+    violation_consequence: '截断会静默吞掉差额，导致 calledQty 与实际调拨台账 Σ 不相等'
+    gap_detail: |
+      ⚠️ status=partial 的原因：向下限 0 截断是「静默」的，且 projections.order.calledQty
+      没有任何全量重算函数（只有一次性迁移 migrateOrderCalledQty）。
+      一旦 applyTransfers 中途失败（见 INV-020），calledQty 无法通过重算自愈。
+    remediation_hint: '若引入自愈机制，建议新增 calledQty 全量重算函数（口径参考 migrateOrderCalledQty）。'
+    status_note: 现状有下限保护，但缺自愈能力 → partial
+
+  - id: INV-006
+    domain: order-sales
+    name: 期初直接交付基数 directDelivered 不被消费为调用额度
+    rule: "金蝶导入的已交付无调用支撑（calledQty 恒无）→ deliveredQty>0 时标记 directDelivered，避免行级上限把全部已交付当作已消耗调用额度"
+    expression: "if(_impDq>0 && !(num(it.calledQty)>0)) _impItem.directDelivered = _impDq"
+    guaranteed_by: kdDoImport
+    file: 'js/import.js:463-466'
+    supporting_code: 'saveOrder 按行序从旧行补回 directDelivered（须产品一致）'
+    supporting_file: 'index.html:3321-3323'
+    status: partial
+    violation_consequence: '后续交付会被行级上限拦截，导入的订单无法继续交付'
+    gap_detail: |
+      ⚠️ partial 的原因：directDelivered 靠「按行序补回」维护（index.html:3321），
+      订单编辑增删行后行序漂移 → directDelivered 可能挂到错误行上或被丢弃（字段重建会丢未在弹窗中出现的字段）。
+      代码注释自陈该风险（同 .24/.33/.40 已知）。
+
+  # ===== 报工 / 交付域 =====
+  - id: INV-007
+    domain: production
+    name: writebackInbound 仅服务库存订单
+    rule: "仅当 orderTypeOf(o)==='库存订单' 时才回写 deliveredQty；销售订单的已交付由「交付/退货」驱动，排产单不回写"
+    expression: "if(orderTypeOf(o)!=='库存订单') return;"
+    guaranteed_by: writebackInbound
+    file: 'index.html:4580'
+    status: enforced
+    violation_consequence: '若放开，销售订单会被排产单二次计价（交付已加一次、报工再加一次），交付量虚增'
+    note: |
+      ⚠️ 注释与代码矛盾：index.html:4615 的注释写「销售/库存订单都回写」，
+      与 4580 行代码矛盾。以代码为准，注释为滞后文本（见 flows.yaml#productionReport.complete.known_defects）。
+
+  - id: INV-008
+    domain: production
+    name: 只有「待排产」的排产单可删除
+    rule: "productionPlans[].status !== '待排产' 时禁止删除"
+    expression: "if(productionPlans[i].status !== '待排产') → alert + return"
+    guaranteed_by: delProdPlan
+    file: 'index.html:4295-4296'
+    status: enforced
+    violation_consequence: '删掉「生产中/已完成」的排产单会破坏报工记录与订单已交付回写（虚增交付无法追溯）'
+    note: '2026-08-25.29 引入。'
+
+  - id: INV-009
+    domain: production
+    name: 报工记录只追加，不改写业务主体
+    rule: 'productionReports 为 appendonly：只 push；「编辑报工」通过覆盖 rec.items[].qty 实现，不删除原记录'
+    guaranteed_by: 'applyReport（push）/ ppSaveReportEdits（原地改 qty）/ ppDelReport（唯一删除入口）'
+    file: 'index.html:4627-4628 / 3844-3848 / 3889-3890'
+    status: partial
+    violation_consequence: '报工历史不可追溯，工序累计无法回退到正确值'
+    gap_detail: 'ppDelReport 会 physical splice 删除记录（:3889），因此不是纯 appendonly；改为「软删除 + 冲销」可提升可追溯性。'
+
+  # ===== 订单状态机 =====
+  - id: INV-010
+    domain: order-sales
+    name: 订单状态合法取值集合
+    rule: "orders[].status ∈ {执行中, 已完成, 已取消, 已暂停}"
+    expression: "ORDER_STATUS = ['执行中','已完成','已取消','已暂停']"
+    guaranteed_by: 'ORDER_STATUS 常量 + saveOrder 状态机校验 + 字段设置选项'
+    file: 'index.html:1271（ORDER_STATUS）/ 3293-3302（校验）'
+    status: enforced
+    violation_consequence: '状态值越界会使订单在两个区块都不可见（既有事故：历史残留「框架订单」类型）'
+
+  - id: INV-011
+    domain: order-sales
+    name: 整单未交付 = 0 → 自动「已完成」
+    rule: 'orderUndelTotal(o) <= 0 时，非「已取消/已暂停」的订单状态自动置为「已完成」'
+    expression: "target = orderUndelTotal(o) <= 0 ? '已完成' : '执行中'"
+    guaranteed_by: syncOrderAutoStatus
+    file: 'index.html:2266-2278'
+    status: enforced
+    violation_consequence: '状态与实际交付不符，看板与筛选结果失真'
+    note: 'orderUndelTotal 对每行取 max(0, 数量 - deliveredQty)，因此库存订单的欠货（负 deliveredQty）会算进未交付。'
+
+  - id: INV-012
+    domain: order-sales
+    name: 「已取消」/「已暂停」为手动状态，不被自动规则覆盖
+    rule: 'syncOrderAutoStatus 跳过 status 为「已取消」或「已暂停」的订单'
+    expression: "if(o.status==='已取消'||o.status==='已暂停') return;"
+    guaranteed_by: syncOrderAutoStatus
+    file: 'index.html:2269'
+    status: enforced
+    violation_consequence: '自动规则会「复活」已终止订单，绕过状态机'
+
+  - id: INV-013
+    domain: order-sales
+    name: 「已完成」不可手动设置，「已取消/已暂停」仅可改回「执行中」
+    rule: 'saveOrder 状态机校验：已完成不可手改；已取消/已暂停仅可改回执行中；执行中不可手设已完成'
+    guaranteed_by: saveOrder
+    file: 'index.html:3293-3302'
+    status: enforced
+    violation_consequence: '绕过状态机导致订单状态与交付数据脱节'
+    note: '前端弹窗选项已限制，saveOrder 内为兜底防篡改。'
+
+  # ===== 下推链 / 状态守卫 =====
+  - id: INV-014
+    domain: delivery
+    name: 计划数量不得超过订单未交付数量
+    rule: '交付计划本批计划 ≤ 该行未交付数量（超出时弹确认浮层，可人工确认放行）'
+    expression: 'if(it.planQty > it.orderQty - it.deliveredQty) → showConfirmOverlay'
+    guaranteed_by: saveDelivery
+    file: 'index.html:4786-4797'
+    status: partial
+    violation_consequence: '计划超量导致「已计划未交付」计算出现负值 / 排产无额度可下'
+    gap_detail: '⚠️ 仅软提示（用户点「确认保存」即放行），不是硬约束。'
+
+  - id: INV-015
+    domain: delivery
+    name: 交付计划只能从订单下推；排产单只能从交付计划下推
+    rule: 'deliveries 不能凭空新增（必须选订单带出明细）；productionPlans 不能新增/复制（copyProdPlan 保留定义但无入口）'
+    guaranteed_by: [saveDelivery(orderId 必填 + items 非空校验), 'prodPlanModal 仅由交付计划下推入口触发', "copyProdPlan 无 UI 入口（FORM_ACTIONS 无 copy 映射）"]
+    file: 'index.html:4791-4793 / 4291（注释）/ 4292'
+    status: enforced
+    violation_consequence: '产生无订单来源的孤儿交付/排产，全链路关联断裂'
+
+  - id: INV-016
+    domain: delivery
+    name: 已取消/已暂停订单禁生成交付计划
+    rule: "order.status ∈ {已取消, 已暂停} 时禁止下推交付计划"
+    guaranteed_by: '前端下推入口校验'
+    file: '未核实'
+    status: gap
+    violation_consequence: '已终止订单被重新激活业务流'
+    gap_detail: |
+      ⚠️ 业务规则明确（见交付/调拨相关提示文案），但本次未定位到该守卫的精确代码位置。
+      同时注意：/api/save 是整键替换且无业务校验，后端不可能兜住此规则。
+      标为 gap 是因为「未找到证据」——若人工确认守卫存在，请补 file:行号并改为 enforced。
+
+  - id: INV-017
+    domain: order-sales
+    name: 已取消/已暂停订单禁调拨退回
+    rule: "doReturnStock 内校验 o.status，已取消/已暂停订单禁止退回库存"
+    guaranteed_by: doReturnStock
+    file: 'js/transfer.js:239-240'
+    status: enforced
+    violation_consequence: '已终止订单的库存被改动'
+
+  - id: INV-018
+    domain: order-sales
+    name: 已取消/已暂停订单禁被导入覆盖
+    rule: 'kdDoImport 覆盖分支：若目标订单 status 为已取消/已暂停 → 加入 blockedCancel、skipCount++、跳过'
+    guaranteed_by: kdDoImport
+    file: 'js/import.js:476-477'
+    status: enforced
+    violation_consequence: '绕过状态机恢复已终止订单'
+
+  - id: INV-019
+    domain: field-engine
+    name: 表单可用字段由 fields 配置决定（元数据驱动）
+    rule: '每个表单的可编辑字段集合 = fields[formKey]；saveXxx 遍历该配置收集数据'
+    expression: 'fields[formKey] → isLineField / orderHeadFields / orderLineFields → saveXxx 收集'
+    guaranteed_by: '字段引擎 + saveXxx 系列'
+    file: 'index.html:3271-3283'
+    status: partial
+    violation_consequence: '在「字段设置」删/改字段会静默改变所有表单的渲染与保存行为，可能静默丢数据'
+    gap_detail: |
+      ⚠️ partial 的原因：删除关键字段（如 orderType / contractNo / stockMax）会破坏下游逻辑，
+      目前靠「字段锁定（locked）」与若干迁移函数（migrateOrderTypeField / migrateOrderContractNo）打补丁，
+      但没有通用防护。已发生过的症状：.88 隐藏 orderType → .93 需专门兜底代码（index.html:3282）。
+    note: '这是本系统最容易被低估的耦合面：改 fields 等价于改所有表单。'
+
+  # ===== 一致性 / 存储层 =====
+  - id: INV-020
+    domain: system-ui
+    name: 多表写入无事务保证【现状缺陷】
+    rule: '若某命令写入多张表，则「全部成功」或「全部失败」应同时成立'
+    expression: 'atomic(command.write_set)'
+    guaranteed_by: '无'
+    file: 'server/server.js:169-170（整键替换，无 CAS/无事务）+ 各命令的多次独立 save'
+    status: gap
+    violation_consequence: |
+      部分成功 → 数据永久不一致，且无自愈路径（projections.order.calledQty 无全量重算函数）。
+      已知实例：
+        - applyTransfers：save('orders')(js/transfer.js:327) 与 DB.set('transfers')(js/transfer.js:348)
+          之间失败 → orders 已改、台账未落账，仅 alert 提示，不回滚。
+        - applyReport：至少 5 次独立网络写（index.html:4614 / 4616→4582 / 4628 / 4630 / 4633-4636）。
+        - kdDoImport：3+ 次独立网络写（js/import.js:484 / 485 / 493），且中途有 orders.splice。
+    evidence: [HR-001, HR-002, HR-003]
+    remediation_hint: |
+      建议方向（目标，非现状）：① server 增加批量保存端点 /api/save-batch，一次写多键一次落盘；
+      ② 或在前端引入写入队列 + 失败重放日志。任何方案都需配套「不一致检测」脚本。
+    note: '本条是整个手册中最重要的 gap。改动涉及多表写入的命令前，必须评估此条。'
+
+  - id: INV-021
+    domain: system-ui
+    name: 表必须在 server 注册表中登记，否则静默丢数据【现状缺陷】
+    rule: '新增数据表必须同时登记 server/server.js 的 DEFAULT_DATA + （BIZ_KEYS 或 SYSTEM_KEYS）'
+    expression: 'key ∈ Object.keys(DEFAULT_DATA)'
+    guaranteed_by: '/api/save 的兜底：若 key 在 DEFAULT_DATA 中则自动补键，真未知表返回 400'
+    file: 'server/server.js:16-26 / 159-167'
+    status: partial
+    violation_consequence: |
+      🔴 静默丢数据。历史事故：transfers 曾漏登记 DEFAULT_DATA，丢失 103 条台账。
+      注：.122 起 /api/save 增加了「DEFAULT_DATA 已注册则自动补键」的加固（:161-163），
+      缓解了「线上旧 data.json 缺键」场景，但**未解决**「新表未登记」场景（仍返回 400 → 前端 save 失败）。
+    gap_detail: |
+      ⚠️ partial：兜底只覆盖「已登记但实例缺键」，不覆盖「未登记」。
+      未登记时前端 DB.set 会 alert 失败提示（index.html:391-398），但若调用方传 silent=true（如 transfers）则完全静默。
+    remediation_hint: '建议新增 CI 检查：扫描前端 save(''key'') / DB.set(''key'') 的 key 集合，与 DEFAULT_DATA 求差集。'
+
+  - id: INV-022
+    domain: system-ui
+    name: 所有持久化键必须在 initApp 中加载
+    rule: 'server 侧登记的键，前端 initApp 必须 DB.get 一次，否则内存中为 undefined → 后续 save 会用 undefined 覆盖服务器'
+    expression: 'DB.get(key) 出现在 initApp 中'
+    guaranteed_by: initApp
+    file: 'index.html:5970-5982'
+    status: partial
+    violation_consequence: |
+      🔴 若某键未在 initApp 加载，内存中无该全局变量 → 引用即 ReferenceError 或 undefined；
+      一旦以 undefined/空值 save，会整键替换掉服务器数据。
+    gap_detail: '⚠️ 无自动校验。当前 initApp 加载了 products/orders/deliveries/productionPlans/productionReports/processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout，共 13 个键，与 DEFAULT_DATA 一致，但一致性靠人工维护。'
+    note: '与 INV-021 是同一类「注册表一致性」问题，建议合并为一个检测脚本。'
+
+  - id: INV-023
+    domain: system-ui
+    name: deliveries 数组索引被 productionPlans 直接引用【现状缺陷】
+    rule: 'productionPlans[].deliveryIdx 应始终指向正确的交付计划'
+    expression: 'deliveries[pp.deliveryIdx] === 该排产单来源的交付计划'
+    guaranteed_by: '无'
+    file: 'index.html:2508（buildPlannedUndelMap 使用 pp.deliveryIdx !== di 过滤）+ index.html:4821（delDelivery 用 splice）'
+    status: gap
+    violation_consequence: |
+      🔴 delDelivery 使用 deliveries.splice(idx,1) 物理删除后，
+      所有 > idx 的 productionPlans[].deliveryIdx 全部指向**错误的交付计划**，
+      导致 buildPlannedUndelMap 把 doneQty 归到别的订单行上 → 「已计划未交付」静默算错，
+      且 saveProdPlan 的「不超过未排产」校验也会用错基数。
+      目前**没有任何重建/修复函数**。
+    gaps: ['delDelivery 未同步修正其他排产单的 deliveryIdx', '无 deliveryIdx 完整性校验', '无修复脚本']
+    remediation_hint: |
+      目标形态建议：① 给 deliveries 加稳定主键（如 deliveryId），productionPlans 改引用该主键；
+      ② 或 delDelivery 内联追加重编号逻辑；③ 提供一次性修复脚本扫描悬空/错位引用。
+      任何方案都需先做存量数据体检（见 change-log.yaml 的体检项）。
+
+  - id: INV-024
+    domain: system-ui
+    name: 索引即主键带来的漂移风险
+    rule: '依赖数组索引的字段（orderLine / dlLine / deliveryIdx / directDelivered / 勾选集合）在数组增删后应保持有效'
+    expression: '索引一致性'
+    guaranteed_by: '若干局部补丁（clearSel / clearGhostSel / clearHiddenOrderSel / clearHiddenProdPlanSel / 按行序补回 directDelivered）'
+    file: 'index.html:3333-3341 / 3321-3323 / js/import.js:495 / js/transfer.js:353-358'
+    status: partial
+    violation_consequence: '关联数据挂到错误的行/单上（静默错账）'
+    gap_detail: |
+      ⚠️ partial：已有 4 组补丁处理「勾选幽灵」与「directDelivered 按行序补回」，
+      但 orderLine（交付计划行→订单行）与 deliveryIdx（排产单→交付计划）**无对应补丁**。
+      代码注释在多处自陈该风险：index.html:2490（orderLine 漂移）、:3321（directDelivered 漂移）。
+    related: [INV-023, INV-006]
+
+  - id: INV-025
+    domain: auth
+    name: 表单写权限双层控制
+    rule: '写业务表需通过 server 的 canWrite(user, key)（表单级）；前端另有 canWriteForm（表单级）+ canAct（按钮级 FORM_ACTS）'
+    guaranteed_by: [canWrite(server), canWriteKey/canWriteForm/canAct/needAct(前端)]
+    file: 'server/server.js:116-123 / index.html:480-516'
+    status: partial
+    violation_consequence: '越权写入业务数据'
+    gap_detail: |
+      ⚠️ 以下三处使前端门控可被绕过（前端门控不是安全边界）：
+        1. SYSTEM_KEYS（logs / meta / tblLayout / fieldsAudit / fieldsDraft / transfers / productionReports）
+           在 server 侧对**所有登录用户放行**（server.js:119）→ transfers 与 productionReports 后端无权限。
+        2. orders 表在 server 侧只要 saleOrders 或 invOrders 任一为 true 即可整表写（server.js:121）
+           → 有销售权限的人可通过 /api/save 直接覆盖库存订单。
+        3. 历史键 perms.orders 仍被 canWrite 接受（server.js:121 与 index.html:487）→ 迁移期口径不一致。
+    note: '前端门控只用于 UI 体验；真正的权限边界在 server，而 server 的粒度粗于前端。'
+
+  - id: INV-026
+    domain: system-ui
+    name: 认证 token 与会话生命周期
+    rule: 'token 校验、TTL 7 天、会话存于内存'
+    expression: 'tokens: Map<token, username>；TOKEN_TTL = 7*24*3600*1000'
+    guaranteed_by: 'auth() + setInterval 清理'
+    file: 'server/server.js:95-96 / 107-115 / 238-241'
+    status: partial
+    violation_consequence: |
+      服务重启 → 全部 token 失效（用户被强制重新登录，功能上可接受但不优雅）；
+      且**存在默认凭据**（server.js:61-66：admin/admin123、pmc/chejian/zongjingli = 123456），
+      若未在生产环境改密，构成实质风险。
+    gap_detail: '⚠️ 默认凭据硬编码在源码中；未强制首次登录改密；token 走 URL query（可能进 access log）。'
+
+  - id: INV-027
+    domain: system-ui
+    name: 实时同步为「整量拉取 + 整量重渲染」，无并发冲突检测
+    rule: '多端并发写时，后写覆盖先写（lost update），且无提示'
+    expression: 'revs[key]++ 仅用于「是否变化」判断，不用于冲突检测'
+    guaranteed_by: '无'
+    file: 'server/server.js:169-170（data[b.key]=b.value 无条件覆盖）+ index.html:409-419（pollRevs 5 秒）'
+    status: gap
+    violation_consequence: |
+      A、B 两端同时编辑不同订单：B 端 5 秒轮询前 A 的修改在 B 端内存中不存在，
+      B 端 save('orders') 会用 B 的完整数组覆盖 → A 的修改永久丢失。
+      约 10 个用户的规模下已具备发生条件。
+    gaps: ['无 CAS（rev 未参与写入校验）', '无冲突提示', '无自动合并']
+    remediation_hint: |
+      目标形态建议：① /api/save 增加 expectedRev 参数，不匹配则 409；
+      ② 前端收到 409 后提示「数据已被他人修改，请刷新后重试」；
+      ③ 或改为字段级 patch 端点。现状 revs 已在服务器维护（server.js:170），改造成本不高。
+
+  # ===== 计数类（易随代码演进失效，注明核对方式）=====
+  - id: INV-028
+    domain: system-ui
+    name: 操作日志上限 500 条
+    rule: 'logs.length 不超过 500，超出时保留最新 500 条'
+    expression: 'if(logs.length>500) logs = logs.slice(0,500)'
+    guaranteed_by: logOp
+    file: 'js/logs.js:6'
+    status: enforced
+    violation_consequence: '日志表膨胀（logs 为整键替换，膨胀会放大每次写的网络与磁盘开销）'
+
+  # ===== 销售订单交付/退货域 =====
+  - id: INV-029
+    domain: order-sales
+    name: 销售订单交付/退货不改变产品库存
+    rule: '销售订单行 deliveredQty 的增减（交付/退货）只驱动订单状态，不参与库存投影；products.stock 仅由「库存订单行 deliveredQty」汇总而来'
+    expression: "saleDeliverSave/saleReturnSave 改 orders.items[].deliveredQty 后【不】调 syncStockFromInvOrders();\nsyncStockFromInvOrders 只汇总 orderTypeOf(o)==='库存订单' 的行"
+    guaranteed_by: [saleDeliverSave, saleReturnSave, syncStockFromInvOrders]
+    file: 'index.html:2844-2846（交付）/ 2891-2898（退货）/ 3496-3499（投影只取库存订单）'
+    status: enforced
+    violation_consequence: |
+      若误把销售交付接入库存同步（或在 syncStockFromInvOrders 里放开 orderType 过滤），
+      会把「客户提货」当成「库存变动」→ 库存被销售订单重复计量，全系统库存口径崩溃。
+    note: |
+      这是与调拨（E-003）/报工回写（E-019）的关键区别：那两条路径确实联动库存（库存订单行），
+      而销售交付/退货【只写单表 orders】。反查 deliveredQty 写入方时必须按 orderType 区分。
+      相关边：E-042/E-043/E-044（交付）、E-046/E-047/E-048（退货）。
+
+  - id: INV-030
+    domain: order-sales
+    name: 销售订单交付行级上限 = min(未交付, 可调用余量)
+    rule: 'saleDeliverSave 行级校验：本次交付 ≤ min(未交付(=orderQty−deliveredQty), saleMaxCallable(it))；越限整批拒绝'
+    expression: 'maxRow = min(max(0, orderQty−deliveredQty), max(0, calledQty − max(0, deliveredQty−directDelivered)))'
+    guaranteed_by: [saleDeliverSave, saleMaxCallable]
+    file: 'index.html:2831-2843 / 2748-2750'
+    status: enforced
+    violation_consequence: '放行会允许交付量超过已调用库存，形成无库存支撑的交付（账实不符）'
+    note: |
+      saleMaxCallable 口径（.108）：期初直接交付基数 directDelivered 不消耗调用额度，
+      只有超出 directDelivered 的已交付才从 calledQty 扣减。退货会下调 directDelivered（:2895），
+      因此「退货 → 交付上限」存在联动，改动任一侧都需重新验证本不变量。
+
+  - id: INV-031
+    domain: order-inventory
+    name: 库存打通迁移必须「先反填、后对齐」
+    rule: 'backfillInvDeliveredFromStock 必须在 syncStockFromInvOrders 之前执行（initApp 与 restoreBackup 均如此）'
+    expression: 'initApp: backfillInvDeliveredFromStock() → syncStockFromInvOrders()（行序即执行序）'
+    guaranteed_by: 'initApp / restoreBackup 的语句行序（无显式断言）'
+    file: 'index.html:6033-6034 / 5920-5921'
+    status: enforced
+    violation_consequence: |
+      顺序颠倒 → syncStockFromInvOrders 先按「库存订单行 deliveredQty 合计 = 0」把有订单产品的 stock 归零，
+      backfill 随后把 0 反填回去 → 存量库存永久丢失（不可逆，且幂等机制会「记住」已反填的 0）。
+    note: |
+      ⚠️ 本不变量【仅靠代码行序保证】，无测试、无断言、无注释强制。
+      重构 initApp / restoreBackup 的迁移顺序时极易被无意破坏。相关边：E-054/E-055/E-058。
+      对应既有注释在 index.html:6032（「先反填…再同步」）与 3453-3455。
+
+# ----------------------------------------------------------------------------
+# gap 汇总（改动前必看）
+# ----------------------------------------------------------------------------
+gap_summary:
+  red:
+    - { id: INV-020, name: 多表写入无事务, impact: '数据永久不一致且无自愈路径' }
+    - { id: INV-023, name: 'deliveryIdx 索引弱引用（delDelivery 破坏）', impact: '已计划未交付静默算错' }
+    - { id: INV-027, name: 无并发冲突检测（lost update）, impact: '多端编辑丢数据' }
+  orange:
+    - { id: INV-021, name: 表注册表一致性, impact: '静默丢数据' }
+    - { id: INV-022, name: initApp 加载完整性, impact: '整键覆盖丢数据' }
+    - { id: INV-005, name: calledQty 截断无自愈, impact: '台账与累计不等' }
+    - { id: INV-006, name: directDelivered 行序漂移, impact: '后续交付被拦' }
+    - { id: INV-024, name: 索引即主键漂移, impact: '关联挂错行' }
+    - { id: INV-025, name: 权限双层次粒度不一致, impact: '越权写入' }
+  yellow:
+    - { id: INV-009, name: 报工非纯 appendonly, impact: '可追溯性下降' }
+    - { id: INV-014, name: 交付计划超量仅软提示, impact: '可放行超量' }
+    - { id: INV-019, name: 字段引擎强耦合, impact: '改配置即改全部表单行为' }
+    - { id: INV-016, name: 守卫位置未核实, impact: '需人工补齐证据', status: 未核实 }
+    - { id: INV-031, name: '库存打通「先反填后对齐」仅靠行序保证', impact: '重构 initApp 顺序颠倒 → 存量库存永久丢失' }
+
+# 需人工确认后再定级
+unverified:
+  - { id: INV-016, subject: '已取消/已暂停订单禁推交付计划的守卫位置', status: 未核实 }

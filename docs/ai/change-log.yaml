@@ -1,0 +1,395 @@
+# ============================================================================
+# change-log.yaml —— 结构性变更记录
+# 系统：辰微生产排产系统（prod-scheduler）
+# 对应 build：2026-09-09.122
+#
+# 用途：回答「以前改过什么、怎么迁移的、怎么回滚」。
+#       排查回归时对照 affected_ids；设计新迁移时对照 migration 写法（尤其幂等策略）。
+#
+# type 三态：
+#   structural      —— 结构变更（新增/删除表、字段、模块拆分）
+#   rule            —— 业务规则/口径变更（例如库存口径、状态机规则）
+#   data-migration  —— 存量数据迁移（一次性修复/对齐）
+#
+# 字段说明：
+#   date            —— 变更日期
+#   build           —— 版本号（与页面右下角 build 标记一致）
+#   type            —— structural | rule | data-migration
+#   summary         —— 一句话说明做了什么
+#   affected_ids    —— 影响的 domain-map / dependency-map 节点 id
+#   migration       —— 存量数据怎么处理（无则写 none）
+#   rollback        —— 如何回滚
+#   author          —— 变更人
+#   verification    —— 如何验证（建议留可执行的检查项）
+# ============================================================================
+version: 1
+updated: '2026-09-09'
+build: '2026-09-09.122'
+
+changes:
+
+  # ===== 本次：补齐「单表命令」写入链路（QA FAIL 修复）=====
+  - date: '2026-09-09'
+    build: '2026-09-09.122'
+    type: structural
+    summary: |
+      修复手册依赖反查缺口：补登 3 条此前遗漏的「只写 orders 单表但会触发投影重算」的写入链路——
+      ① 销售订单交付 saleDeliverSave（order.deliver）② 销售订单退货 saleReturnSave（order.return）
+      ③ 库存打通迁移 backfillInvDeliveredFromStock；并补登 order.upsert(saveOrder) 对 deliveredQty 的整体重建写入（E-060），
+      以及 system.bootstrap/restore/clear 迁移链对 deliveredQty 的写入边。
+    affected_ids: [entities.orders.items.deliveredQty, entities.orders, projections.orders.status, projections.products.stock, INV-029, INV-030, INV-031, E-042, E-043, E-044, E-045, E-046, E-047, E-048, E-052, E-053, E-054, E-055, E-056, E-057, E-058, E-059, E-060]
+    not_affected_ids_note: '本次仅修改 docs/ai/ 下文件，未触碰任何业务源码（index.html / js / server 均未改）。'
+    files_changed:
+      - docs/ai/dependency-map.yaml（新增 19 条边 E-042~E-060、11 个节点、HR-004 链路、DUV-004 调用点归属、修正 backfill 行号）
+      - docs/ai/flows.yaml（新增 order.deliver / order.return 两个 flow；重写 system.bootstrap 补迁移链 write_set 与顺序语义；修正 inventory.rebuild 的 backfill 行号；write_set_overlap 补单表命令家族）
+      - docs/ai/domain-map.yaml（orders.writers 补 saleDeliverSave/saleReturnSave；新增 order.deliver/order.return 命令；修正 products save 行号）
+      - docs/ai/invariants.yaml（新增 INV-029 销售交付/退货不改库存、INV-030 交付行级上限、INV-031 先反填后对齐）
+      - docs/ai/README.md（读取协议补「单表命令也要查」铁律、锚点表补交付/退货/反填、风险表补第 7 条）
+      - docs/ai/change-log.yaml（本条目 + 修正 backfill 行号）
+      - docs/ai/_tools/validate.py（由 _validate.py 迁入 _tools/，补用途/跑法说明头）
+    root_cause: |
+      首版手册的侦察偏向「跨表命令」（saveOrder/applyTransfers/writebackInbound/kdDoImport），
+      忽略了「只写单表、但会触发 syncOrderAutoStatus 投影重算」的命令族（交付/退货/迁移）。
+      修复方法：把 syncStockFromInvOrders()/syncOrderAutoStatus() 的全部 12 个调用点逐一归属（见 dependency-map.yaml#unverified.DUV-004）。
+    migration: none
+    rollback: 'git checkout docs/ai/ 即可回退（不影响业务数据）。'
+    author: 寇豆码（软件工程师）
+    verification:
+      - 'python docs/ai/_tools/validate.py  → 结果：PASS'
+      - '反查测试：对 entities.orders.items.deliveredQty 反查，写入方应含 order.upsert/order.deliver/order.return/transfer.apply/productionReport.complete/backfill/system.bootstrap/restore/clear（12 条）'
+    note: |
+      INV-031（先反填后对齐）此前仅靠代码行序保证，无断言；本次显式登记为不变量并列入 yellow 风险，
+      以便重构 initApp/restoreBackup 时被强制对照。
+
+  # ===== 本次：token 口径改写 + 证据精度修正（QA 回归遗留项）=====
+  - date: '2026-09-09'
+    build: '2026-09-09.122'
+    type: structural
+    summary: |
+      按 QA 回归意见收尾：① README 的 token 预算声明改为「索引·分层预算」口径
+      （反查 1.5–3k / 单领域 8–12k / 跨领域 15–20k，并给出 grep 分段实操）；
+      ② 全局修正虚构/旧函数名（restoreAll→restoreBackup、ppEditReport→ppSaveReportEdits、
+      genOrderFromProduct→bulkGenOrder、saveProcessTpl→saveTpl、delProcessTpl→delTpl，
+      并订正 fields/fieldsDraft/fieldsAudit 的写入方——当前 build 无字段设置页签）；
+      ③ 对全部 60 条边做行号自动核对，修正 ~30 处漂移/语义不符。
+    affected_ids: [E-002, E-003, E-004, E-007, E-009, E-014, E-016, E-022, E-024, E-025, E-026, E-027, E-028, E-029, E-030, E-032, E-033, E-035, E-036, E-038, E-058, E-059]
+    not_affected_ids_note: '本次仅修改 docs/ai/ 下文件，未触碰任何业务源码。'
+    files_changed:
+      - docs/ai/README.md（1.1 读取协议重写为索引+分层预算；锚点表 restoreBackup 行号）
+      - docs/ai/dependency-map.yaml（函数名、60 条边行号核对、HR-001/002/003/004 write_set 行号）
+      - docs/ai/flows.yaml（transfer.apply / productionReport.complete / jindie.import 的 write_set 行号）
+      - docs/ai/domain-map.yaml（fields/fieldsDraft/fieldsAudit 写入方按现状订正；processTemplates 写入方；products save 行号）
+      - docs/ai/invariants.yaml（INV-005/006/008/009 等 file 行号；INV-020 写入计数行号）
+      - docs/ai/_tools/_check_evidence.py（新增：一次性行号核对脚本，核对后删除）
+    root_cause: |
+      首版手册的函数名与行号多为「按记忆书写」，未逐一回源码核对 → 出现不存在的函数名（restoreAll 等）
+      与批量行号漂移（浅的 3–5 行，深的 10–20 行）。
+    migration: none
+    rollback: 'git checkout docs/ai/ 即可回退（不影响业务数据）。'
+    author: 寇豆码（软件工程师）
+    verification:
+      - 'python docs/ai/_tools/validate.py  → 结果：PASS（60/60 边被 reverse_index 覆盖）'
+      - '行号核对：60 条边逐条打印实际源码行，语义全部对得上（漂移已修正）'
+      - '函数名核对：docs 引用中不再有虚构函数（余下未匹配项均为 JS 内置/方法名之类的误报）'
+    note: |
+      本轮「行号核对」脚本已删除；如需复现，按 README 第 1.1 节的 grep 手法逐段比对即可。
+
+  # ===== 本次：建立 AI 架构记忆手册 =====
+  - date: '2026-09-09'
+    build: '2026-09-09.122'
+    type: structural
+    summary: '建立 docs/ai/ 架构记忆手册（6 份文件），把「文件级拆分」升级为「依赖级索引」；修正过去 AI 改动 A 模块时反复遗漏业务关联模块的问题。'
+    affected_ids: []
+    not_affected_ids_note: '本次不修改任何业务源码（index.html / server / js 均未触碰），仅新增 docs/ai/ 目录。'
+    files_added:
+      - docs/ai/README.md
+      - docs/ai/domain-map.yaml
+      - docs/ai/dependency-map.yaml
+      - docs/ai/invariants.yaml
+      - docs/ai/flows.yaml
+      - docs/ai/change-log.yaml
+    migration: none
+    rollback: '直接删除 docs/ai/ 目录即可（无代码依赖）。'
+    author: 寇豆码（软件工程师）
+    verification:
+      - 'python -c "import yaml,glob; [yaml.safe_load(open(f,encoding=\"utf-8\")) for f in glob.glob(\"docs/ai/*.yaml\")]"'
+      - '人工抽查：dependency-map.yaml 每条边的 file:行号 能在源码中定位到对应内容'
+      - '人工抽查：Invariants 中 status=gap 的条目确实在代码中无防护'
+    note: |
+      手册当前描述「现状」，其中已知缺陷以 status: 现状缺陷 / gap: true 标注，未把建议写成现状。
+      本次核对源码时发现的「手册约定事实」与「代码实际」的差异，已记录在
+      docs/ai/README.md 第六节「当前已知的系统性风险」中。
+
+  # ===== 历史关键变更（据代码注释与迁移函数重建，供 AI 理解现状成因）=====
+  # 说明：以下条目由代码内注释（形如 2026-08-25.20）与迁移函数名反推，
+  #       属于「依据代码证据重建的历史」，不是当时的原始变更记录。
+  #       行号与函数名均可在当前源码中验证；日期/build 号取自代码注释。
+
+  - date: '2026-08-23'
+    build: '2026-08-23'
+    type: rule
+    summary: '确立「库存完全由库存订单驱动」口径：products.stock 恒等于 Σ(库存订单行 deliveredQty)，无库存订单的产品库存一律归零。'
+    affected_ids: [entities.products, entities.orders, projections.products.stock, INV-001]
+    migration:
+      function: backfillInvDeliveredFromStock()
+      file: 'index.html:3456-3487（调用点 :6033 initApp / :5920 restoreBackup）'
+      strategy: |
+        先把产品现有库存反填到对应的库存订单已交付数量（使不变量立即成立），
+        再执行 syncStockFromInvOrders() 全量对齐。
+        幂等策略：仅对「当前已交付合计为 0 且库存 > 0」的产品执行；已有交付或库存 ≤ 0 的跳过。
+        分配算法：按各库存订单行 orderQty 比例分配；sumQty=0 时平均分配（余数给第一行）。
+    rollback: '无自动回滚。回滚需从备份恢复订单数据（backups/ 目录或 system.restore）。'
+    author: 依据代码注释推断（2026-08-23 用户确认口径）
+    verification:
+      - '对每个产品：Σ(库存订单行 deliveredQty) === products[].stock'
+      - '不存在「无库存订单但 stock > 0」的产品'
+    note: '这是当前库存模型的地基。改此口径会牵动 INV-001/002/003 与全部读库存的渲染路径。'
+
+  - date: '2026-08-25'
+    build: '2026-08-25.3'
+    type: rule
+    summary: '引入订单状态自动规则：整单未交付合计为 0 → 自动「已完成」，否则「执行中」；「已取消/已暂停」为手动状态不被自动覆盖；「待排产」状态废弃（存量迁移为「执行中」）。'
+    affected_ids: [entities.orders.status, projections.orders.status, INV-010, INV-011, INV-012, INV-013]
+    migration:
+      function: migrateOrderStatusData()
+      file: 'index.html:2833-2842'
+      strategy: |
+        ① 存量 status='待排产' → '执行中'（若 changed 则 save + logOp）
+        ② 调 syncOrderAutoStatus(true)（silent，仅统计不逐条记日志）
+        幂等策略：条件为 status 值判断，重复执行不产生副作用。
+    rollback: '无自动回滚（状态为推导结果，回滚需从备份恢复）。'
+    author: 依据代码注释推断（build .3）
+    verification:
+      - "不存在 status === '待排产' 的订单"
+      - '对每个订单：status 与 orderUndelTotal(o) <= 0 的判定自洽（除非 status 为已取消/已暂停）'
+    note: 'orderUndelTotal 对每行取 max(0, 数量 - deliveredQty)。库存订单的数量口径为 stockMax（.92）。'
+
+  - date: '2026-08-25'
+    build: '2026-08-25.35'
+    type: data-migration
+    summary: '存量销售订单明细行回填「已调用数量」calledQty：从调拨台账（未冲销记录）统计，type=call 累加、type=return 扣减，下限 0。'
+    affected_ids: [entities.orders.items.calledQty, entities.transfers, projections.order.calledQty, INV-005]
+    migration:
+      function: migrateOrderCalledQty()
+      file: 'index.html:2286-2317'
+      strategy: |
+        map[orderId|lineIdx] += (type==='call' ? +qty : -qty)，跳过 reversed=true 的原记录。
+        回填时机为启动迁移链（initApp，index.html:6038）。
+        幂等策略：**已有 calledQty 的行直接跳过**（`if(it.calledQty!=null&&it.calledQty!=='')return;`）。
+        无调拨记录但有 deliveredQty 的行 → 补 0 兜底。
+    rollback: '无。calledQty 为增量维护字段，回滚需从备份恢复。'
+    author: 依据代码注释推断（build .35）
+    verification:
+      - '对每个销售订单行：calledQty === max(0, Σ(未冲销 call 台账 qty) − Σ(未冲销 return 台账 qty))'
+    known_gap: |
+      ⚠️ 幂等策略是「已有值则跳过」——这意味着**一旦写入错误值，后续启动不会自动修正**。
+      且系统没有 calledQty 的全量重算函数（对照 syncStockFromInvOrders 有），
+      因此 calledQty 无法自愈（见 INV-005 gap_detail）。
+      若需修复，建议以本函数逻辑为蓝本写一个带 `--force` 的重算脚本。
+
+  - date: '2026-08-25'
+    build: '2026-08-25.17 / .33 / .34 / .54'
+    type: rule
+    summary: '确立「已计划未交付」新口径与行级化：由「Σ交付计划.planQty − Σ名下排产单入库累计（排除已取消）」实时计算，不落库；.33 按 orderLine 行级化，.54 补存量排产单反查兜底。'
+    affected_ids: [projections.order.plannedUndelivered, entities.deliveries.items.orderLine, INV-014, INV-024]
+    migration:
+      function: migrateDeliveryOrderLine()
+      file: 'index.html:6015（initApp 中调用）'
+      strategy: |
+        存量交付计划行回填 orderLine（来源订单行索引）。
+        新的 key 模型：行级 key = orderId|L{orderLine}；无 orderLine 退回产品级 key = orderId|productId。
+        .54 补丁：存量排产单（无 dlLine）按 productId 反查交付计划行，唯一匹配时取 orderLine 归行级，多行歧义保持产品级。
+    rollback: '无。口径为渲染期实时计算，回滚只需回滚代码（不涉及数据）。'
+    author: 依据代码注释推断（build .17/.33/.34/.54）
+    verification:
+      - '构造「同产品多行订单 + 两份交付计划」场景，核对各行「已计划未交付」分别正确'
+      - '构造「排产单删除/取消」场景，核对已计划未交付自动恢复'
+    known_gap: |
+      ⚠️ 行级 key 依赖 orderLine（订单行索引），订单编辑增删行后索引漂移 → key 错位。
+      代码注释 index.html:2490 已自陈该风险（同 .24 dlLine 同款），但无防护（INV-024）。
+
+  - date: '2026-08-25'
+    build: '2026-08-25.16'
+    type: rule
+    summary: '建立「报工入库 → 回写订单已交付」链路：排产单入库工序报工增量回写订单对应明细行 deliveredQty（允许超过订单数量）；.40 行级化（dlLine/orderLine 精确回写）。'
+    affected_ids: [entities.productionPlans.items.doneQty, entities.orders.items.deliveredQty, projections.products.stock, INV-004, INV-007]
+    migration: 'none（新链路，无存量数据需迁移）'
+    rollback: '代码回滚后，已回写的 deliveredQty 需人工核算（或从备份恢复）。'
+    author: 依据代码注释推断（build .16/.40）
+    verification:
+      - '报工 → 核对订单行 deliveredQty 增量 === 报工入库数量'
+      - '删除报工 → 核对订单行 deliveredQty 精确回退'
+      - '库存订单报工 → 核对 products.stock 跟随变化'
+
+  - date: '2026-08-25 / 2026-09-05'
+    build: '2026-08-25.20 / .29 / 2026-09-05.97 / .108'
+    type: rule
+    summary: '确立四条关键口径：① 库存订单 deliveredQty 允许负数（欠货）；② 只有「待排产」的排产单可删除；③ writebackInbound 仅服务库存订单（销售订单已交付改由交付/退货驱动）；④ 金蝶导入的期初已交付标记 directDelivered，不占用调用额度。'
+    affected_ids: [INV-002, INV-008, INV-007, INV-006, entities.orders.items.directDelivered]
+    migration:
+      items:
+        - { aspect: 'INV-007（.97 迁移）', note: '销售订单已交付交由交付/退货驱动；.95 后排产单只从库存订单下推' }
+        - { aspect: 'INV-006（.108）', note: '导入时 deliveredQty>0 且 calledQty 无值 → 标记 directDelivered，避免行级上限把全部已交付当作已消耗调用额度' }
+    rollback: '无自动回滚。'
+    author: 依据代码注释推断
+    verification:
+      - '库存订单能否记出负 deliveredQty（调用超量场景）'
+      - '非「待排产」排产单的删除入口是否被拦'
+      - '对销售订单报工，核对 deliveredQty 是否变化（应不变）'
+    note: |
+      ⚠️ 注释滞后：index.html:4615 的注释仍写「销售/库存订单都回写」，
+      与 4580 行代码（if(orderTypeOf(o)!=='库存订单')return）矛盾。
+      以代码为准。建议后续清理该注释。
+
+  - date: '2026-09-01'
+    build: '2026-09-01.102'
+    type: structural
+    summary: '单文件架构拆分（批次 2）：把操作日志模块从 index.html 提取为 js/logs.js（logs 变量 / logOp / renderLogs / clearLogs）。'
+    affected_ids: [entities.logs, commands.log.append]
+    files_changed: [index.html, js/logs.js]
+    migration: none
+    rollback: '把模块内容合回 index.html 并移除 <script src="js/logs.js">'
+    author: 依据 js/logs.js 文件头注释推断（build .102）
+    verification:
+      - 'js/logs.js 在 index.html 中通过 <script> 引入且在 index.html 之前执行'
+      - 'logOp 全局可见（全系统 73 处调用）'
+    note: 'js/logs.js 文件头注释写明「logOp 被全系统 75 处调用」，实测 grep 为 73 处（index.html 64 + import.js 3 + transfer.js 4 + logs.js 2）。数字微差，以 grep 为准。'
+
+  - date: '2026-09-06'
+    build: '2026-09-06.115'
+    type: structural
+    summary: '调拨台账引入「双侧方向模型」：记录存 out*（调出）/ in*（调入）两侧，各带 orderType + lineIdx + productId；类型 6 态（call/return/conv/move/conv_back/move_back）；旧键 salesOrderId/invOrderId 废止。'
+    affected_ids: [entities.transfers, commands.transfer.apply, commands.transfer.conv, commands.transfer.move, commands.transfer.reverse, projections.order.calledQty]
+    files_changed: [js/transfer.js, index.html]
+    migration:
+      script: _migrate_transfers.js（仓库根目录）
+      strategy: '迁移 122 条存量记录到双侧模型'
+      helper_functions: [trSide（含旧结构推导兜底）, trSnapOf（台账快照兜底）]
+    rollback: '需回滚 _migrate_transfers.js 的逆操作 + 代码回滚（脚本未提供逆操作）。'
+    author: 依据代码注释推断（build .115）
+    verification:
+      - '每条 transfers 记录都有 outOrderId 与 inOrderId'
+      - 'trSide(t,"out") 与 trSide(t,"in") 均能取到有效 orderId'
+      - '冲销后生成 conv_back/move_back 类型且 reverseOf 指向原记录 id'
+
+  - date: '2026-09-08'
+    build: '2026-09-08.118 / .119'
+    type: structural
+    summary: '权限模型两次演进：.118 orders 权限点拆分为 saleOrders/invOrders（销售/库存分人管控）；.119 新增按钮级动作权限 perms.acts（FORM_ACTS 15 个动作键）。'
+    affected_ids: [entities.fields, INV-025]
+    files_changed: [server/server.js, index.html]
+    migration:
+      function: 'server.js:73-88 的启动迁移 + STAFF_PERMS / ACT_KEYS 常量'
+      strategy: |
+        .118：旧 perms.orders=true → saleOrders 与 invOrders 双开（不缩权限）。
+        .119：存量员工无 perms.acts → ACT_KEYS 全键开启（升级后按钮显隐与 .118 一致不缩水）；
+              管理员在员工面板保存该员工后 acts 固化，可逐键收敛。
+        幂等策略：以「键是否存在」为判断条件。
+    rollback: '权限数据回滚需手工改 users.json。'
+    author: 依据 server.js 代码注释推断（build .118/.119）
+    verification:
+      - 'server ACT_KEYS 的 15 个键与前端 FORM_ACTS 的键集合完全一致'
+      - '调用 /api/users 确认 staff 的 perms.acts 已固化'
+    known_gap: |
+      ⚠️ 前端 FORM_ACTS 与 server ACT_KEYS 是两份独立维护的键集合，
+      目前无自动一致性校验（INV-025 gap_detail 第 3 点：perms.orders 历史键仍被两侧接受，口径不一致）。
+
+  - date: '2026-09-09'
+    build: '2026-09-09.122'
+    type: structural
+    summary: '新增 server.js /api/save 的兜底加固：若提交的 key 在 DEFAULT_DATA 中但当前 data.json 缺该键，自动补键（兼容线上旧 data.json 缺键场景）；真未知表仍返回 400。同时日排产模块（dailyPlans / dailyPkgs）整体移除（dailyPlans 仅余为权限键）。'
+    affected_ids: [INV-021, INV-022]
+    files_changed: [server/server.js]
+    evidence: 'server/server.js:24（注释）.122 / :54-55 / :159-167（加固代码）'
+    migration: 'none（dailyPlans/dailyPkgs 表已不存在，无需迁移；权限键 dailyPlans 保留复用为「排产计划」页权限）'
+    rollback: '代码回滚'
+    author: 依据 server.js 代码注释推断（build .122）
+    verification:
+      - '对已登记但 data.json 缺键的表调用 /api/save → 应自动补键并保存成功'
+      - '对未登记的表调用 /api/save → 应返回 400「未知数据表」'
+    known_gap: |
+      ⚠️ 该加固**未解决**「新表未登记 DEFAULT_DATA」场景（INV-021 的 partial）。
+      未登记时仍返回 400；若前端调用方传 silent=true（如 transfers），失败完全静默。
+
+  # ===== 历史事故（从注释与代码补丁反推）=====
+  - date: '未标注'
+    build: null
+    type: data-migration
+    summary: '【历史事故】transfers 表曾漏登记 server.js 的 DEFAULT_DATA，导致保存时被拒、静默丢失 103 条调拨台账记录。'
+    affected_ids: [entities.transfers, INV-021]
+    migration:
+      note: '未见针对性修复脚本；推测通过补登记 DEFAULT_DATA + 重新录入/从备份恢复解决。'
+      related_script: _migrate_transfers.js（2026-09-06 的 122 条记录迁移，可能部分覆盖该修复）
+    rollback: '不适用（事故本身）'
+    author: 依据 team-lead 交接说明与 server.js:16-26 现存登记记录推断
+    verification:
+      - '断言 Object.keys(DEFAULT_DATA) 覆盖前端所有 save(key) / DB.set(key) 的 key 集合'
+    known_gap: |
+      ⚠️ 本条目为「事故复盘记录」，非代码证据。日期与 build 未在代码中标注（已按铁律标为未标注）。
+      建议补充 CI 检查：扫描前端 save('key') / DB.set('key') 与 DEFAULT_DATA 求差集，差异即报错（INV-021 remediation_hint）。
+
+  # ===== 模板（新增变更时复制此结构）=====
+  # - date: 'YYYY-MM-DD'
+  #   build: 'YYYY-MM-DD.NNN'
+  #   type: structural | rule | data-migration
+  #   summary: '一句话说明做了什么'
+  #   affected_ids: [domain-map / dependency-map 中的节点 id]
+  #   files_changed: [index.html, server/server.js, js/xxx.js]
+  #   migration:
+  #     function: '函数名 / 脚本名'
+  #     file: 'file:行号'
+  #     strategy: |
+  #       存量数据怎么处理；**幂等策略必须写明**
+  #   rollback: '如何回滚（无则写 none 并说明人工手段）'
+  #   author: '姓名'
+  #   verification:
+  #     - '可执行的检查项'
+  #   known_gap: |
+  #     ⚠️ 本次变更引入/遗留的缺口（若使某条不变量降级，必须在此写明并同步改 invariants.yaml）
+
+# ----------------------------------------------------------------------------
+# 变更类型统计与索引
+# ----------------------------------------------------------------------------
+index:
+  by_type:
+    structural: ['2026-09-09(ai-docs)', '2026-09-01(logs拆分)', '2026-09-06(transfers方向模型)', '2026-09-08(权限拆分+按钮级动作)', '2026-09-09(/api/save加固+日排产移除)']
+    rule: ['2026-08-23(库存口径)', '2026-08-25(状态自动规则)', '2026-08-25(已计划未交付新口径)', '2026-08-25(报工回写链路)', '2026-08-25/09-05(四条关键口径)']
+    data-migration: ['2026-08-25(calledQty回填)', '未标注(transfers 103条丢失事故)']
+  by_affected_id:
+    INV-001: ['2026-08-23']
+    INV-002: ['2026-08-25/09-05']
+    INV-004: ['2026-08-25(报工回写链路)']
+    INV-005: ['2026-08-25(calledQty回填)']
+    INV-006: ['2026-08-25/09-05']
+    INV-007: ['2026-08-25/09-05']
+    INV-008: ['2026-08-25/09-05']
+    INV-010: ['2026-08-25(状态自动规则)']
+    INV-011: ['2026-08-25(状态自动规则)']
+    INV-012: ['2026-08-25(状态自动规则)']
+    INV-013: ['2026-08-25(状态自动规则)']
+    INV-014: ['2026-08-25(已计划未交付新口径)']
+    INV-021: ['未标注(transfers 103条丢失事故)', '2026-09-09(/api/save加固+日排产移除)']
+    INV-022: ['2026-09-09(/api/save加固+日排产移除)']
+    INV-024: ['2026-08-25(已计划未交付新口径)']
+    INV-025: ['2026-09-08(权限拆分+按钮级动作)']
+    entities.transfers: ['2026-09-06(transfers方向模型)', '未标注(transfers 103条丢失事故)']
+    projections.order.calledQty: ['2026-08-25(calledQty回填)', '2026-09-06(transfers方向模型)']
+    projections.products.stock: ['2026-08-23', '2026-08-25(报工回写链路)']
+    projections.order.plannedUndelivered: ['2026-08-25(已计划未交付新口径)']
+
+# ----------------------------------------------------------------------------
+# 未核实
+# ----------------------------------------------------------------------------
+unverified:
+  - id: CUV-001
+    subject: 'transfers 丢失 103 条台账事故的确切日期、build 号、当时是否有恢复脚本'
+    status: 未核实
+    reason: '代码中无该事故的注释标记；本次按其为交接说明中的事实记录，未在源码中找到直接证据'
+  - id: CUV-002
+    subject: 'backups/ 目录与 deploy.sh / rollback.sh 的实际回滚能力边界'
+    status: 未核实
+    reason: '本次仅新增 docs/ai/，未展开运维脚本；rollback 字段中的「从备份恢复」建议需与 rollback.sh 实际行为核对'
+  - id: CUV-003
+    subject: '2026-08-23 之前的历史变更（build < .17）'
+    status: 未核实
+    reason: '代码注释仅保留部分 build 标记；本文件只重建了能被当前代码证据支撑的条目'
