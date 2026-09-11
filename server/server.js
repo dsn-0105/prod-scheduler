@@ -252,11 +252,15 @@ function canWrite(user, key, ctx) {
   }
 }
 
-/* 日志记录等价判定（口径同设计 §5.2：time/action/target/detail/field） */
+/* 日志记录等价判定（口径同设计 §5.2：time/action/target/detail/field）
+   【build .125】user 纳入比较：logs 表新增「操作者」字段后，若此判定漏掉 user，
+   则「整表把 user 改掉」的形状会被判为「逐条相同」而放行（等于该字段可被任意改写而不被察觉）。
+   两缺省都以 '' 归并：历史条目无 user（undefined）与空串等价，不影响既有 append 白名单形状。 */
 function sameLog(a, b) {
   if (!a || !b) return false;
   return a.time === b.time && a.action === b.action && a.target === b.target
-    && a.detail === b.detail && (a.field || '') === (b.field || '');
+    && a.detail === b.detail && (a.field || '') === (b.field || '')
+    && (a.user || '') === (b.user || '');
 }
 
 /* logs「只追加」白名单（设计 §5.2.2 **v2**，最终冻结版）：允许前插若干条（触发上限时旧尾滑出）

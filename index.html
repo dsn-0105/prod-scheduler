@@ -397,7 +397,9 @@ const DB={
   },
   /* 【安全 P0·④】保存时携带 expectedRev（乐观锁）：
      服务端 rev 与本地不同 → 409，说明他人已改过该表，本次保存被拒绝并提示刷新，
-     **不做自动合并/自动重试**（宁可让用户重做，也不做可能算错的合并）。 */
+     **不做自动合并/自动重试**（宁可让用户重做，也不做可能算错的合并）。
+     【.125·B】与 DB.tx 同根因同处理：全部失败分支都 pullAll + rehydrateFromServer()
+       —— 此前 DB.set 的 !ok 分支既不拉数据也不回灌，是「只修一半」的漏点。 */
   async set(k,v,silent){
     if(API_BASE){
       try{
@@ -405,10 +407,13 @@ const DB={
         if(r.status===409){
           /* 冲突：先拉最新数据让页面显示当前真实状态，再提示用户刷新后重做 */
           try{await pullAll();}catch(_e){}
+          rehydrateFromServer();   /* .125·B：失败即回灌业务内存（不再只刷缓存） */
           if(!silent)alert('数据已被他人修改，请刷新后重新操作。\n（本次保存未生效，为避免覆盖他人改动已拦截）');
           return false;
         }
         if(!r.ok){
+          try{await pullAll();}catch(_e){}
+          rehydrateFromServer();   /* .125·B：此前该分支既不 pullAll 也不回灌 */
           if(!silent){
             let msg='保存失败('+r.status+')';
             try{const j=await r.json();if(j&&j.error)msg+='：'+j.error;}catch(_e){}
@@ -424,7 +429,13 @@ const DB={
         }catch(_e){serverRevs[k]=(serverRevs[k]||0)+1;}
         if(serverData)serverData[k]=v;
         return true;
-      }catch(e){if(!silent&&e&&e.message!=='unauthorized')alert('保存失败（网络异常）：'+e.message);return false;}
+      }catch(e){
+        if(e&&e.message==='unauthorized')return false;   /* 401：apiReq 已弹登录框，不做回灌 */
+        try{await pullAll();}catch(_e){}
+        rehydrateFromServer();   /* .125·B：网络异常同样回灌（pullAll 失败 → serverData 空 → 安全跳过） */
+        if(!silent)alert('保存失败（网络异常）：'+e.message);
+        return false;
+      }
     }
     localStorage.setItem(KEY+k,JSON.stringify(v));
     return true;
@@ -435,8 +446,10 @@ const DB={
      失败语义（沿用 .123 口径：宁可让用户刷新重做，也不做自动合并 / 自动重试）：
        409/403/400/500/网络异常 → 先 await pullAll() 复原内存 → 非 silent 时提示 → 返回 false
        401 → apiReq 已内置 showLogin()，此处不再重复提示
+     【.125·B】上句「复原内存」= pullAll 刷缓存 + rehydrateFromServer() 把**业务内存全局**
+       一并复位为服务器真值（此前只刷缓存，内存仍留乐观变更值，须 F5）。
      ops: [{key,value,expectedRev?}]；expectedRev 缺省取本地 serverRevs[key]（无则 0）。
-     返回 Promise<boolean>：true=全部落盘；false=一字未写（内存已被 pullAll 复原）。 */
+     返回 Promise<boolean>：true=全部落盘；false=一字未写（内存已回灌为服务器真值）。 */
   async tx(ops,silent){
     const list=(Array.isArray(ops)?ops:[]).filter(o=>o&&o.key);
     if(!list.length)return true;   /* 空提交：不发请求 */
@@ -448,16 +461,19 @@ const DB={
         const r=await apiReq('/tx',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         if(r.status===409){
           try{await pullAll();}catch(_e){}
+          rehydrateFromServer();   /* .125·B：失败即回灌业务内存（pullAll 已把 serverData 刷成真值） */
           if(!silent)alert('数据已被他人修改，请刷新后重新操作。\n（本次操作未生效：为避免覆盖他人改动，整批已拦截）');
           return false;
         }
         if(r.status===403){
           try{await pullAll();}catch(_e){}
+          rehydrateFromServer();   /* .125·B */
           if(!silent)alert('无该表单的编辑权限，本次操作未生效。');
           return false;
         }
         if(!r.ok){
           try{await pullAll();}catch(_e){}
+          rehydrateFromServer();   /* .125·B */
           if(!silent){
             let msg='保存失败('+r.status+')';
             try{const j=await r.json();if(j&&j.error)msg+='：'+j.error;}catch(_e){}
@@ -483,8 +499,9 @@ const DB={
         }
         return true;
       }catch(e){
-        if(e&&e.message==='unauthorized')return false;   /* 401：apiReq 已弹出登录框 */
+        if(e&&e.message==='unauthorized')return false;   /* 401：apiReq 已弹出登录框（会话已失效，不做回灌） */
         try{await pullAll();}catch(_e){}
+        rehydrateFromServer();   /* .125·B：网络异常（pullAll 也可能失败 → serverData 为空 → 本函数安全跳过） */
         if(!silent)alert('保存失败（网络异常）：'+e.message);
         return false;
       }
@@ -494,6 +511,33 @@ const DB={
     return true;
   }
 };
+/* 【P1·build 2026-09-11.125 · B】写失败后把**业务内存**回灌为服务器真值。
+   背景（.124 及以前登记在案的残留风险）：DB.set / DB.tx 的失败分支只 await pullAll() 刷新了
+   serverData / serverRevs 缓存，而调用方对业务内存的「乐观变更」并未回滚 —— 页面会停在算错的值上，
+   必须 F5 才复原（且失败后若用户继续点保存，会把脏值写回服务器）。
+   本函数按 initApp 的同一批 key（products/orders/deliveries/productionPlans/productionReports/
+   processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout）
+   从 serverData（pullAll 后 = 服务器真值）复位这批全局量。
+   刻意不做（与 initApp 的区别）：不 seed()、不跑 migrate*()、不 syncStockFromInvOrders()
+     —— 失败回灌只做「值复位」，不得触发任何写盘 / 迁移 / 派生投影副作用。
+   稳健性：serverData 未定义（网络异常时 pullAll 也失败）或缺少某 key 时**跳过该项**、保留现值，
+     绝不把全局量写成 undefined（否则后续渲染会整页崩）。 */
+function rehydrateFromServer(){
+  if(!serverData||typeof serverData!=='object')return;
+  if(serverData.products!==undefined)products=serverData.products;
+  if(serverData.orders!==undefined)orders=serverData.orders;
+  if(serverData.deliveries!==undefined)deliveries=serverData.deliveries;
+  if(serverData.productionPlans!==undefined)productionPlans=serverData.productionPlans;
+  if(serverData.productionReports!==undefined)productionReports=serverData.productionReports;
+  if(serverData.processTemplates!==undefined)processTemplates=serverData.processTemplates;
+  if(serverData.logs!==undefined)logs=serverData.logs;
+  if(serverData.transfers!==undefined)transfers=serverData.transfers;
+  if(serverData.fields!==undefined)fields=serverData.fields;
+  if(serverData.fieldsAudit!==undefined)fieldsAudit=serverData.fieldsAudit;
+  if(serverData.fieldsDraft!==undefined)fieldsDraft=serverData.fieldsDraft;
+  if(serverData.meta!==undefined)meta=serverData.meta;
+  if(serverData.tblLayout!==undefined)tblLayout=serverData.tblLayout||{};
+}
 /* ---- 实时同步：轮询版本号，有变化自动拉取刷新 ---- */
 async function pollRevs(){
   if(!API_BASE||!authToken)return;
@@ -2484,7 +2528,8 @@ function migrateDeliveryOrderLine(){
   if(changed){save('deliveries',deliveries);logOp('系统','交付计划','系统迁移：存量交付计划行回填来源订单行索引 orderLine');}
 }
 /* 旧数据迁移：平铺字段 → items[] */
-function migrateOrders(){
+/* 【P1·.125·A】纯变更器（只改内存 orders，不写盘）；供 restoreBackup 把 orders 并入同一次 DB.tx。 */
+function migrateOrdersMutation(){
   let changed=false;
   orders.forEach(o=>{
     if(!Array.isArray(o.items)||!o.items.length){
@@ -2493,7 +2538,11 @@ function migrateOrders(){
     }
     if(!o.orderType){o.orderType='销售订单';changed=true;}
   });
-  if(changed)save('orders',orders);
+  return changed;
+}
+/* 【P1 兼容包装】行为与改造前逐字一致：变更时落盘 orders。 */
+function migrateOrders(){
+  if(migrateOrdersMutation())save('orders',orders);
 }
 /* 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突（已为 KCDD- 的跳过；自定义单号按 startDate 重排） */
 function migrateInventoryOrderIds(){
@@ -2532,12 +2581,17 @@ function migrateInventoryOrderIds(){
 }
 /* 订单类型改名（一次性迁移）：原「框架订单」统一改名为「销售订单」（含存量数据）。
    仅对 orderType 仍为旧值的订单执行；新数据/已改名的不动（幂等）。 */
-function migrateFrameworkToSales(){
+/* 【P1·.125·A】纯变更器（只改内存 orders，不写盘/不记日志）；供 restoreBackup 并入同一次 DB.tx。 */
+function migrateFrameworkToSalesMutation(){
   let changed=false;
   orders.forEach(o=>{
     if(o.orderType==='框架订单'){ o.orderType='销售订单'; changed=true; }
   });
-  if(changed){ save('orders',orders); logOp('迁移','订单管理','订单类型「框架订单」统一改名为「销售订单」'); }
+  return changed;
+}
+/* 【P1 兼容包装】行为与改造前逐字一致：变更时落盘 orders + 记日志。 */
+function migrateFrameworkToSales(){
+  if(migrateFrameworkToSalesMutation()){ save('orders',orders); logOp('迁移','订单管理','订单类型「框架订单」统一改名为「销售订单」'); }
 }
 function orderItemOptions(selOrderId,selProductId){
   let out='';
@@ -3563,8 +3617,9 @@ function delOrder(idx){
 
 /* 库存打通（一次性迁移）：把产品主数据现有「库存/已交付数量」反填到对应库存订单的
    「已交付数量」，使 库存 = Σ(库存订单已交付) 在存量数据上立即成立，避免同步后库存被清零。
-   仅对「当前已交付合计为 0 且库存>0」的产品执行；已有交付或库存≤0 的跳过（幂等）。 */
-function backfillInvDeliveredFromStock(){
+   仅对「当前已交付合计为 0 且库存>0」的产品执行；已有交付或库存≤0 的跳过（幂等）。
+   【P1·.125·A】拆为「纯变更器 + 兼容包装」：restoreBackup 用纯变更器（orders 并入同一次 DB.tx）。 */
+function backfillInvDeliveredMutation(){
   let changed=false;
   products.forEach(p=>{
     if(p.stock==null||num(p.stock)<=0)return;
@@ -3591,7 +3646,11 @@ function backfillInvDeliveredFromStock(){
     }
     changed=true;
   });
-  if(changed){
+  return changed;
+}
+/* 【P1 兼容包装】行为与改造前逐字一致：变更时落盘 orders + 记日志（initApp 迁移链仍走此处）。 */
+function backfillInvDeliveredFromStock(){
+  if(backfillInvDeliveredMutation()){
     save('orders',orders);
     logOp('系统','库存打通','将产品现有库存按订单量比例反填到库存订单「已交付数量」（一次性对齐）');
   }
@@ -4420,17 +4479,40 @@ function copyProdPlan(i){
   prodPlanModal(-1,c);
 }
 /* 2026-08-25.27：排产计划禁止复制/新增，只能从交付计划下推——copyProdPlan 保留定义无入口（FORM_ACTIONS 无 copy 映射、批量栏无复制按钮） */
-function delProdPlan(i){
+/* 【P1·.125·A】原实现经 writebackInbound 旧包装 → save(orders) + save(products) + save(logs)
+   + 自身 logOp + save(productionPlans) = 5 次互不原子的独立写。
+   现改为：纯变更（writebackInboundMutation）+ 纯重算（recomputeStockFromInvOrders）全在内存完成，
+   日志条目入内存，最后只发 1 次 DB.tx（productionPlans + orders? + products? + logs）。
+   失败 → DB.tx 已 pullAll + rehydrateFromServer 复原内存并提示 → return，不渲染成功态。
+   注：writebackInbound 包装器本身**未改动**（外部语义照旧），saveProdPlan 仍走它（本轮不迁移）。 */
+async function delProdPlan(i){
   if(!needAct('prodPlan.ppDel'))return;   /* .119：动作键 prodPlan.ppDel（默认 PMC 删整单） */
+  const rec=productionPlans[i];
+  if(!rec)return;
   /* 2026-08-25.29：只有「待排产」的排产计划才能删除（生产中/已完成禁止，防破坏报工/订单回写） */
-  if(productionPlans[i].status!=='待排产'){alert('仅「待排产」的排产计划可以删除（当前：'+productionPlans[i].status+'）');return;}
-  if(!confirm('确认删除该排产计划「'+productionPlans[i].id+'」？'))return;
-  const p=productionPlans[i];
-  /* 2026-08-25.16：删除已报工（有入库累计）的排产单 → 扣回已回写的订单交付（防虚增交付）；.40 行级扣回 */
-  ppItems(p).forEach(it=>{const d=ppDoneOf(it);if(d>0)writebackInbound(p.orderId,it.productId,-d,ppOrderLineOf(p,it));});
-  logOp('删除','排产计划','删除「'+p.id+'」');
+  if(rec.status!=='待排产'){alert('仅「待排产」的排产计划可以删除（当前：'+rec.status+'）');return;}
+  if(!confirm('确认删除该排产计划「'+rec.id+'」？'))return;
+  const p=rec;
+  /* 2026-08-25.16：删除已报工（有入库累计）的排产单 → 扣回已回写的订单交付（防虚增交付）；.40 行级扣回。
+     .125：改为纯内存变更 + 日志入内存（不再经 writebackInbound 逐条 save/logOp） */
+  let ordersChanged=false;
+  ppItems(p).forEach(it=>{
+    const d=ppDoneOf(it);
+    if(d>0&&writebackInboundMutation(p.orderId,it.productId,-d,ppOrderLineOf(p,it))){
+      ordersChanged=true;
+      const tgt=inboundTargetOf(p.orderId,it.productId,ppOrderLineOf(p,it));
+      pushLogEntry(makeLogEntry('系统','库存打通','报工入库回写订单「'+p.orderId+'」'+((tgt&&tgt.it.productName)||it.productId)+' 已交付 -'+d));
+    }
+  });
+  const stockChanged=ordersChanged?recomputeStockFromInvOrders():false;   /* 纯重算：库存投影 */
+  pushLogEntry(makeLogEntry('删除','排产计划','删除「'+p.id+'」'));
   productionPlans.splice(i,1);
-  save('productionPlans',productionPlans);
+  const ops=[{key:'productionPlans',value:productionPlans}];
+  if(ordersChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  ops.push({key:'logs',value:logs});
+  const ok=await DB.tx(ops,false);
+  if(!ok)return;   /* 失败：一字未写、内存已回灌 → 不渲染、不清勾选 */
   renderContent();
   /* 2026-08-25.64：删除后清理勾选，防 splice 索引漂移幽灵选择 */
   selSet('prodPlan').delete(String(i));
@@ -5918,7 +6000,16 @@ function genDeliveryPlan(m){
 }
 
 /* 多选删除（一次确认） */
-function bulkDelete(m){
+/* 批量删除选中记录。
+   【P1·build 2026-09-11.125·A】原实现的两处非原子写：
+     · 每条选中记录各调一次 logOp → 每条触发一次 save('logs')（勾 20 条 = 20 次独立写 logs）；
+     · 业务表再 1 次 save → 合计 N+1 次互不原子、fire-and-forget 的写请求，
+       最坏情况是「业务表已删、日志只写了一半」。
+   现改为：日志条目先入内存（pushLogEntry + makeLogEntry，均不写盘），业务表 splice 完，
+   最后只发 1 次 DB.tx（业务表 + logs）。失败 → DB.tx 已 pullAll + rehydrateFromServer 复原内存
+   并提示 → 直接 return，不渲染成成功态（不清勾选、不 renderContent）。
+   其余业务口径（禁删校验、非待排产跳过、跳过提示文案）逐字保持原样。 */
+async function bulkDelete(m){
   const s=selSet(m);
   if(s.size===0){alert('请先在左侧勾选要删除的记录');return;}
   /* 2026-08-25.21：订单批量删除——勾选范围内存在已下推交付计划的订单时整批拒绝（防止破坏交付计划/排产链路） */
@@ -5929,23 +6020,28 @@ function bulkDelete(m){
   }
   if(!confirm('确认删除选中的 '+s.size+' 条记录？此操作不可撤销。'))return;
   const idxs=[...s].map(Number).sort((x,y)=>y-x);
+  /* .125：日志条目先入内存（不写盘）——文案与改造前逐字一致 */
   idxs.forEach(i=>{
     const rec=FORM_ACTIONS[m].get(i);
-    if(rec&&rec.id)logOp('删除',m,'删除「'+rec.id+'」');
-    else if(rec&&rec.orderId)logOp('删除',m,'删除「'+rec.orderId+'」');
-    else logOp('删除',m,'删除记录');
+    if(rec&&rec.id)pushLogEntry(makeLogEntry('删除',m,'删除「'+rec.id+'」'));
+    else if(rec&&rec.orderId)pushLogEntry(makeLogEntry('删除',m,'删除「'+rec.orderId+'」'));
+    else pushLogEntry(makeLogEntry('删除',m,'删除记录'));
   });
-  if(m==='product'){idxs.forEach(i=>products.splice(i,1));save('products',products);}
-  else if(m==='order'||m==='order_frame'||m==='order_inv'){idxs.forEach(i=>orders.splice(i,1));save('orders',orders);}
+  /* .125：业务表只做内存 splice（不写盘），并只把这**实际变化的那一张表**放进事务 */
+  let dataOp=null,blocked=[];
+  if(m==='product'){idxs.forEach(i=>products.splice(i,1));dataOp={key:'products',value:products};}
+  else if(m==='order'||m==='order_frame'||m==='order_inv'){idxs.forEach(i=>orders.splice(i,1));dataOp={key:'orders',value:orders};}
   else if(m==='prodPlan'){
     /* 2026-08-25.29：只有「待排产」的排产计划才能删除——待排产删除，非待排产（生产中/已完成）跳过并提示 */
-    const blocked=[];
     idxs.forEach(i=>{const p=productionPlans[i];if(p&&p.status==='待排产')productionPlans.splice(i,1);else if(p)blocked.push(p.id);});
-    save('productionPlans',productionPlans);
-    if(blocked.length>0)alert('已删除待排产排产计划；跳过 '+blocked.length+' 条（非待排产，仅待排产可删除）：'+blocked.join('、'));
+    dataOp={key:'productionPlans',value:productionPlans};
   }
-  else if(m==='processTpl'){idxs.forEach(i=>processTemplates.splice(i,1));save('processTemplates',processTemplates);}
-  else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));save('deliveries',deliveries);}
+  else if(m==='processTpl'){idxs.forEach(i=>processTemplates.splice(i,1));dataOp={key:'processTemplates',value:processTemplates};}
+  else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));dataOp={key:'deliveries',value:deliveries};}
+  if(!dataOp)return;   /* 防御：未知表单不落库（FORM_ACTIONS 已过滤，正常不会走到） */
+  const ok=await DB.tx([dataOp,{key:'logs',value:logs}],false);
+  if(!ok)return;   /* 失败：一字未写、内存已回灌服务器真值 → 不清勾选、不渲染成成功态 */
+  if(blocked.length>0)alert('已删除待排产排产计划；跳过 '+blocked.length+' 条（非待排产，仅待排产可删除）：'+blocked.join('、'));
   clearSel(m);
   renderContent();
 }
@@ -6058,12 +6154,21 @@ function backupAll(){
      (deliveries.length||0))+' 条记录');
 }
 
+/* 后端 .json 备份一键恢复。
+   【P1·.125·A】原实现 = 11 次独立 save（fieldsAudit/fieldsDraft/…/meta）+ 迁移函数的额外 save + 1 次日志写，
+   一次恢复会发出 12~15 个互不原子、fire-and-forget 的写请求（DB.set 失败只 alert，调用方不感知）——
+   最坏情况是「orders 已恢复、products/deliveries 没恢复」的半恢复状态。
+   现改为：**先在内存做完所有赋值 + 纯迁移 + 纯重算，最后只发 1 次 DB.tx**（11 张表 + logs 一次提交）。
+   失败（409/403/!ok/网络/401）→ DB.tx 已 pullAll + rehydrateFromServer 复原内存并提示 →
+   直接 return，**不渲染成成功态**（不 renderAll、不弹「恢复成功」、不记「恢复」日志）。
+   为满足原子性，恢复链上的三个会写盘的迁移函数改用其纯变更器（migrateOrdersMutation /
+   migrateFrameworkToSalesMutation / backfillInvDeliveredMutation），其日志条目改为入内存并随同一次事务落盘。 */
 function restoreBackup(e){
   var file=e.target.files[0];
   if(!file)return;
   if(!confirm('恢复将覆盖当前所有数据，且不可撤销。确定继续？')){e.target.value='';return;}
   var reader=new FileReader();
-  reader.onload=function(){
+  reader.onload=async function(){
     try{
       var data=JSON.parse(reader.result);
       if(!data||typeof data!=='object')throw new Error('文件格式不正确');
@@ -6078,24 +6183,36 @@ function restoreBackup(e){
       if(data.meta)meta=data.meta;
       // 恢复后重置审核状态：草稿作废，字段直接进入已审核
       fieldsAudit='audited';fieldsDraft=null;
-      save('fieldsAudit','audited');save('fieldsDraft',null);
-      normalizeFields();   // 兼容旧版字段：补齐 level 标记
-      migrateOrders();   // 兼容旧版平铺订单备份
-      // 恢复的旧备份可能含旧类型「框架订单」等历史残留，立即执行全套迁移并写回，
+      normalizeFields();   // 兼容旧版字段：补齐 level 标记（纯内存）
+      migrateOrdersMutation();   // 兼容旧版平铺订单备份（纯内存）
+      // 恢复的旧备份可能含旧类型「框架订单」等历史残留，立即执行全套迁移，
       // 避免恢复后、下次刷新前这类订单因类型不在「销售/库存」区块而整单不可见
-      migrateFrameworkToSales();
-      backfillInvDeliveredFromStock();
-      syncStockFromInvOrders();
-      save('products',products);save('orders',orders);
-      save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);save('processTemplates',processTemplates);
-      save('logs',logs);save('fields',fields);save('meta',meta);
+      // （旧实现此处会各自 save+logOp → 拆为纯变更 + 日志入内存，随同一次 tx 落盘）
+      if(migrateFrameworkToSalesMutation())pushLogEntry(makeLogEntry('迁移','订单管理','订单类型「框架订单」统一改名为「销售订单」'));
+      if(backfillInvDeliveredMutation())pushLogEntry(makeLogEntry('系统','库存打通','将产品现有库存按订单量比例反填到库存订单「已交付数量」（一次性对齐）'));
+      recomputeStockFromInvOrders();   // 纯重算：产品库存 = Σ库存订单已交付（不写盘）
+      /* 「恢复」日志条目也先入内存 → 与业务表同一次事务落盘（不再触发第 2 次 logs 写） */
+      var nRec=((products.length||0)+(orders.length||0)+
+         (deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)+(processTemplates.length||0));
+      pushLogEntry(makeLogEntry('恢复','全部数据','从备份文件恢复 '+nRec+' 条记录'));
+      /* 内存已就绪：一次原子提交 11 张表（顺序与原 save 顺序一致，便于对照） */
+      var ops=[
+        {key:'fieldsAudit',value:fieldsAudit},
+        {key:'fieldsDraft',value:fieldsDraft},
+        {key:'products',value:products},
+        {key:'orders',value:orders},
+        {key:'deliveries',value:deliveries},
+        {key:'productionPlans',value:productionPlans},
+        {key:'productionReports',value:productionReports},
+        {key:'processTemplates',value:processTemplates},
+        {key:'logs',value:logs},
+        {key:'fields',value:fields},
+        {key:'meta',value:meta}
+      ];
+      var ok=await DB.tx(ops,false);
+      if(!ok)return;   /* 失败：一字未写、内存已回灌服务器真值 → 不进入成功态 */
       renderAll();
-      logOp('恢复','全部数据','从备份文件恢复 '+
-        ((products.length||0)+(orders.length||0)+
-         (deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)+(processTemplates.length||0))+' 条记录');
-      alert('恢复成功！共恢复 ' +
-        ((products.length||0)+(orders.length||0)+
-         (deliveries.length||0)+(productionPlans.length||0)+(productionReports.length||0)+(processTemplates.length||0)) + ' 条记录。');
+      alert('恢复成功！共恢复 '+nRec+' 条记录。');
     }catch(err){
       alert('恢复失败：'+err.message+'\n\n请确认文件为系统导出的 .json 备份文件。');
     }
@@ -6104,13 +6221,25 @@ function restoreBackup(e){
   reader.readAsText(file);
 }
 
-function confirmClear(){
+/* 清空全部业务数据（admin 深度确认两次）。
+   【P1·.125·A】原实现 = 6 张事实表各自 save + 1 次日志写 = 7 次独立写，任一失败即「清了一半」
+   （例如产品已清空、订单还在）→ 改为 7 张表（含 logs）一次 DB.tx。
+   失败不渲染成功态；内存由 DB.tx 的失败分支回灌为服务器真值。 */
+async function confirmClear(){
   if(!confirm('确认清空所有数据？此操作不可恢复，建议先导出备份！'))return;
   if(!confirm('再次确认：所有产品、订单、库存、排产、交付数据将被删除！'))return;
   products=[];orders=[];deliveries=[];productionPlans=[];productionReports=[];processTemplates=[];
-  save('products',products);save('orders',orders);
-  save('deliveries',deliveries);save('productionPlans',productionPlans);save('productionReports',productionReports);save('processTemplates',processTemplates);
-  logOp('清空','全部数据','清空所有业务数据');
+  pushLogEntry(makeLogEntry('清空','全部数据','清空所有业务数据'));   /* 日志（logs 表不清空）随事务落盘 */
+  const ok=await DB.tx([
+    {key:'products',value:products},
+    {key:'orders',value:orders},
+    {key:'deliveries',value:deliveries},
+    {key:'productionPlans',value:productionPlans},
+    {key:'productionReports',value:productionReports},
+    {key:'processTemplates',value:processTemplates},
+    {key:'logs',value:logs}
+  ],false);
+  if(!ok)return;   /* 失败：一字未写 → 不 renderAll（不渲染成「已清空」） */
   renderAll();
 }
 
@@ -6286,7 +6415,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-11.124</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-11.125</div>
 </body>
 </html>
 

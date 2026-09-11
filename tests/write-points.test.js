@@ -212,7 +212,7 @@ test('① 调拨：前置校验失败 → 返回 false 且**零写**（不碰任
   assert.equal(await app.run('orders[0].items[0].deliveredQty'), 10, '内存也不得被改');
 });
 
-test('① 调拨：tx 失败（500）→ 返回 false、只有一次 /api/tx、无第二次写请求（不出半状态）', async () => {
+test('① 调拨：tx 失败（500）→ 返回 false、只有一次 /api/tx、无第二次写请求；业务内存回灌为服务器真值（不出半状态）', async () => {
   const { app, stub } = prodApp(fail500Routes);
   const moves = [{ out: { orderId: 'O-INV', orderType: 'inv', lineIdx: 0 }, in: { orderId: 'O-SALE', orderType: 'sales', lineIdx: 0 }, qty: 15 }];
   const ok = await app.run('applyTransfers("call",' + j(moves) + ')');
@@ -232,15 +232,16 @@ test('① 调拨：tx 失败（500）→ 返回 false、只有一次 /api/tx、�
   app.run('alertTransferFailed()');
   assert.equal(app.alerts.length, 1);
   assert.match(app.alerts[0], /整体未生效/);
-  /* 残留风险（已在 README 登记）：DB.tx 的 pullAll 只刷新 serverData / serverRevs 缓存，
-     并**不**回灌业务内存全局（orders 等仅在 initApp 里由 DB.get 水合）。
-     故失败后内存仍是「乐观变更」值（10-15=-5），须靠 F5 / 下一次进页面重置。 */
-  assert.equal(await app.run('orders[0].items[0].deliveredQty'), -5, '内存：乐观变更残留（prompt 用户刷新）');
+  /* 【build .125·B】残留风险已消除：DB.tx 的失败分支在 pullAll 之后调用 rehydrateFromServer()，
+     把**业务内存全局**一并复位为服务器真值。
+     （改造前：pullAll 只刷 serverData / serverRevs 缓存，业务全局量仍停在乐观变更值 -5，须 F5。） */
+  assert.equal(await app.run('orders[0].items[0].deliveredQty'), 10, '内存：已回灌为服务器真值（不再残留乐观变更 -5）');
   assert.equal(
     await app.run('serverData.orders[0].items[0].deliveredQty'),
     10,
-    '缓存：pullAll 已刷成服务器真值（供刷新后渲染一致）'
+    '缓存：pullAll 已刷成服务器真值（与内存一致）'
   );
+  assert.equal(await app.run('typeof rehydrateFromServer'), 'function', '回灌函数存在且全局可见');
 });
 
 test('① 调拨：静默失败由调用方统一提示（alertTransferFailed 存在且不重复写）', async () => {
