@@ -259,13 +259,17 @@ function sameLog(a, b) {
     && a.detail === b.detail && (a.field || '') === (b.field || '');
 }
 
-/* logs「只追加」白名单（设计 §5.2）：允许前插若干条（触发上限时旧尾滑出）与等长同容；
-   拒绝净缩减（未触顶）、清空、伪值覆盖。
-   ⚠️ 与设计伪代码的两处刻意差异（已在 T02 报告中报备）：
-     ① 【硬化】伪代码 `for(p=0..neu.length)` 在 p===neu.length 时 tail=[]、expect=[] 必然命中，
-        会把「任意长度恰为 LOG_MAX 的数组」整表放行（比 §9.3-KR1 描述严重）。此处跳过空尾部。
-     ② 【等价补齐 KR1】恰好触顶时「替换最新 1 条」与「append 换出最旧」服务端不可区分（设计已接受，
-        登记 §9.3-KR1），故对「等长且除首条外逐条相同」显式放行，不借此放行任意整表覆盖。 */
+/* logs「只追加」白名单（设计 §5.2.2 **v2**，最终冻结版）：允许前插若干条（触发上限时旧尾滑出）
+   与等长同容；拒绝净缩减（未触顶）、清空、伪值覆盖，以及触顶后「原地替换最新 1 条」。
+   ⚠️ 与设计 v1 伪代码的两处刻意差异（v1 报备项②已被 v2 决议取代）：
+     ① 【硬化】v1 伪代码 `for(p=0..neu.length)` 在 p===neu.length 时 tail=[]、expect=[] 必然命中，
+        会把「任意长度恰为 LOG_MAX 的数组」整表放行。此处跳过空尾部。
+     ② 【删除 KR1 等价分支】v1 曾对「恰触顶且除首条外逐条相同」显式放行，理由是与「append 换出最旧」
+        不可区分。v2 复核推翻该理由：合法触顶追加形状=`[新, ...old.slice(0,499)]`，即
+        `neu[1..499]===old[0..498]`（丢最旧 old[499]），已由主循环 p=1 命中并放行；而该分支放行的形状是
+        `neu[1..499]===old[1..499]`（丢最新 old[0]），**不存在产生它的合法客户端路径**（logOp 只有
+        unshift+slice(0,500) 一种写法）。故按 §9.3 决议删除该分支：非 admin 无法伪造「最新 1 条」，
+        对合法路径零功能代价。回归用例：tests/server.canwrite.test.js G20-5。 */
 function logsAppendOK(oldArr, neu) {
   if (!Array.isArray(neu)) return false;
   if (neu.length > LOG_MAX) return false;
@@ -280,11 +284,6 @@ function logsAppendOK(oldArr, neu) {
     let ok = true;
     for (let i = 0; i < tail.length; i++) { if (!sameLog(tail[i], expect[i])) { ok = false; break; } }
     if (ok) return true;
-  }
-  if (old.length === LOG_MAX && neu.length === LOG_MAX) {             /* 【KR1 等价分支】 */
-    let same = true;
-    for (let i = 1; i < neu.length; i++) { if (!sameLog(neu[i], old[i])) { same = false; break; } }
-    if (same) return true;
   }
   return false;
 }

@@ -34,11 +34,12 @@ process.env.PROD_USERS_FILE = USERS_PATH;
 
 /* ---------- fixtures：线上真实 perms 镜像（设计 §5.3 真值表） ---------- */
 const PWD = 'p1-test-pwd';
+/* 与线上 /opt/prod-server/users.json 逐字一致（线上 --audit-perms 同源）；改动此表前须先复核线上真值 */
 const PERMS = {
   admin: {},
-  pmc: { products: false, saleOrders: true, invOrders: true, dailyPlans: true, deliveries: true, processTemplates: true, transfers: true },
-  chejian: { products: false, dailyPlans: true, deliveries: true, processTemplates: true, transfers: true },
-  zongjingli: { products: false, dailyPlans: false, deliveries: true, fields: true }
+  pmc: { products: false, saleOrders: true, invOrders: true, dailyPlans: true, deliveries: true, processTemplates: false, transfers: false },
+  chejian: { products: false, dailyPlans: true, deliveries: false, processTemplates: false, transfers: false },
+  zongjingli: { products: false, dailyPlans: false, deliveries: false, fields: false }
 };
 function mkUser(username, name, role, pwd, perms) {
   const salt = crypto.randomBytes(8).toString('hex');
@@ -70,8 +71,8 @@ const ADMIN = { username: 'admin', role: 'admin', perms: {} };
 const PMC = { username: 'pmc', role: 'staff', perms: PERMS.pmc };
 const CHEJIAN = { username: 'chejian', role: 'staff', perms: PERMS.chejian };
 const ZONGJINGLI = { username: 'zongjingli', role: 'staff', perms: PERMS.zongjingli };
-/* 车间型账号（真值去掉 transfers）= G17 的「无权账号」；线上真值 chejian 实际持有 transfers:true（§5.4 自述「有权限无入口」） */
-const CHEJIAN_NO_TX = { username: 'chejian_no_tx', role: 'staff', perms: { products: false, dailyPlans: true, deliveries: true, processTemplates: true } };
+/* 「无权账号」样本：chejian 线上 transfers=false 且无 saleOrders/invOrders → 并集不命中（真实越权边界） */
+const CHEJIAN_NO_TX = { username: 'chejian_no_tx', role: 'staff', perms: { products: false, dailyPlans: true, deliveries: false, processTemplates: false } };
 
 function freshState() {
   const data = JSON.parse(JSON.stringify(srv.DEFAULT_DATA));
@@ -176,12 +177,24 @@ test('G17 权限不足 → 403 一字不写（无权 op 在首位/末位均整�
   assert.strictEqual(JSON.stringify(st), before);
 });
 
-test('G17b 并集命中：线上真值 chejian 持有 transfers → 放行（§5.4「有 transfers 权限但无入口」）', () => {
-  const { data, revs } = freshState();
-  const sp = spySave();
-  const r = srv.handleTx(data, revs, CHEJIAN, { ops: [{ key: 'transfers', value: [{ id: 'T-ok' }], expectedRev: 0 }] }, srv.canWrite, sp.fn, srv.DEFAULT_DATA);
-  assert.strictEqual(r.code, 200, 'chejian.transfers=true（线上真值）→ 并集命中，允许');
-  assert.strictEqual(sp.calls.length, 1);
+test('G17b 并集口径（线上真值）：pmc 自有 transfers=false 但经 saleOrders/invOrders 命中 → 200；chejian 无并集来源 → 403', () => {
+  /* 正例：并集命中（pmc 线上 transfers=false，靠订单权限放行） */
+  {
+    const { data, revs } = freshState();
+    const sp = spySave();
+    const r = srv.handleTx(data, revs, PMC, { ops: [{ key: 'transfers', value: [{ id: 'T-ok' }], expectedRev: 0 }] }, srv.canWrite, sp.fn, srv.DEFAULT_DATA);
+    assert.strictEqual(r.code, 200, 'pmc 经 saleOrders||invOrders 并集命中 transfers → 200');
+    assert.strictEqual(sp.calls.length, 1);
+  }
+  /* 负例：chejian 线上 transfers=false 且无订单权限 → 并集不命中 → 403 一字不写 */
+  {
+    const { data, revs } = freshState();
+    const sp = spySave();
+    const r = srv.handleTx(data, revs, CHEJIAN, { ops: [{ key: 'transfers', value: [{ id: 'T-bad' }], expectedRev: 0 }] }, srv.canWrite, sp.fn, srv.DEFAULT_DATA);
+    assert.strictEqual(r.code, 403, 'chejian transfers=false 且无并集来源 → 403');
+    assert.strictEqual(sp.calls.length, 0, '403 必须一字不写（不落盘）');
+    assert.strictEqual(data.transfers.length, 0, '403 必须不改内存');
+  }
 });
 
 test('G17c products 非纯投影：pmc 经 /api/tx 改产品主数据 → 403（不得放宽）', () => {

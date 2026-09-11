@@ -32,12 +32,14 @@ const { canWrite, logsAppendOK, isPureStockProjection } = srv;
 
 after(() => { fs.rmSync(TMP, { recursive: true, force: true }); });
 
-/* ---------- 线上真实 perms（设计 §5.3 真值表，主理人隔离环境实测） ---------- */
+/* ---------- 线上真实 perms（2026-09-11 逐字复核 /opt/prod-server/users.json，线上 --audit-perms 同源）
+   注意：此表必须与线上一致，否则「D1 修复回归」会退化为自证。四个账号的默认角色键（deliveries /
+   processTemplates / fields / transfers）线上多为 false 或缺失，union 命中才是真正的放行来源。 ---------- */
 const TRUTH = {
   admin: { role: 'admin', perms: {} },
-  pmc: { role: 'staff', perms: { products: false, saleOrders: true, invOrders: true, dailyPlans: true, deliveries: true, processTemplates: true, transfers: true } },
-  chejian: { role: 'staff', perms: { products: false, dailyPlans: true, deliveries: true, processTemplates: true, transfers: true } },
-  zongjingli: { role: 'staff', perms: { products: false, dailyPlans: false, deliveries: true, fields: true } }
+  pmc: { role: 'staff', perms: { products: false, saleOrders: true, invOrders: true, dailyPlans: true, deliveries: true, processTemplates: false, transfers: false } },
+  chejian: { role: 'staff', perms: { products: false, dailyPlans: true, deliveries: false, processTemplates: false, transfers: false } },
+  zongjingli: { role: 'staff', perms: { products: false, dailyPlans: false, deliveries: false, fields: false } }
 };
 function U(name) {
   const t = TRUTH[name];
@@ -111,12 +113,17 @@ test('G20-4 logs 硬化：任意「长度恰为 500」的整表覆盖必须被�
   assert.strictEqual(logsAppendOK(mkLogs(400, 'old'), mkLogs(499, 'evil')), false, '未触顶净增长但内容无关 → 拒');
 });
 
-test('G20-5 logs KR1 等价分支：恰好触顶时「替换最新 1 条」仍放行（设计 §9.3-KR1 已登记接受）', () => {
+test('G20-5 logs 触顶：`[新, ...old.slice(0,499)]` 合法追加放行；`[X, ...old.slice(1)]` 伪造最新 1 条 拒绝（设计 §5.2.2 v2 / §9.3 决议）', () => {
   const old500 = mkLogs(500, 'old');
+  /* 合法路径：logOp = unshift 1 + slice(0,500) ⇒ 丢「最旧」old[499]，neu[1..499]===old[0..498] */
+  const legalAppend = [LOG_D].concat(old500.slice(0, 499));
+  assert.strictEqual(legalAppend.length, 500);
+  assert.strictEqual(logsAppendOK(old500, legalAppend), true, '合法触顶追加应放行（主循环 p=1 命中）');
+  /* 伪造路径：丢「最新」old[0]、保留 old[1..499] —— 无合法客户端路径可产生该形状 ⇒ 必须拦截 */
   const forged = [{ time: 'Z', action: '删除', target: '订货单', detail: '伪造', field: '' }].concat(old500.slice(1));
   assert.strictEqual(forged.length, 500);
-  assert.strictEqual(logsAppendOK(old500, forged), true, '触顶替换最新 1 条（除首条外逐条相同）应放行 —— 与合法 append 服务端不可区分');
-  /* 但「触顶且除首条外也不同」必须拒绝 */
+  assert.strictEqual(logsAppendOK(old500, forged), false, '触顶伪造最新 1 条必须拦截（KR1 分支已删除）');
+  /* 触顶且除首条外也不同 → 拦截 */
   const forgedBad = [{ time: 'Z', action: '删除', target: '订货单', detail: '伪造', field: '' }].concat(mkLogs(499, 'evil'));
   assert.strictEqual(logsAppendOK(old500, forgedBad), false);
 });
@@ -235,18 +242,22 @@ test('G22-3 zongjingli 越权关闭：transfers / productionReports → 403（�
   assert.strictEqual(canWrite(u, 'productionReports', { value: [{ id: 'R1' }], data: d }), false, 'productionReports 必须收口');
   assert.strictEqual(canWrite(u, 'productionPlans', { value: [], data: d }), false, 'productionPlans 亦应拒绝（dailyPlans=false 且无 productionPlans）');
   assert.strictEqual(canWrite(u, 'orders', { value: [], data: d }), false);
-  /* 其本有权限的键不受影响（零误伤） */
-  assert.strictEqual(canWrite(u, 'deliveries', { value: [], data: d }), true, 'deliveries 应保持放行');
-  assert.strictEqual(canWrite(u, 'fields', { value: {}, data: d }), true, 'fields 应保持放行');
+  /* 「零误伤」举证须用真正持权的账号：zongjingli 线上 deliveries / fields 均为 false，不能当零误伤样本 */
+  assert.strictEqual(canWrite(u, 'deliveries', { value: [], data: d }), false, 'zongjingli 线上 deliveries=false → 403');
+  assert.strictEqual(canWrite(U('pmc'), 'deliveries', { value: [], data: d }), true, '零误伤：pmc 自有 deliveries=true 保持放行');
+  assert.strictEqual(canWrite(U('pmc'), 'productionPlans', { value: [], data: d }), true, '零误伤：pmc 经 dailyPlans 并集保持放行');
 });
 
-test('G22-4 并入集命中与保持项：orders / transfers / deliveries / processTemplates', () => {
+test('G22-4 并集命中与未并入集键：orders / transfers / processTemplates（线上真值口径）', () => {
   const d = ctxData(PRODS, [LOG_A]);
-  assert.strictEqual(canWrite(U('pmc'), 'orders', { value: [], data: d }), true, 'pmc 有 saleOrders/invOrders');
-  assert.strictEqual(canWrite(U('chejian'), 'orders', { value: [], data: d }), false, 'chejian 无订单权限 → 保持 403');
-  assert.strictEqual(canWrite(U('pmc'), 'transfers', { value: [], data: d }), true, '并集命中 transfers');
-  assert.strictEqual(canWrite(U('chejian'), 'transfers', { value: [], data: d }), true, '线上真值 chejian.transfers=true（§5.4 已自述「有 transfers 权限但无入口」）');
-  assert.strictEqual(canWrite(U('pmc'), 'processTemplates', { value: [], data: d }), true);
+  assert.strictEqual(canWrite(U('pmc'), 'orders', { value: [], data: d }), true, 'pmc 经 saleOrders/invOrders 并集命中（线上 pmc 无 orders 键）');
+  assert.strictEqual(canWrite(U('chejian'), 'orders', { value: [], data: d }), false, 'chejian 无订单权限 → 403');
+  /* transfers 正例：pmc 线上 transfers=false，靠 saleOrders||invOrders 并集放行 —— 并集规则的核心证据 */
+  assert.strictEqual(canWrite(U('pmc'), 'transfers', { value: [], data: d }), true, '并集命中 transfers（线上 pmc 自有 transfers=false）');
+  /* transfers 负例：chejian 线上 transfers=false 且无订单权限 → 并集不命中 → 403（原设计 G17 字面正确） */
+  assert.strictEqual(canWrite(U('chejian'), 'transfers', { value: [], data: d }), false, 'chejian transfers=false 且无并集来源 → 403');
+  /* processTemplates 本轮**未**并入集：pmc 即便 dailyPlans=true 也应 DENY（实测确认） */
+  assert.strictEqual(canWrite(U('pmc'), 'processTemplates', { value: [], data: d }), false, 'processTemplates 未并入集 → pmc 仍 403');
   assert.strictEqual(canWrite(U('zongjingli'), 'processTemplates', { value: [], data: d }), false, '未授权键应 403');
   assert.strictEqual(canWrite(U('zongjingli'), 'products', { value: clone(PRODS), data: d }), false);
 });
