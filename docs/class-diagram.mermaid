@@ -1,0 +1,188 @@
+classDiagram
+%% ============================================================
+%% 辰微生产排产系统 · P1 地基轮 类图（/api/tx 事务 + 审计收紧）
+%% 生成：2026-09-11  对应设计 docs/P1地基轮设计-2026-09-11.md
+%% 说明：数据模型（fact/projection）+ 服务类（后端事务/权限/投影/写入器）
+%% ============================================================
+
+%% ---------- 协议 DTO ----------
+class TxOp {
+  +string key
+  +any value
+  +number expectedRev
+}
+class TxRequest {
+  +TxOp[] ops
+  +string requestId  %% 预留，本轮忽略
+}
+class TxResponse {
+  +boolean ok
+  +map~string,int~ revs
+}
+class TxConflictResponse {
+  +string error
+  +Conflict[] conflicts
+}
+class Conflict {
+  +string key
+  +number expectedRev
+  +number curRev
+}
+TxRequest "1" *-- "1..20" TxOp : ops
+TxResponse ..> TxConflictResponse : alt 409
+
+%% ---------- 持久化模型（域实体） ----------
+class DataStore {
+  +map~string,any~ data
+  +map~string,int~ revs
+  +saveJson(file, obj)  %% tmp + renameSync 原子
+  +load(file, def)
+}
+class Product {
+  +string id
+  +string name
+  +string spec
+  +string model
+  +number stock   %% projection（库存=Σ库存订单已交付）
+  +number dailyCap
+}
+class Order {
+  +string id
+  +string orderType  %% 销售订单 | 库存订单
+  +string status     %% projection（执行中/已完成/已取消/已暂停）
+  +string customer
+  +string contractNo
+  +OrderItem[] items
+}
+class OrderItem {
+  +string productId
+  +number orderQty
+  +number deliveredQty  %% 库存订单可负；销售订单由交付/退货驱动
+  +number calledQty     %% 销售调用库存累计，下限 0
+  +number directDelivered
+}
+class Transfer {
+  +string id
+  +string type     %% call/return/conv/move/conv_back/move_back
+  +string outOrderId
+  +string outOrderType
+  +number outLineIdx
+  +string inOrderId
+  +string inOrderType
+  +number inLineIdx
+  +number qty
+  +boolean reversed
+  +string reverseOf
+  +string customer
+  +string productName
+}
+class ProductionPlan {
+  +string id
+  +string orderId
+  +string status  %% 待排产/生产中/已完成/已取消
+  +PlanItem[] items
+}
+class PlanItem {
+  +string productId
+  +number doneQty
+  +number dlLine
+  +map steps
+}
+class ProductionReport {
+  +string id
+  +string planId
+  +string date
+  +string worker
+  +ReportItem[] items
+}
+class ReportItem {
+  +string productId
+  +string step
+  +number qty
+  +number dlLine
+}
+class LogEntry {
+  +string time
+  +string action
+  +string target
+  +string detail
+}
+Order "1" *-- "many" OrderItem
+ProductionPlan "1" *-- "many" PlanItem
+ProductionReport "1" *-- "many" ReportItem
+DataStore "1" o-- "many" Product : products
+DataStore "1" o-- "many" Order : orders
+DataStore "1" o-- "many" Transfer : transfers
+DataStore "1" o-- "many" ProductionPlan : productionPlans
+DataStore "1" o-- "many" ProductionReport : productionReports
+DataStore "1" o-- "many" LogEntry : logs
+Transfer ..> Order : outOrderId / inOrderId
+ProductionPlan ..> Order : orderId
+
+%% ---------- 服务端服务类 ----------
+class TxHandler {
+  +handleTx(data, revs, user, body, canWriteFn, saveJsonFn) : result
+  +validate(body) : TxRequest
+  +applyAtomically(ops) : revs
+  -snapshot(ops) : Snapshot[]
+  -rollback(snapshot)
+}
+class CanWritePolicy {
+  +canWrite(user, key, ctx) : boolean   %% 单一判定点：/api/save 与 /api/tx 共用
+  +logsAppendOK(oldArr, neu) : boolean
+  +isPureStockProjection(oldArr, neu) : boolean   %% 方案 α′：无 products 权限者仅可写 stock
+  -sameLog(a, b) : boolean
+}
+class Projection {
+  +recomputeStockFromInvOrders() : boolean
+  +recomputeOrderAutoStatus(silent) : number
+}
+class InboundMutator {
+  +writebackInboundMutation(orderId, productId, delta, orderLine) : boolean
+  +writebackInbound(orderId, productId, delta, orderLine)  %% 兼容包装
+}
+
+%% ---------- 前端数据层 / 写入器 ----------
+class DBClient {
+  +get(key, def)
+  +set(key, value, silent) : boolean
+  +tx(ops, silent) : boolean   %% 本轮新增
+}
+class TransferExecutor {
+  +applyTransfers(type, moves, opts) : Promise~boolean~  %% 改 async
+}
+class ReportWriter {
+  +applyReport(pi, entries, items, worker) : Promise
+  +ppSaveReportEdits(planId) : Promise
+  +ppDelReport(id) : Promise
+  +writebackInboundMutation(...)  %% impl from InboundMutator
+}
+class ImportWriter {
+  +kdDoImport() : Promise
+}
+class Recorder {
+  %% 测试桩
+  +calls : Call[]
+  +store : map
+  +save(k, v)
+  +tx(ops)
+}
+class Sandbox {
+  +createApp() : {ctx, store, calls}
+  -extractInlineScript(html) : string
+}
+
+TxHandler --> CanWritePolicy : 逐键 canWrite
+TxHandler --> DataStore : data/revs/saveJson
+ReportWriter --> InboundMutator : 回写订单
+ReportWriter --> Projection : 前置重算
+TransferExecutor --> Projection : 前置重算
+TransferExecutor --> DBClient : tx([orders,transfers,products?])
+ImportWriter --> Projection : 前置重算
+ImportWriter --> DBClient : tx([products?,orders])
+ReportWriter --> DBClient : tx([plans,reports,orders?,products?])
+DBClient --> TxRequest : 组装
+TxHandler ..> TxResponse : 200
+TxHandler ..> TxConflictResponse : 409
+Sandbox --> Recorder : 注入桩
+Recorder ..|> DBClient : 替身

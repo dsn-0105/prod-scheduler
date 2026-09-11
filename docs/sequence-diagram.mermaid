@@ -1,0 +1,46 @@
+%% ============================================================
+%% 辰微生产排产系统 · P1 地基轮 时序图（主图：/api/tx 正常 + rev 冲突）
+%% 生成：2026-09-11  对应设计 docs/P1地基轮设计-2026-09-11.md
+%% 另 4 段时序（报工三表 / 调拨 / 金蝶导入 / canWrite 判定）见设计文档 §2.4 内嵌 mermaid
+%% ============================================================
+sequenceDiagram
+  autonumber
+  participant U as "用户·前端"
+  participant DBT as "DB.tx()"
+  participant SRV as "server /api/tx"
+  participant DS as "DataStore data/revs"
+  participant FS as "saveJson 落盘"
+
+  U->>DBT: DB.tx(ops = orders + transfers)
+  DBT->>DBT: 组装 ops 并补 expectedRev = serverRevs[key] || 0
+  DBT->>SRV: POST /api/tx
+  SRV->>SRV: 1 auth  2 校验 ops/未知键/重复键
+  SRV->>SRV: 5 逐键 canWrite(user, key, ctx)
+  alt 权限不过
+    SRV-->>DBT: 403 error + key
+    DBT->>DBT: pullAll 复原内存 然后 alert
+    DBT-->>U: false
+  else 权限通过
+    SRV->>DS: 6 校验 expectedRev 是否等于 revs[key]
+    alt 任一 rev 冲突
+      DS-->>SRV: conflicts[]
+      SRV-->>DBT: 409 一字不写
+      DBT->>DBT: pullAll 然后 alert 数据已被他人修改
+      DBT-->>U: false
+    else 全部 rev 命中
+      SRV->>DS: 7 snapshot(ops)
+      SRV->>DS: data[key] = value  revs[key]++
+      SRV->>FS: saveJson(DATA_FILE, data)  tmp+rename 原子
+      alt 落盘失败
+        FS-->>SRV: throw
+        SRV->>DS: rollback(snapshot) 内存回滚
+        SRV-->>DBT: 500 已回滚
+        DBT->>DBT: pullAll 然后 alert
+        DBT-->>U: false
+      else 落盘成功
+        SRV-->>DBT: 200 ok true + revs
+        DBT->>DS: serverRevs[key] = revs[key]
+        DBT-->>U: true
+      end
+    end
+  end

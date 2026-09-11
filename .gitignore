@@ -18,6 +18,15 @@ backups/
 *.bak
 *.bak[0-9]*
 
+# 测试运行时产物（node tests/e2e-http.verify.js 生成的隔离数据/用户文件与日志），不入库
+tests/.e2e-tmp/
+
+# 服务端测试的隔离目录（tests/server.*.test.js 用 mkdtempSync(<仓库根>/.p1tmp-XXXXXX) 创建，
+# 内含隔离 data.json/users.json）。当前这两个测试文件**未在结束时清理**，每次 node --test 都会
+# 在仓库根留下若干 .p1tmp-* 目录 —— 故入 ignore，避免被 git add -A 误提交。
+# 根治办法：在这两个测试文件里加 test.after(() => fs.rmSync(TMP,{recursive:true,force:true}))。
+.p1tmp-*/
+
 # 一次性运维脚本（含数据批量操作，仅本地执行）
 _*.js
 !js/**

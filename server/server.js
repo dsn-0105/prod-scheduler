@@ -10,8 +10,17 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
-const USERS_FILE = path.join(__dirname, 'users.json');
+/* 【P1·T02 测试/演练接缝】数据与用户文件路径支持环境变量覆盖（默认值完全不变，与既有 PORT / PROD_INIT_PWD 同风格）。
+   用途：测试在隔离临时目录内加载本模块，确保不读不写真实 server/data.json · server/users.json；
+        运维亦可在拷贝目录内做隔离演练。生产环境未设置这两个变量时行为与改造前逐字节一致。 */
+const DATA_FILE = process.env.PROD_DATA_FILE || path.join(__dirname, 'data.json');
+const USERS_FILE = process.env.PROD_USERS_FILE || path.join(__dirname, 'users.json');
+
+/* 【P1·T02 常量】（设计 §8：常量单一来源）
+   MAX_OPS  = POST /api/tx 单请求最多提交的数据表数
+   LOG_MAX  = logs 上限，与前端 js/logs.js `if(logs.length>500) logs=logs.slice(0,500)` 对齐 */
+const MAX_OPS = 20;
+const LOG_MAX = 500;
 
 /* 【安全 P0·③】是否拒绝 URL query 形式的 token（默认关闭=保留兜底）。
    背景：token 走 query 会进入 nginx access log、浏览器历史、Referer 头，属泄露面。
@@ -30,6 +39,10 @@ const DEFAULT_DATA = {
 /* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写）。
    .122：日排产模块（备货 dailyPlans/包装 dailyPkgs 表）整体移除——dailyPlans 仅余为排产计划页的权限键（见 STAFF_PERMS），不再是数据表 */
 const BIZ_KEYS = ['products', 'orders', 'deliveries', 'productionPlans', 'processTemplates', 'fields'];
+/* 系统键清单（保留作分类参考）。
+   【P1·T02 变更】canWrite 起**不再对 SYSTEM_KEYS 一律放行**——transfers / productionReports / logs
+   已按设计 §5.1 逐键收紧（原实现「任意登录用户可整表覆盖调拨台账」是线上实测到的真实越权）。
+   本常量保留仅为「键分类」参考，判定逻辑见下方 canWrite 的 switch。 */
 const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers', 'productionReports'];
 
 function load(file, def) {
@@ -185,13 +198,227 @@ function auth(req) {
   const u = users.find(x => x.username === uname);
   return u && u.status === 'active' ? u : null;
 }
-function canWrite(user, key) {
+/* ============================================================
+   【P1·T02】权限判定单一入口 canWrite(user, key, ctx)（设计 §5.1）
+   ------------------------------------------------------------
+   ctx = { value, txOps, data }：
+     · value 本次要写入的值（products / logs 守卫需要对比新旧值）
+     · data  数据对象（缺省＝模块级 data；便于单测注入）
+   必须被 /api/save 与 /api/tx **同时复用**，否则 /api/save 路径上的 products 投影调用点仍会 403。
+   改造依据：原实现 `if (SYSTEM_KEYS.indexOf(key) >= 0) return true` 使任意登录用户可整表覆盖
+   transfers / productionReports / logs（线上实测 zongjingli 越权 200）；且 productionPlans 误查
+   perms['productionPlans']（线上 4 账号全无该键）而前端表单键是 dailyPlans → staff 报工/库存保存
+   静默 403（D1 缺陷，本轮修复）。
+   目标：只拦「越权的直接 API 写」，不拦任何「前端合法的业务动作」。
+   ============================================================ */
+function canWrite(user, key, ctx) {
   if (!user) return false;
-  if (user.role === 'admin') return true;
-  if (SYSTEM_KEYS.indexOf(key) >= 0) return true;
-  /* .118：orders 表同时承载销售+库存两类订单——staff 写权限=两权限点任一开启；页面级隔离由前端 canWriteForm(order_frame/order_inv) 控制 */
-  if (key === 'orders') return !!(user.perms && (user.perms.saleOrders === true || user.perms.invOrders === true || user.perms.orders === true));
-  return !!(user.perms && user.perms[key] === true);
+  if (user.role === 'admin') return true;                 /* admin 恒放行 */
+  const p = user.perms || {};
+  const d = (ctx && ctx.data) || data;
+  const nv = ctx ? ctx.value : undefined;
+  switch (key) {
+    /* 订单主表：销售/库存任一权限点（.118 拆分口径；保留旧 orders 键兼容） */
+    case 'orders':
+      return p.saleOrders === true || p.invOrders === true || p.orders === true;
+    /* 调拨台账：写入方＝4 个调拨执行器（需订单权限）＋冲销（需 transfers）→ 并集
+       （关闭 zongjingli 越权：其 perms 无 transfers/saleOrders/invOrders/orders → 403） */
+    case 'transfers':
+      return p.transfers === true || p.saleOrders === true || p.invOrders === true || p.orders === true;
+    /* 排产计划／生产报表：前端表单键 prodPlan → 权限键 dailyPlans；并集 productionPlans 为兼容项
+       （D1 修复关键：线上 pmc/chejian 的 dailyPlans=true 而 productionPlans 键从未配置） */
+    case 'productionPlans':
+    case 'productionReports':
+      return p.productionPlans === true || p.dailyPlans === true;
+    /* 操作日志：仅允许「追加」；缩减/清空仅 admin（见 logsAppendOK） */
+    case 'logs':
+      return logsAppendOK(d.logs || [], nv);
+    /* 产品主数据（方案 α′·字段级纯投影守卫）：有 products 权限＝全字段可写；
+       否则仅当持相关触发权限且本次写入「只变 stock」时放行（修好 D1 且不放大产品主数据写面） */
+    case 'products': {
+      if (p.products === true) return true;
+      const trig = p.invOrders === true || p.saleOrders === true || p.orders === true || p.dailyPlans === true;
+      if (!trig) return false;                            /* 零相关权限者不得触碰 products */
+      return isPureStockProjection(d.products || [], nv);
+    }
+    /* 【D3·用户已拍板本轮不动】偏好/管理态数据保持放行 */
+    case 'meta':
+    case 'tblLayout':
+    case 'fieldsAudit':
+    case 'fieldsDraft':
+      return true;
+    default:
+      return p[key] === true;                             /* deliveries / processTemplates / fields */
+  }
+}
+
+/* 日志记录等价判定（口径同设计 §5.2：time/action/target/detail/field） */
+function sameLog(a, b) {
+  if (!a || !b) return false;
+  return a.time === b.time && a.action === b.action && a.target === b.target
+    && a.detail === b.detail && (a.field || '') === (b.field || '');
+}
+
+/* logs「只追加」白名单（设计 §5.2）：允许前插若干条（触发上限时旧尾滑出）与等长同容；
+   拒绝净缩减（未触顶）、清空、伪值覆盖。
+   ⚠️ 与设计伪代码的两处刻意差异（已在 T02 报告中报备）：
+     ① 【硬化】伪代码 `for(p=0..neu.length)` 在 p===neu.length 时 tail=[]、expect=[] 必然命中，
+        会把「任意长度恰为 LOG_MAX 的数组」整表放行（比 §9.3-KR1 描述严重）。此处跳过空尾部。
+     ② 【等价补齐 KR1】恰好触顶时「替换最新 1 条」与「append 换出最旧」服务端不可区分（设计已接受，
+        登记 §9.3-KR1），故对「等长且除首条外逐条相同」显式放行，不借此放行任意整表覆盖。 */
+function logsAppendOK(oldArr, neu) {
+  if (!Array.isArray(neu)) return false;
+  if (neu.length > LOG_MAX) return false;
+  const old = Array.isArray(oldArr) ? oldArr : [];
+  if (old.length === 0) return true;                                  /* 首次写入：放行 */
+  if (neu.length < old.length && old.length < LOG_MAX) return false;   /* 未触顶不得净缩减/清空 */
+  for (let p = 0; p <= neu.length; p++) {
+    const tail = neu.slice(p);
+    const expect = old.slice(0, Math.min(old.length, LOG_MAX - p));
+    if (tail.length !== expect.length) continue;
+    if (tail.length === 0) continue;                                  /* 【硬化】跳过空尾部命中 */
+    let ok = true;
+    for (let i = 0; i < tail.length; i++) { if (!sameLog(tail[i], expect[i])) { ok = false; break; } }
+    if (ok) return true;
+  }
+  if (old.length === LOG_MAX && neu.length === LOG_MAX) {             /* 【KR1 等价分支】 */
+    let same = true;
+    for (let i = 1; i < neu.length; i++) { if (!sameLog(neu[i], old[i])) { same = false; break; } }
+    if (same) return true;
+  }
+  return false;
+}
+
+/* 深度等价（对象键序无关）；用于 products 投影守卫的字段级比对 */
+function deepEq(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  const aArr = Array.isArray(a), bArr = Array.isArray(b);
+  if (aArr !== bArr) return false;
+  if (aArr) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) { if (!deepEq(a[i], b[i])) return false; }
+    return true;
+  }
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (let i = 0; i < ka.length; i++) {
+    const k = ka[i];
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (!deepEq(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+/* 方案 α′：纯库存投影守卫（设计 §5.1）。
+   语义：新旧 products 必须「行数相同 + 逐行 id 一一对应相同 + 除 stock 外逐字段等价」；
+        增行/删行/换 id/改其它任何字段/增删字段 → false。
+   stock 是派生投影（= Σ 库存订单已交付）：任何后续库存订单/调拨/报工变更或页面重载
+   （initApp→syncStockFromInvOrders）都会全量重算覆盖它，且 stock 不参与任何鉴权 → 允许其变化。
+   行序即位置（逐行对齐）：products 的重排在本系统不会发生，重排一律拒绝（更严格，不放宽写面）。 */
+function isPureStockProjection(oldArr, neu) {
+  if (!Array.isArray(oldArr) || !Array.isArray(neu)) return false;
+  if (oldArr.length !== neu.length) return false;                     /* 增/删行 → 拒 */
+  for (let i = 0; i < oldArr.length; i++) {
+    const a = oldArr[i], b = neu[i];
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+    if (a.id !== b.id) return false;                                  /* 逐行 id 必须一一对应 */
+    const ka = Object.keys(a), kb = Object.keys(b);
+    for (let j = 0; j < ka.length; j++) {
+      const k = ka[j];
+      if (k === 'stock') continue;
+      if (!Object.prototype.hasOwnProperty.call(b, k)) return false;  /* 删字段 → 拒 */
+      if (!deepEq(a[k], b[k])) return false;                          /* 非 stock 字段变化 → 拒 */
+    }
+    for (let j = 0; j < kb.length; j++) {
+      if (kb[j] === 'stock') continue;
+      if (!Object.prototype.hasOwnProperty.call(a, kb[j])) return false; /* 新增字段 → 拒 */
+    }
+  }
+  return true;
+}
+
+/* ============================================================
+   【P1·T02】POST /api/tx 的纯净核心（不触碰 res，便于单测注入）
+   ------------------------------------------------------------
+   handleTx(data, revs, user, body, canWriteFn, saveJsonFn, defaultData) → { code, body }
+   执行顺序（设计 §3.2）：①鉴权 ②校验 ops ③未知键 ④重复键 ⑤逐键 canWrite ⑥rev 全量校验
+                        ⑦应用（快照→改内存→单次落盘→失败回滚）⑧返回
+   语义铁律：400 / 403 / 409 / 500 一律「一字不写」——既不落盘，也不改内存 data / revs。
+   原子性论据：
+     A 校验全在应用之前 → 任一失败均未触内存、未触盘；
+     B 应用段为**同步代码**（saveJson 是同步 fs），Node 单线程下无并发交错；
+     C saveJson 抛错时按快照回滚 data / revs，使内存与盘保持一致。
+   与 /api/save 的关系：/api/tx 是**增量通道**，/api/save 行为完全不变。
+   ============================================================ */
+function handleTx(data, revs, user, body, canWriteFn, saveJsonFn, defaultData) {
+  /* ① 鉴权（路由已先行拦截，此处兜底，保证核心函数自洽可测） */
+  if (!user) return { code: 401, body: { error: '未登录或登录已过期' } };
+  /* ② 校验 ops */
+  if (!body || !Array.isArray(body.ops) || body.ops.length === 0) return { code: 400, body: { error: '参数缺失' } };
+  if (body.ops.length > MAX_OPS) return { code: 400, body: { error: '单次事务最多 ' + MAX_OPS + ' 个数据表' } };
+  const DD = defaultData || DEFAULT_DATA;
+  const ops = body.ops;
+  /* ③④ 未知键 + 重复键（与 /api/save 一致：DEFAULT_DATA 已注册的表自动补键，真未知表 400）
+     注意：自动补键推迟到 ⑦ 应用段执行 → 保证 400/403/409 失败路径连内存都不动。 */
+  const seen = Object.create(null);
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
+    if (!op || typeof op !== 'object' || typeof op.key !== 'string' || op.key === '' || op.value === undefined) {
+      return { code: 400, body: { error: '参数缺失' } };
+    }
+    if (!Object.prototype.hasOwnProperty.call(data, op.key) && !Object.prototype.hasOwnProperty.call(DD, op.key)) {
+      return { code: 400, body: { error: '未知数据表: ' + op.key } };
+    }
+    if (seen[op.key]) return { code: 400, body: { error: '重复的表键: ' + op.key } };
+    seen[op.key] = true;
+  }
+  /* ⑤ 权限：逐键过 canWrite（单一判定点，与 /api/save 共用；ctx.data 供 products/logs 守卫读旧值） */
+  for (let i = 0; i < ops.length; i++) {
+    if (!canWriteFn(user, ops[i].key, { value: ops[i].value, txOps: ops, data })) {
+      return { code: 403, body: { error: '无该表单的编辑权限', key: ops[i].key } };
+    }
+  }
+  /* ⑥ rev 全量校验：任一冲突即整体 409（此时未写任何东西） */
+  const conflicts = [];
+  for (let i = 0; i < ops.length; i++) {
+    const cur = revs[ops[i].key] || 0;
+    if (ops[i].expectedRev !== undefined && ops[i].expectedRev !== null && Number(ops[i].expectedRev) !== cur) {
+      conflicts.push({ key: ops[i].key, expectedRev: ops[i].expectedRev, curRev: cur });
+    }
+  }
+  if (conflicts.length) return { code: 409, body: { error: '数据已被他人修改', conflicts } };
+  /* ⑦ 应用（原子区）：快照 → 改内存 → 单次 saveJson → 失败回滚 */
+  const snapshot = ops.map(op => ({
+    key: op.key,
+    has: Object.prototype.hasOwnProperty.call(data, op.key),
+    old: data[op.key],
+    oldRev: revs[op.key]
+  }));
+  const newRevs = {};
+  try {
+    for (let i = 0; i < ops.length; i++) {
+      const op = ops[i];
+      if (!Object.prototype.hasOwnProperty.call(data, op.key)) {
+        data[op.key] = JSON.parse(JSON.stringify(DD[op.key]));   /* 自动补键（线上旧 data.json 缺键兼容） */
+        revs[op.key] = 0;
+      }
+      data[op.key] = op.value;
+      revs[op.key] = (revs[op.key] || 0) + 1;
+      newRevs[op.key] = revs[op.key];
+    }
+    saveJsonFn(DATA_FILE, data);        /* 单次 tmp 写入 + renameSync → 落盘原子 */
+  } catch (e) {
+    for (let i = 0; i < snapshot.length; i++) {
+      const s = snapshot[i];
+      if (s.has) { data[s.key] = s.old; revs[s.key] = s.oldRev; }
+      else { delete data[s.key]; delete revs[s.key]; }
+    }
+    console.log('[tx 回滚] saveJson 失败（key=' + ops.map(o => o.key).join(',') + '）：' + (e && e.message));
+    return { code: 500, body: { error: '持久化失败，已回滚' } };
+  }
+  /* ⑧ 成功 */
+  return { code: 200, body: { ok: true, revs: newRevs } };
 }
 function publicUser(u) {
   /* 【安全 P0·②】额外返回 mustChangePwd 标记（存量用户无该字段 → undefined，前端按 false 处理），
@@ -229,7 +456,54 @@ if (process.argv[2] === '--reset-pwd') {
   process.exit(0);
 }
 
-const server = http.createServer((req, res) => {
+/* ============================================================
+   【P1·T02】运维入口：只读权限审计 CLI（回归护栏）
+   用法：node server.js --audit-perms
+   目的：打印各账号 username / role / perms，并给出「服务端 canWrite 实际判定」，
+        用于回归确认 staff 报工/库存保存不再被误拦（D1），
+        避免重演 .122 遗留的「staff 存 productionPlans 静默 403 却无人发现」。
+   约束：**只读**——不打印 hash/salt、不修改任何数据、不启动 HTTP 服务。
+   退出：使用 process.exitCode + return（而非 process.exit），避免管道下 stdout 被截断。
+   ============================================================ */
+if (process.argv[2] === '--audit-perms') {
+  console.log('==== 权限审计（只读 · 不修改数据 · 不启动服务） ====');
+  console.log('users 文件: ' + USERS_FILE);
+  console.log('data  文件: ' + DATA_FILE);
+  console.log('');
+  if (!Array.isArray(users) || users.length === 0) {
+    console.log('（无用户）');
+    process.exitCode = 0;
+    return;
+  }
+  /* 判定探针表的选取：用「当前数据的等值写」探针，
+     products 探测「纯 stock 投影写」是否被放行（α′），logs 探测「追加」是否被放行。 */
+  const PROBE = ['orders', 'transfers', 'productionPlans', 'productionReports', 'products', 'logs', 'deliveries', 'processTemplates', 'fields'];
+  users.forEach((u, i) => {
+    const perms = (u && u.perms) || {};
+    const ks = Object.keys(perms).sort();
+    console.log('[' + (i + 1) + '] ' + u.username + '  role=' + u.role + '  status=' + (u.status || 'active'));
+    console.log('    perms = ' + (ks.length
+      ? '{' + ks.map(k => JSON.stringify(k) + ':' + JSON.stringify(perms[k])).join(', ') + '}'
+      : '{}'));
+    const verdict = PROBE.map(k => {
+      let probeValue;
+      if (k === 'products') probeValue = Array.isArray(data.products) ? data.products.map(p => Object.assign({}, p)) : [];
+      else probeValue = data[k];
+      return k + '=' + (canWrite(u, k, { value: probeValue, data }) ? 'ALLOW' : 'DENY');
+    });
+    console.log('    canWrite(等值写探针) = ' + verdict.join(' '));
+    console.log('');
+  });
+  console.log('说明：');
+  console.log('  · admin 恒 ALLOW；staff 的 products=ALLOW 仅表示「纯 stock 投影写」被放行（α′ 守卫），改产品主数据仍需 perms.products=true。');
+  console.log('  · logs=ALLOW 仅表示「追加」被放行；缩减/清空仅 admin。');
+  console.log('  · 期望基线（线上真值）：pmc/chejian 的 productionPlans、productionReports、products 应为 ALLOW（D1 修复）；');
+  console.log('    zongjingli 的 transfers、productionReports 应为 DENY（越权关闭）。');
+  process.exitCode = 0;
+  return;
+}
+
+function handleRequest(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
 
@@ -272,7 +546,10 @@ const server = http.createServer((req, res) => {
           return send(res, 400, { error: '未知数据表: ' + b.key });
         }
       }
-      if (!canWrite(user, b.key)) return send(res, 403, { error: '无该表单的编辑权限' });
+      /* 【P1·T02】canWrite 改为带 ctx 的新签名——与 /api/tx 复用同一判定点（单一入口）。
+         ctx.value = 本次要写入的值（products 纯投影守卫 α′ / logs 追加白名单需要对比新旧值）；
+         ctx.data  = 模块级 data（越权判定依据的基线快照）。 */
+      if (!canWrite(user, b.key, { value: b.value, data })) return send(res, 403, { error: '无该表单的编辑权限' });
       const cur = revs[b.key] || 0;
       if (b.expectedRev !== undefined && b.expectedRev !== null && Number(b.expectedRev) !== cur) {
         console.log('[冲突拦截] key=' + b.key + ' user=' + user.username + ' expectedRev=' + b.expectedRev + ' curRev=' + cur);
@@ -282,6 +559,18 @@ const server = http.createServer((req, res) => {
       revs[b.key] = cur + 1;
       saveJson(DATA_FILE, data);
       send(res, 200, { ok: true, rev: revs[b.key] });
+    });
+  }
+
+  /* ============ 多表原子事务 POST /api/tx（P1·T02 · 设计 §3）============
+     一次请求提交 1..MAX_OPS 个数据表：全成功或全不变（400/403/409/500 一律「一字不写」）。
+     与 /api/save 复用同一 canWrite 判定点；乐观锁 expectedRev 复用 revs[key]。
+     失败码：400 参数/未知表/重复键 · 403 无权限 · 409 rev 冲突 · 500 落盘失败（已回滚内存）。
+     纯净核心为 handleTx()（可单测注入），此处仅做 HTTP 适配。 */
+  if (p === '/api/tx' && req.method === 'POST') {
+    return readBody(req, b => {
+      const r = handleTx(data, revs, user, b, canWrite, saveJson, DEFAULT_DATA);
+      send(res, r.code, r.body);
     });
   }
 
@@ -349,12 +638,31 @@ const server = http.createServer((req, res) => {
     send(res, 200, { ok: true });
   }
   send(res, 404, { error: 'not found' });
-});
+}
+const server = http.createServer(handleRequest);
 
-server.listen(PORT, () => {
-  console.log('prod-scheduler server listening on port ' + PORT);
-});
-setInterval(() => {
-  const now = Date.now();
-  tokens.forEach((v, k) => { if (now - parseInt(k.split('.')[1] || 0, 10) > TOKEN_TTL) tokens.delete(k); });
-}, 3600 * 1000);
+/* 【P1·T02】仅在「直接运行 node server.js」时监听端口与启后台清理。
+   被测试 require 时（require.main !== module）不启服、不占端口、不挂 setInterval——
+   这样单测可直接 require 本模块拿到 handleTx / canWrite 等纯净核心，且不泄漏句柄。 */
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log('prod-scheduler server listening on port ' + PORT);
+  });
+  setInterval(() => {
+    const now = Date.now();
+    tokens.forEach((v, k) => { if (now - parseInt(k.split('.')[1] || 0, 10) > TOKEN_TTL) tokens.delete(k); });
+  }, 3600 * 1000);
+}
+
+/* 【P1·T02】测试/复用导出：/api/tx 纯净核心 + 权限判定 + HTTP 处理器 + 常量。
+   不影响 `node server.js` 启动（上方 require.main 守卫保证）。 */
+module.exports = {
+  handleTx,                       /* (data, revs, user, body, canWriteFn, saveJsonFn, defaultData) → {code, body} */
+  canWrite,                       /* (user, key, ctx) → boolean；/api/save 与 /api/tx 共用 */
+  logsAppendOK,                   /* (oldArr, neu) → boolean；logs「只追加」白名单 */
+  isPureStockProjection,          /* (oldArr, neu) → boolean；products 纯 stock 投影守卫 α′ */
+  deepEq,                         /* (a, b) → boolean；键序无关深度等价 */
+  handleRequest,                  /* (req, res) → void；HTTP 处理器（供端到端测试自建 server） */
+  auth, publicUser,
+  DEFAULT_DATA, MAX_OPS, LOG_MAX
+};

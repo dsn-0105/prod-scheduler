@@ -420,7 +420,10 @@ function kdBatchConflict(v){
   kdReport.conflict.forEach(function(c){var el=document.getElementById('kd_conflict_'+c.idx);if(el)el.value=v;});
 }
 
-function kdDoImport(){
+/* 【P1 事务化】2026-09-11.124：落库收尾由「两次独立 save」改为**一次 /api/tx**。
+   products（仅新建成品主数据时=事实）+ orders（事实）同事务提交；
+   status 投影先在内存算完随 orders 落盘（设计 §4.2 / §4.4）。本函数因此变为 async。 */
+async function kdDoImport(){
   var R=kdReport;if(!R||!kdState)return;
   /* 校验：所有未知产品编码行必须已决策（替换/新建/忽视三选一），未决策默认不导入 */
   var undecided=R.unknown.filter(function(u){var v=kdState.unknown[u.idx];return v==null||v==='';});
@@ -481,9 +484,15 @@ function kdDoImport(){
     newOrders.push(no);
   });
   orders.push.apply(orders,newOrders);
-  if(newProducts.length){products.push.apply(products,newProducts);save('products',products);}
-  save('orders',orders);
-  syncOrderAutoStatus();   // 2026-08-25.3：导入后按未交付合计自动判定状态（Excel 已交付全量→已完成）
+  if(newProducts.length)products.push.apply(products,newProducts);
+  /* 【P1 事务化】一次原子提交：products（仅新建产品时） + orders。两者同生共死，
+     杜绝改造前「产品已建、订单未落 → 孤儿产品」的窗口（设计 §4.2）。 */
+  recomputeOrderAutoStatus();   // 2026-08-25.3：导入后按未交付合计自动判定状态（纯内存；orders 恒在 tx 内）
+  var ops=[];
+  if(newProducts.length)ops.push({key:'products',value:products});
+  ops.push({key:'orders',value:orders});
+  var ok=await DB.tx(ops,false);
+  if(!ok)return;   /* DB.tx 已 pullAll 复原内存并提示；不进入成功态、不弹「导入完成」 */
   var detail='从金蝶导入 '+newOrders.length+' 单 / '+totalLines+' 行';
   if(overwriteLog.length)detail+='（覆盖 '+overwriteLog.length+' 单）';
   if(ignoredLines)detail+='，忽视 '+ignoredLines+' 行';

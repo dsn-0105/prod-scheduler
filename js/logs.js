@@ -7,11 +7,17 @@ function logOp(action,target,detail,field,oldv,newv){
     field:field||'', oldv:(oldv===undefined?'':oldv), newv:(newv===undefined?'':newv)};
   logs.unshift(entry);
   if(logs.length>500)logs=logs.slice(0,500);
-  save('logs',logs);
+  /* 【P1】.124：silent=true —— 日志是 best-effort 副作用，不能因为 logs 表的乐观锁 409
+     让用户看到「本次保存未生效」的假告警（他的主业务其实已经成功）。
+     silent 下 DB.set 的 409 分支只 pullAll 刷新 revs（下次写自动恢复）而不弹窗。 */
+  save('logs',logs,true);
 }
+/* 【P1】.124：清空日志为 admin 专属（服务端会拒绝非 admin 的整表清空/缩减）。
+   前端同步收敛：非 admin 不渲染「清空日志」按钮，避免点了才吃 403。 */
+function canClearLogs(){return !!(currentUser&&currentUser.role==='admin');}
 function renderLogs(){
   const ACTION_CLS={'新增':'tag-green','编辑':'tag-blue','删除':'tag-red','导入':'tag-amber','导出':'','清空':'tag-red','字段设置':''};
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>操作日志 <span class="desc">记录关键操作 · 最多保留 500 条</span> <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="clearLogs()">清空日志</button></div>';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>操作日志 <span class="desc">记录关键操作 · 最多保留 500 条</span> '+(canClearLogs()?'<button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="clearLogs()">清空日志</button>':'<span style="margin-left:auto"></span>')+'</div>';
   if(logs.length===0){
     html+='<div class="empty">暂无操作记录</div>';
   }else{
@@ -50,6 +56,7 @@ function renderLogs(){
   return html;
 }
 function clearLogs(){
+  if(!canClearLogs()){alert('仅管理员可清空操作日志');return;}   /* 【P1】与服务端判定一致，前端先拦 */
   if(!confirm('确认清空所有操作日志？此操作不可恢复。'))return;
   logs=[];
   save('logs',logs);

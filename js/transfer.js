@@ -203,7 +203,8 @@ function openCallStock(){
     '<button class="btn" onclick="closeModal()">取消</button>');
   csAttach();
 }
-function doCallStock(o){
+/* 【P1 事务化】调用方改为 async + await：等待 applyTransfers 的一次 /api/tx 落盘后再报成功（设计 §4.1 ⑥） */
+async function doCallStock(o){
   const moves=[];let any=false;
   document.querySelectorAll('.cs-qty').forEach(function(inp){
     const li=Number(inp.dataset.li);
@@ -221,10 +222,12 @@ function doCallStock(o){
     any=true;
   });
   if(!any){alert('未填写任何调用数量');return;}
-  if(applyTransfers('call',moves)){
+  if(await applyTransfers('call',moves)){
     logOp('调用库存','订单管理','销售订单 '+o.id+' 调用库存');
     renderContent();
     clearGhostSel(moves.map(function(mv){return mv.out.orderId;}).concat([o.id]));
+  }else{
+    alertTransferFailed();
   }
   closeModal();
 }
@@ -272,7 +275,8 @@ function openReturnStock(){
     '<button class="btn" onclick="closeModal()">取消</button>');
   csAttach();
 }
-function doReturnStock(o){
+/* 【P1 事务化】同上：async + await */
+async function doReturnStock(o){
   const moves=[];let any=false;
   document.querySelectorAll('.cs-qty').forEach(function(inp){
     const li=Number(inp.dataset.li);
@@ -288,10 +292,12 @@ function doReturnStock(o){
     any=true;
   });
   if(!any){alert('未填写任何退回数量');return;}
-  if(applyTransfers('return',moves)){
+  if(await applyTransfers('return',moves)){
     logOp('退回库存','订单管理','销售订单 '+o.id+' 退回库存');
     renderContent();
     clearGhostSel(moves.map(function(mv){return mv.in.orderId;}).concat([o.id]));
+  }else{
+    alertTransferFailed();
   }
   closeModal();
 }
@@ -304,8 +310,13 @@ function doReturnStock(o){
      参与方为库存订单 → 明细 deliveredQty（out 减 / in 加，可负=欠货，.20 口径）
      参与方为销售订单 → 明细 calledQty（out 减 / in 加，下限 0；.97 已交付由交付/退货驱动）
    台账快照：参与方含销售订单→取销售侧订单/行（客户/合同/商品名）；纯库存互调→调入侧库存行
+   ================================================================
+   【P1 事务化】2026-09-11.124：写入收尾由「两次独立 save + 一次 DB.set」改为**一次 /api/tx**。
+   事实表 orders / transfers 必然同事务；products（库存=Σ库存订单已交付）为派生投影，
+   仅在真有变化时作为伴随 op 并入同一次提交（投影「写盘前」重算，设计 §4.1 ④ / §4.4）。
+   本函数因此变为 **async**，返回 Promise<boolean>（true=整批落盘；false=整批未生效且内存已复原）。
    ================================================================ */
-function applyTransfers(type,moves,opts){
+async function applyTransfers(type,moves,opts){
   if(!moves||!moves.length)return false;
   /* 前置校验：全部参与方订单/明细须存在，任一缺失整批放弃（不改任何数据） */
   for(const mv of moves){
@@ -324,9 +335,10 @@ function applyTransfers(type,moves,opts){
     if(mv.in.orderType==='inv')iit.deliveredQty=num(iit.deliveredQty)+mv.qty;
     else iit.calledQty=Math.max(0,num(iit.calledQty)+mv.qty);
   });
-  save('orders',orders);
-  syncStockFromInvOrders();
-  syncOrderAutoStatus();   // 2026-08-25.3：调拨后按未交付合计自动判定状态
+  /* 【P1 事务化】投影前置重算（纯函数，只改内存）：库存投影 + 订单状态投影。
+     先算后写 = 与「写盘后触发」逐字节同值，且消除第二个失败点（设计 §4.4 三条理由）。 */
+  const stockChanged=recomputeStockFromInvOrders();
+  recomputeOrderAutoStatus();   // 2026-08-25.3：调拨后按未交付合计自动判定状态（orders 恒在 tx 内，状态随之落盘）
   const ts=new Date().toLocaleString('zh-CN',{hour12:false});
   const user=(currentUser&&currentUser.name)||(currentUser&&currentUser.username)||'未知';
   moves.forEach(function(mv,idx){
@@ -345,10 +357,15 @@ function applyTransfers(type,moves,opts){
       spec:snap.it?(snap.it.spec||''):'',model:snap.it?(snap.it.model||''):''
     });
   });
-  DB.set('transfers',transfers,true).then(function(ok){
-    if(ok===false)alert('调拨台账保存失败：订单库存变更已生效，但台账记录未保存，请刷新后核对调拨台账。');
-  });
-  return true;
+  /* 【P1 事务化】一次原子提交：orders（事实·明细数量+状态） + transfers（事实·台账）
+     + products（派生投影，仅变化时）。silent=true：提示由调用方决定（设计 §4.1 ⑤/⑥）。 */
+  const ops=[{key:'orders',value:orders},{key:'transfers',value:transfers}];
+  if(stockChanged)ops.push({key:'products',value:products});
+  return await DB.tx(ops,true);
+}
+/* 【P1 事务化】调拨失败统一提示：DB.tx 已 pullAll 复原内存，故本次调拨整体未生效。 */
+function alertTransferFailed(){
+  alert('调拨保存失败：为避免数据不一致，本次调拨整体未生效（订单、库存、台账均未改动）。\n请刷新页面后重试。');
 }
 /* 调拨/冲销后清理被筛选隐藏订单的幽灵勾选（2026-08-25.5，此时 DOM 已按新状态渲染） */
 function clearGhostSel(orderIds){
@@ -357,7 +374,8 @@ function clearGhostSel(orderIds){
     if(ix>=0&&!orderRowVisibleInDom(orders[ix].id))clearHiddenOrderSel(ix);
   });
 }
-function reverseTransfer(id){
+/* 【P1 事务化】同上：async + await */
+async function reverseTransfer(id){
   if(!canWriteKey('transfers')){alert('当前账号无调拨台账编辑权限');return;}
   const t=transfers.find(function(x){return x.id===id;});
   if(!t){alert('未找到记录');return;}
@@ -376,7 +394,7 @@ function reverseTransfer(id){
   /* 反向执行：原调出方收回、原调入方退回 —— 方向对调（原 out 当 in、原 in 当 out）后数量自动反向滚回。
      .97 口径：销售订单已交付不随调拨变动（由交付/退货操作驱动），仅滚回库存已交付与销售 calledQty。
      .115：conv/move 冲销生成 conv_back/move_back（改装退回/移库退回）反向记录，reverseOf 指向原记录 */
-  const ok=applyTransfers(revType,[{out:{orderId:inS.orderId,orderType:inS.orderType,lineIdx:inS.lineIdx},
+  const ok=await applyTransfers(revType,[{out:{orderId:inS.orderId,orderType:inS.orderType,lineIdx:inS.lineIdx},
     in:{orderId:outS.orderId,orderType:outS.orderType,lineIdx:outS.lineIdx},qty:num(t.qty)}],{reverseOf:t.id});
   if(!ok){alert('冲销失败：关联订单/明细不可用');return;}
   t.reversed=true;
@@ -566,7 +584,8 @@ function openInvCallStock(){
     '<button class="btn" onclick="closeModal()">取消</button>');
   document.querySelectorAll('.iv-inv-box').forEach(function(box){ivWarn(Number(box.dataset.li));});
 }
-function doInvCallStock(){
+/* 【P1 事务化】同上：async + await */
+async function doInvCallStock(){
   if(!__ivOrder){alert('调用上下文丢失，请重新操作');return;}
   const els=document.querySelectorAll('.iv-qty');
   if(!els.length){alert('弹窗已关闭，请重新操作');return;}
@@ -591,10 +610,12 @@ function doInvCallStock(){
   if(!any){alert('未填写任何调用数量');return;}
   const convs=moves.filter(function(m){return m.type==='conv';}).length;
   const mvs=moves.length-convs;
-  if(applyTransfers(null,moves)){
+  if(await applyTransfers(null,moves)){
     logOp('调用库存','库存管理','库存订单 '+__ivOrder.id+' 调用库存补库'+(convs?('（改装 '+convs+' 行'+(mvs?'、移库 '+mvs+' 行':'')+'）'):(mvs?'（移库 '+mvs+' 行）':'')));
     renderContent();
     clearGhostSel(moves.map(function(mv){return mv.out.orderId;}).concat([__ivOrder.id]));
+  }else{
+    alertTransferFailed();
   }
   closeModal();
 }

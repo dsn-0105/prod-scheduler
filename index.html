@@ -428,6 +428,70 @@ const DB={
     }
     localStorage.setItem(KEY+k,JSON.stringify(v));
     return true;
+  },
+  /* 【P1·事务客户端】多键原子提交：一次 POST /api/tx，服务端保证「全成功 / 一字不写」。
+     与 DB.set 的关系：DB.set 的单键语义与 .123 的 expectedRev 409 行为**完全不变**；
+     DB.tx 是新增通道，供「一次业务动作跨多张表」使用（调拨/报工/金蝶导入，T03 接入）。
+     失败语义（沿用 .123 口径：宁可让用户刷新重做，也不做自动合并 / 自动重试）：
+       409/403/400/500/网络异常 → 先 await pullAll() 复原内存 → 非 silent 时提示 → 返回 false
+       401 → apiReq 已内置 showLogin()，此处不再重复提示
+     ops: [{key,value,expectedRev?}]；expectedRev 缺省取本地 serverRevs[key]（无则 0）。
+     返回 Promise<boolean>：true=全部落盘；false=一字未写（内存已被 pullAll 复原）。 */
+  async tx(ops,silent){
+    const list=(Array.isArray(ops)?ops:[]).filter(o=>o&&o.key);
+    if(!list.length)return true;   /* 空提交：不发请求 */
+    if(API_BASE){
+      try{
+        const body={ops:list.map(function(o){
+          return {key:o.key,value:o.value,expectedRev:(o.expectedRev!=null?o.expectedRev:(serverRevs[o.key]||0))};
+        })};
+        const r=await apiReq('/tx',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(r.status===409){
+          try{await pullAll();}catch(_e){}
+          if(!silent)alert('数据已被他人修改，请刷新后重新操作。\n（本次操作未生效：为避免覆盖他人改动，整批已拦截）');
+          return false;
+        }
+        if(r.status===403){
+          try{await pullAll();}catch(_e){}
+          if(!silent)alert('无该表单的编辑权限，本次操作未生效。');
+          return false;
+        }
+        if(!r.ok){
+          try{await pullAll();}catch(_e){}
+          if(!silent){
+            let msg='保存失败('+r.status+')';
+            try{const j=await r.json();if(j&&j.error)msg+='：'+j.error;}catch(_e){}
+            alert(msg+'，数据未被修改，请刷新后重试。');
+          }
+          return false;
+        }
+        /* 关键：用服务端返回的新 revs 刷新本地版本号（否则下一次提交会立刻误报 409），
+           并把已落盘的 value 同步进 serverData，保持本地缓存 = 服务器真值。 */
+        try{
+          const j=await r.json();
+          const revs=(j&&j.revs)||{};
+          list.forEach(function(o){
+            if(typeof revs[o.key]==='number')serverRevs[o.key]=revs[o.key];
+            else serverRevs[o.key]=(serverRevs[o.key]||0)+1;
+            if(serverData)serverData[o.key]=o.value;
+          });
+        }catch(_e){
+          list.forEach(function(o){
+            serverRevs[o.key]=(serverRevs[o.key]||0)+1;
+            if(serverData)serverData[o.key]=o.value;
+          });
+        }
+        return true;
+      }catch(e){
+        if(e&&e.message==='unauthorized')return false;   /* 401：apiReq 已弹出登录框 */
+        try{await pullAll();}catch(_e){}
+        if(!silent)alert('保存失败（网络异常）：'+e.message);
+        return false;
+      }
+    }
+    /* 本地模式（API_BASE 为空，单机兜底）：无服务端事务，直接落 localStorage，保证不崩 */
+    list.forEach(function(o){try{localStorage.setItem(KEY+o.key,JSON.stringify(o.value));}catch(_e){}});
+    return true;
   }
 };
 /* ---- 实时同步：轮询版本号，有变化自动拉取刷新 ---- */
@@ -547,14 +611,29 @@ function btnOK(m,kind){
   if(kind==='del')return m==='prodPlan'?canAct('prodPlan.ppDel'):true;
   return true;
 }
-/* 兼容包装：旧代码 save/load 同步调用 */
-function save(k,v){
-  DB.set(k,v);
+/* 兼容包装：旧代码 save/load 同步调用。
+   silent 直通 DB.set（.124 起）：logOp 等「非关键写」用 silent 抑制乐观锁 409 的误告警
+   —— 主业务已成功、仅日志/派生表未同步时不应打扰用户。 */
+function save(k,v,silent){
+  DB.set(k,v,silent);
   // 业务数据变更后自动备份（仅本地模式；服务器模式数据已持久化在服务器）
   if(!API_BASE && bootDone && ['products','orders','deliveries','fields'].indexOf(k)>=0){
     try{scheduleAutoBackup();}catch(e){}
   }
   return v;
+}
+/* 【P1·事务客户端】多表原子写兼容包装：把 [[key,value],...] 转成 ops 后走 DB.tx（一次原子提交）。
+   供 T03 改造写入点使用（旧 save(k,v) 的 91 处调用点零改动）。
+   可选第 3 个元素 = expectedRev；返回 Promise<boolean>（false 时 DB.tx 已 pullAll 复原内存并提示）。 */
+function saveMulti(pairs,silent){
+  const ops=[];
+  (Array.isArray(pairs)?pairs:[]).forEach(function(p){
+    if(!p||p.length<2||!p[0])return;
+    const op={key:p[0],value:p[1]};
+    if(p.length>2&&p[2]!=null)op.expectedRev=p[2];
+    ops.push(op);
+  });
+  return DB.tx(ops,silent);
 }
 function load(k,def){try{const v=localStorage.getItem(KEY+k);return v?JSON.parse(v):def;}catch(e){return def;}}
 // 自动备份状态（可携式 .json 文件，用于链接轮换后一键恢复）
@@ -2290,18 +2369,23 @@ function orderUndelTotal(o){return orderItems(o).reduce((s,i)=>s+Math.max(0,(o.o
    仅对「执行中/已完成」生效；「已取消/已暂停」为手动状态，自动规则不覆盖。
    整单未交付合计 = 0（全部交付完成）→ 已完成；否则 → 执行中。
    变更落库并记操作日志（silent=true 用于存量初始化，仅统计不逐条记）。 */
-function syncOrderAutoStatus(silent){
+/* 【P1 拆分】纯重算：只改内存 orders.status + 记日志，**不写盘**（返回变更单数）。
+   供事务化写入点「写盘前前置重算」调用，把状态投影并入同一个 /api/tx（设计 §4.4）。 */
+function recomputeOrderAutoStatus(silent){
   const changed=[];
   orders.forEach(o=>{
     if(o.status==='已取消'||o.status==='已暂停')return;
     const target=orderUndelTotal(o)<=0?'已完成':'执行中';
     if(o.status!==target){changed.push({id:o.id,from:o.status,to:target});o.status=target;}
   });
-  if(changed.length){
-    save('orders',orders);
-    if(!silent)changed.forEach(c=>logOp('状态变更','订单管理','订单「'+c.id+'」'+c.from+' → '+c.to+'（系统自动）'));
-  }
+  if(changed.length&&!silent)changed.forEach(c=>logOp('状态变更','订单管理','订单「'+c.id+'」'+c.from+' → '+c.to+'（系统自动）'));
   return changed.length;
+}
+/* 【P1 兼容包装】行为与改造前一致：重算 + 变更时落盘 orders（非事务路径仍可用）。 */
+function syncOrderAutoStatus(silent){
+  const n=recomputeOrderAutoStatus(silent);
+  if(n)save('orders',orders);
+  return n;
 }
 /* 迁移（2026-08-25.3）：存量订单状态对齐——旧「待排产」→「执行中」；
    并按自动规则初始化存量执行中/已完成订单（全部交付完成的旧单直接标已完成，幂等）。 */
@@ -3518,7 +3602,10 @@ function backfillInvDeliveredFromStock(){
    无库存订单的产品库存一律归零（期初库存经 backfillInvDeliveredFromStock 反填进订单后走本口径）；
    删除/恢复回滚库存订单后，产品库存自动对齐，杜绝残留孤儿库存。
    后续「销售订单调用库存」功能将在此基础上扣减。 */
-function syncStockFromInvOrders(){
+/* 【P1 拆分】纯重算：只改内存 products.stock，**不写盘**（返回是否变化）。
+   供事务化写入点「写盘前前置重算」调用，把库存投影并入同一个 /api/tx（设计 §4.4）。
+   口径零改动：全量对齐（无库存订单的产品 → 0），仅 if-changed。 */
+function recomputeStockFromInvOrders(){
   const map={};
   orders.forEach(o=>{
     if(orderTypeOf(o)!=='库存订单')return;
@@ -3531,7 +3618,11 @@ function syncStockFromInvOrders(){
     const v=map[p.id]||0;            // 全量对齐：无库存订单的产品 → 0
     if(num(p.stock)!==v){p.stock=v;changed=true;}
   });
-  if(changed)save('products',products);
+  return changed;
+}
+/* 【P1 兼容包装】行为与改造前一致：重算 + 变化时落盘 products。 */
+function syncStockFromInvOrders(){
+  if(recomputeStockFromInvOrders())save('products',products);
 }
 
 /* ================================================================
@@ -3787,8 +3878,10 @@ function ppReportsModal(planId){
     '<div style="margin-bottom:8px;font-size:13px;color:var(--muted)">可修改每条报工的「报工人」与各工序「本次数量」（最小 1，不可改为 0）；如需移除某条报工请点「删除」（同步回退累计）；保存后，排产单累计完成数将按新数量自动重算（修改后不能超过本次排产数）。</div>'+inner,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="ppSaveReportEdits(\''+esc(planId)+'\')">保存修改</button>');
 }
-/* 保存报工明细编辑：更新 worker/qty 并按新数量重算排产单累计（超量拦截；已完成不全完成回退生产中） */
-function ppSaveReportEdits(planId){
+/* 保存报工明细编辑：更新 worker/qty 并按新数量重算排产单累计（超量拦截；已完成不全完成回退生产中）
+   【P1 事务化】写入收尾改为一次 /api/tx（§4.3）：事实表 productionPlans/productionReports/orders
+   与派生投影 products 前置重算后同事务提交，消除「三处独立 save + 回写再两处」的不一致窗口。 */
+async function ppSaveReportEdits(planId){
   if(!ensureWrite('prodPlan'))return;
   const p=productionPlans.find(x=>x.id===planId);
   if(!p)return;
@@ -3872,10 +3965,17 @@ function ppSaveReportEdits(planId){
   });
   const allDone=ppItems(p).every(z=>ppPlanOf(z)>0&&ppDoneOf(z)>=ppPlanOf(z));
   if(p.status==='已完成'&&!allDone)p.status='生产中';
-  save('productionPlans',productionPlans);
-  save('productionReports',productionReports);
-  /* 2026-08-25.16：编辑报工后入库累计变化 → 回写订单（.40 行级回写） */
-  inboundDelta.forEach(r=>{ if(r.qty)writebackInbound(p.orderId,r.productId,r.qty,r.orderLine); });
+  /* 【P1 事务化】入库回写（.40 行级）+ 库存投影先在内存算完，再与事实表一次提交（§4.3/§4.4）：
+     事实表 productionPlans/productionReports 必然在事务内；orders 仅真有回写时伴随；products 仅投影变化时伴随。 */
+  let inboundChanged=false;
+  inboundDelta.forEach(r=>{ if(r.qty&&writebackInboundMutation(p.orderId,r.productId,r.qty,r.orderLine))inboundChanged=true; });
+  const stockChanged=recomputeStockFromInvOrders();
+  const statusChanged=recomputeOrderAutoStatus();
+  const ops=[{key:'productionPlans',value:productionPlans},{key:'productionReports',value:productionReports}];
+  if(inboundChanged||statusChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,false);
+  if(!ok)return;   /* DB.tx 已 pullAll 复原内存并提示；不进入成功态（不 closeModal/不渲染成功） */
   logOp('编辑报工','排产计划','编辑排产单「'+p.id+'」报工明细（报工人/数量）');
   closeModal();
   renderContent();
@@ -3883,8 +3983,9 @@ function ppSaveReportEdits(planId){
   const _rpi=productionPlans.indexOf(p);
   if(_rpi>=0&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(_rpi);
 }
-/* 删除一条报工明细：同步回退排产单对应工序累计完成数；已完成后回退则状态回到生产中 */
-function ppDelReport(id){
+/* 删除一条报工明细：同步回退排产单对应工序累计完成数；已完成后回退则状态回到生产中
+   【P1 事务化】写入收尾改为一次 /api/tx（§4.3，与 ppSaveReportEdits 同构）。 */
+async function ppDelReport(id){
   if(!ensureWrite('prodPlan'))return;
   if(!needAct('prodPlan.ppReportEdit'))return;   /* .119：删除单条报工与编辑报工同键 ppReportEdit（默认车间） */
   const idx=productionReports.findIndex(r=>r.id===id);
@@ -3911,12 +4012,20 @@ function ppDelReport(id){
     });
     const allDone=ppItems(p).every(z=>ppPlanOf(z)>0&&ppDoneOf(z)>=ppPlanOf(z));
     if(p.status==='已完成'&&!allDone)p.status='生产中';
-    save('productionPlans',productionPlans);
   }
   productionReports.splice(idx,1);
-  save('productionReports',productionReports);
-  /* 2026-08-25.16：删除报工 → 扣回订单已交付 */
-  if(p)for(const pid in inboundDelta){ if(inboundDelta[pid])writebackInbound(p.orderId,pid,inboundDelta[pid]); }
+  /* 【P1 事务化】回写订单（扣回已交付）与两个投影先在内存算完，再与事实表一次提交（§4.3/§4.4） */
+  let inboundChanged=false;
+  if(p)for(const pid in inboundDelta){ if(inboundDelta[pid]&&writebackInboundMutation(p.orderId,pid,inboundDelta[pid]))inboundChanged=true; }
+  const stockChanged=recomputeStockFromInvOrders();
+  const statusChanged=recomputeOrderAutoStatus();
+  const ops=[];
+  if(p)ops.push({key:'productionPlans',value:productionPlans});
+  ops.push({key:'productionReports',value:productionReports});
+  if(inboundChanged||statusChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,false);
+  if(!ok)return;   /* DB.tx 已 pullAll 复原内存并提示；不进入成功态 */
   logOp('删除报工','排产计划','删除排产单「'+rec.planId+'」报工 '+(rec.date||'')+' '+(rec.time||'')+'：'+labelParts+'（累计已回退）');
   closeModal();
   renderContent();
@@ -4511,7 +4620,8 @@ function reportProdPlan(){
   showModal('生产报工（'+esc(p.id)+'）',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReport('+pi+')">提交报工</button>');
 }
-function saveReport(pi){
+/* 【P1 事务化】提交报工：await applyReport 的 /api/tx 完成（原为同步 fire-and-forget 调用） */
+async function saveReport(pi){
   const p=productionPlans[pi];
   if(!p)return;
   const worker=String((document.getElementById('rp_worker')||{}).value||'').trim();
@@ -4545,7 +4655,7 @@ function saveReport(pi){
     alert('报工数量不能超过本次排产数量：\n\n'+overRows.map(o=>'• '+o.name+' · '+o.step+'：本次排产 '+o.plan+'，已报 '+o.cur+'，本次 '+o.qty+' → 合计 '+(o.cur+o.qty)).join('\n')+'\n\n请调整本次数量后重新提交。');
     return;
   }
-  applyReport(pi,entries,items,worker);
+  await applyReport(pi,entries,items,worker);
 }
 /* 2026-08-25.40：排产单行 → 来源订单行索引（经 交付计划行 orderLine；.24 dlLine → .33/.34 orderLine 链路）。
    无 dlLine（存量排产单）/ 独立单（deliveryIdx=null）/ 交付计划行无 orderLine → 返回 null（回退产品级首行） */
@@ -4593,24 +4703,44 @@ function queryDeliveryOfOrder(m){
    销售订单 → syncOrderAutoStatus（整单未交付=0 自动「已完成」）；库存订单 → syncStockFromInvOrders（产品库存=Σ库存订单已交付自动跟随）；
    独立单（deliveryIdx=null）保留 orderId 照常回写。
    2026-08-25.40：加可选 orderLine 参数——同产品多行订单精确回写对应明细行；无/不匹配回退 productId 首行（存量兼容） */
-function writebackInbound(orderId,productId,delta,orderLine){
-  if(!orderId||!productId||!delta)return;
+/* 【P1 拆分 A-1】定位回写目标：订单 + 明细行（.40 行级：orderLine 命中优先，否则 productId 首行兜底）。 */
+function inboundTargetOf(orderId,productId,orderLine){
+  if(!orderId||!productId)return null;
   const o=orders.find(x=>x.id===orderId);
-  if(!o)return;
+  if(!o)return null;
   const oi=orderItems(o);
   let it=null;
   if(orderLine!=null&&oi[orderLine]&&String(oi[orderLine].productId)===String(productId))it=oi[orderLine];
   if(!it)it=oi.find(x=>String(x.productId)===String(productId));
-  if(!it)return;
+  if(!it)return null;
+  return {o:o,it:it};
+}
+/* 【P1 拆分 A-2】纯内存变更器：只改 orders 明细 deliveredQty，**不写盘、不投影、不记日志**
+   （返回是否真的变更）。供事务化写入点「写盘前前置变更」调用，把 orders 并入同一个 /api/tx。
+   口径零改动：仅库存订单回写（.97/.99 口径）；销售订单 return false。 */
+function writebackInboundMutation(orderId,productId,delta,orderLine){
+  if(!delta)return false;
+  const t=inboundTargetOf(orderId,productId,orderLine);
+  if(!t)return false;
   /* 2026-08-25.20：库存订单已交付允许负数（欠货向 0 恢复）
      .97 迁移：销售订单已交付改由「交付/退货」操作驱动（writebackInbound 仅服务库存订单；.95 后排产单只从库存订单下推，销售订单不回写） */
-  if(orderTypeOf(o)!=='库存订单')return;
-  it.deliveredQty=num(it.deliveredQty)+delta;
+  if(orderTypeOf(t.o)!=='库存订单')return false;
+  t.it.deliveredQty=num(t.it.deliveredQty)+delta;
+  return true;
+}
+/* 【P1 兼容包装】旧名保留：本轮**未迁移**的调用点（saveProdPlan / delProdPlan）行为逐字不变。 */
+function writebackInbound(orderId,productId,delta,orderLine){
+  if(!writebackInboundMutation(orderId,productId,delta,orderLine))return;
   save('orders',orders);
   syncStockFromInvOrders();
-  logOp('系统','库存打通','报工入库回写订单「'+o.id+'」'+(it.productName||productId)+' 已交付 '+(delta>0?'+':'')+delta);
+  const t=inboundTargetOf(orderId,productId,orderLine);
+  logOp('系统','库存打通','报工入库回写订单「'+orderId+'」'+((t&&t.it.productName)||productId)+' 已交付 '+(delta>0?'+':'')+delta);
 }
-function applyReport(pi,entries,items,worker){
+/* 【P1 事务化】报工落地：写入收尾改为一次 /api/tx（§4.3/§4.5）。
+   事实表 productionPlans / productionReports / orders（库存订单已交付）必然同事务；
+   products 为派生投影（库存=Σ库存订单已交付），仅在真有变化时作为伴随 op 并入同一次提交。
+   失败（409/403/400/500/网络/401）→ DB.tx 已 pullAll 复原内存并提示 → 直接 return，不进入成功态。 */
+async function applyReport(pi,entries,items,worker){
   const p=productionPlans[pi];
   if(!p)return;
   const logParts=[];
@@ -4638,10 +4768,11 @@ function applyReport(pi,entries,items,worker){
   });
   if(p.status==='待排产')p.status='生产中';
   const allDone=items.every(x=>ppPlanOf(x)>0&&ppDoneOf(x)>=ppPlanOf(x));
-  save('productionPlans',productionPlans);
-  /* 2026-08-25.16：报工入库 → 回写订单已交付（销售/库存订单都回写；库存订单联动产品库存）；.40 行级回写 */
-  inboundDelta.forEach(r=>{ if(r.qty)writebackInbound(p.orderId,r.productId,r.qty,r.orderLine); });
-  /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序；报工人为弹窗必填输入（.9） */
+  /* 【P1 事务化】三表 + 投影先在内存全部改完，再一次性提交（§4.3/§4.4「投影前置重算」） */
+  let inboundChanged=false;
+  inboundDelta.forEach(r=>{ if(r.qty&&writebackInboundMutation(p.orderId,r.productId,r.qty,r.orderLine))inboundChanged=true; });
+  /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序；报工人为弹窗必填输入（.9）
+     —— 必须在构造 ops 之前 push，确保同一次事务把新明细一起落盘 */
   if(repItems.length>0){
     const now=new Date();
     const rec={
@@ -4652,15 +4783,23 @@ function applyReport(pi,entries,items,worker){
       items:repItems,createdAt:now.toISOString()
     };
     productionReports.push(rec);
-    save('productionReports',productionReports);
   }
+  const stockChanged=recomputeStockFromInvOrders();
+  const statusChanged=recomputeOrderAutoStatus();
+  const ops=[{key:'productionPlans',value:productionPlans}];
+  if(repItems.length>0)ops.push({key:'productionReports',value:productionReports});
+  if(inboundChanged||statusChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,false);
+  if(!ok)return;   /* DB.tx 已 pullAll 复原内存并提示；不进入成功态 */
   logOp('报工','排产计划','排产单「'+p.id+'」报工：'+logParts.join('、'));
   closeModal();
   renderContent();
   if(allDone&&p.status!=='已完成'){
     if(confirm('该排产计划所有产品均已完工（累计完成≥计划数量），是否标记为「已完成」？')){
       p.status='已完成';
-      save('productionPlans',productionPlans);
+      const okDone=await DB.tx([{key:'productionPlans',value:productionPlans}],false);
+      if(!okDone)return;
       logOp('完成','排产计划','排产单「'+p.id+'」标记为已完成');
       renderContent();
     }
@@ -6147,7 +6286,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-10.123</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-11.124</div>
 </body>
 </html>
 
