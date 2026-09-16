@@ -308,7 +308,9 @@ function kdShowReport(){
       if(it.model)mainParts.push('型号 '+it.model);
       if(it.spec)mainParts.push('规格 '+it.spec);
       var main=mainParts.join(' · ');
-      var subParts=[];
+      /* .126：第二行行首补「订单数量」——决策替换料号时需据此判断数量
+         （Excel 空值按 0 显示，与导入落库口径「数量为空按 0」一致） */
+      var subParts=['数量 '+(num(it.orderQty)||0)];
       if(desc)subParts.push('描述 '+desc);
       if(notes)subParts.push('行备注 '+notes);
       var subHtml='';
@@ -319,7 +321,7 @@ function kdShowReport(){
         '<div id="kd_unk_dec_'+u.idx+'" style="flex-shrink:0;white-space:nowrap"></div></div>'+subHtml+'</div>';
     }).join('');
     body+=sec('未知产品编码',R.unknown.length,
-      '<div style="font-size:12px;color:#666;margin-bottom:6px">每行需完成决策：「选已有产品」（弹出产品选择器，含编码/名称/型号/规格）/「新建」/「忽视」；<b>未决策行无法导入</b>。</div>'+
+      '<div style="font-size:12px;color:#666;margin-bottom:6px">每行需完成决策：「选已有产品」（弹出产品选择器，含编码/名称/型号/规格，<b>点击行即选中</b>）/「新建」/「忽视」；<b>未决策行无法导入</b>。</div>'+
       '<button class="btn btn-sm" onclick="kdBatchUnknown(\'__NEW__\')">全部新建</button>'+rows);
   }
   if(R.conflict.length){
@@ -395,12 +397,14 @@ function kdRenderUnknownDec(idx){
   var el=document.getElementById('kd_unk_dec_'+idx);
   if(el)el.innerHTML=kdUnknownDecHtml(idx);
 }
-/* 弹出产品选择器（单选）：复用订单明细行的 productPickerModal，展示系统 编码/名称/型号/规格 等 */
+/* 弹出产品选择器（单选）：复用订单明细行的 productPickerModal，展示系统 编码/名称/型号/规格 等
+   .126：clickSelect=true——点击行即选中该条目并立即确认回填（与「调用库存」选择器口径一致，省去再点「确定」） */
 function kdPickUnknown(idx){
   if(!kdState||!kdReport)return;
   var cur=kdState.unknown[idx];
   productPickerModal({
     mode:'single',
+    clickSelect:true,
     preselected:(cur&&cur!=='__NEW__'&&cur!=='__SKIP__')?[cur]:[],
     onConfirm:function(ids){
       if(!ids.length)return;
