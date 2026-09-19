@@ -2744,10 +2744,39 @@ function crossCallTip(recs){
   });
   return s;
 }
+/* 2026-09-19.128：订单管理整单级「调用状态 / 交付状态」（用户需求）。
+   口径（用户拍板=汇总占比）= 整单 Σ已调用 ÷ Σ数量、Σ已交付 ÷ Σ数量：
+     =0 → 未调用/未交付；≥Σ数量 → 全部调用/全部交付；其间 → 部分调用/部分交付。
+   数量沿用 invQtyOf（销售=orderQty；库存=最大库存量），库存订单不渲染这两列（函数保持通用）。
+   纯实时派生：不落 data.json、零迁移；不改状态机（「全部交付自动已完成」逻辑保持不变，
+   故「交付状态=全部交付」与「审核状态=已完成」在已取消/已暂停单上可能合法分歧）。
+   排序权重 ST_W：未→0 / 部分→1 / 全部→2（禁止按字符串排序）。 */
+const CALL_STATUS=['未调用','部分调用','全部调用'];
+const DELIVER_STATUS=['未交付','部分交付','全部交付'];
+const ST_W={};CALL_STATUS.forEach(function(v,i){ST_W[v]=i;});DELIVER_STATUS.forEach(function(v,i){ST_W[v]=i;});
+const ST_CLS={'未调用':'tag-gray','部分调用':'tag-amber','全部调用':'tag-green','未交付':'tag-gray','部分交付':'tag-amber','全部交付':'tag-green'};
+const ST_W_OF=function(v){return ST_W[String(v)]!=null?ST_W[String(v)]:0;};
+function orderStatusOf(o){
+  const its=orderItems(o);
+  let q=0,c=0,d=0;
+  for(let i=0;i<its.length;i++){
+    const it=its[i];
+    q+=invQtyOf(o,it);c+=num(it.calledQty);d+=num(it.deliveredQty);
+  }
+  return {
+    qty:q,called:c,delivered:d,
+    call:c===0?CALL_STATUS[0]:(q>0&&c>=q?CALL_STATUS[2]:CALL_STATUS[1]),
+    deliver:d===0?DELIVER_STATUS[0]:(q>0&&d>=q?DELIVER_STATUS[2]:DELIVER_STATUS[1])
+  };
+}
 function renderOrderTable(formKey,typeOrders,prodMap){
   const rows=[];
   typeOrders.forEach(({o,i})=>{orderItems(o).forEach((it,li)=>rows.push({order:o,item:it,orderIdx:i,__li:li}));});
   const puMap=buildPlannedUndelMap();          // 2026-08-25.17：新口径已计划未交付预计算
+  /* 2026-09-19.128：整单状态按订单预计算一次（行内零重复遍历），供「调用状态/交付状态」两列 get 共用 */
+  const ordStatMap=new Map();
+  typeOrders.forEach(({o})=>{if(!ordStatMap.has(o.id))ordStatMap.set(o.id,orderStatusOf(o));});
+  const ordStat=function(r){return ordStatMap.get(r.order.id)||{call:CALL_STATUS[0],deliver:DELIVER_STATUS[0]};};
   /* 2026-09-18.127：「已调用」列跨料替代警示——渲染前一次性预计算（仅销售订单；库存订单已隐藏该列）。
      按「调入订单id|L调入行号」归集，行内零 filter，避免逐行扫描 transfers 台账。 */
   const crossCallMap=(formKey!=='order_inv')?buildCrossCallMap():null;
@@ -2758,6 +2787,13 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     {key:'id',label:'单据编号',type:'text',get:r=>r.order.id},
     {key:'customer',label:'客户',type:'text',get:r=>r.order.customer},
     {key:'status',label:'审核状态',type:'text',select:true,options:ORDER_STATUS,get:r=>r.order.status},   /* 2026-08-25.58：筛选显示全部审核状态 */
+    /* 2026-09-19.128：整单级「调用状态/交付状态」——仅销售订单（库存订单无「已调用」列，与 .94 精简列一致）；
+       整单级 rowspan 列只能落在单据级信息区（预计交货日期…合同号 之间），放表尾会使第 2 行起列占位错位。
+       type:'text' → 不进底部合计；select+options → 表头复选多选筛选；sort → 语义权重。 */
+    ...(formKey!=='order_inv'?[
+      {key:'callStatus',label:'调用状态',type:'text',select:true,options:CALL_STATUS,get:r=>ordStat(r).call,sort:ST_W_OF},
+      {key:'deliverStatus',label:'交付状态',type:'text',select:true,options:DELIVER_STATUS,get:r=>ordStat(r).deliver,sort:ST_W_OF}
+    ]:[]),
     ...(formKey!=='order_inv'?[{key:'contractNo',label:'合同号',type:'text',get:r=>r.order.contractNo}]:[]),
     {key:'productId',label:'商品编码',type:'text',get:r=>r.item.productId},
     {key:'productName',label:'商品名称',type:'text',get:r=>r.item.productName||(r.item.productId&&prodMap[r.item.productId]?prodMap[r.item.productId].name:'')},
@@ -2794,9 +2830,11 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   TBL_ROWS[formKey]=rows;
   let shown=applyTable(formKey,rows);
   const allShown=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存，供底部合计行） */
-  /* 订单级列合并：前 5 列（预计交货日期/单据日期/单据编号/客户/审核状态）按订单合并。
-     仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。 */
-  const HEAD_COLS=5;
+  /* 订单级列合并：单据级列（预计交货日期/单据日期/单据编号/客户/审核状态[/调用状态/交付状态]/合同号）按订单合并。
+     仅当未按商品级列排序时才合并，避免排序后同一订单行被打散导致 rowspan 断裂。
+     2026-09-19.128：销售订单在「审核状态」后新增 2 个整单级列 → 5→7，保持 lineKeys 起点仍为合同号（行为不变）；
+     库存订单不显示这两列，保持 5（否则会把商品编码/商品名称挤出 lineKeys，导致按商品级列排序时误开合并、rowspan 断裂）。 */
+  const HEAD_COLS=(formKey==='order_inv')?5:7;
   const manualSort=tState(formKey).sort;
   const sortKey=manualSort?manualSort.key:null;
   const lineKeys=TBL_SCHEMAS[formKey].slice(HEAD_COLS).map(c=>c.key);
@@ -2822,7 +2860,19 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   }
   /* 2026-08-25.66/.68：金蝶式分页（order_frame/order_inv）——整单不拆（groupKey=r.order.id）；页码越界自动回 1（排序/筛选后见 toggleSort/applyFilt 重置） */
   if(PAGED_FORMS[formKey]&&shown.length>0)shown=slicePaged(formKey,shown,pageSizeOf(formKey),r=>r.order.id).rows;
-  if(shouldMerge&&manualSort) shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 手动排序后聚合保序（历史行为）
+  /* 2026-09-19.128：按单据级列排序的「保序聚合」（修既有缺陷）——
+     原实现 `[...shown].sort((a,b)=>a.order.id.localeCompare(...))` 会把 applyTable 的排序结果**整体覆盖**：
+     凡排序键落在单据级列（单据编号/单据日期/客户/审核状态/新增的调用状态·交付状态）时，
+     实际排序结果都退化为「按单据编号升序」，按这些列的升序/降序点击均无效（.127 前已存在）。
+     现改为按「排序结果中单据首次出现顺序」聚合：既保证同一订单的行连续（rowspan 不断裂），
+     又完整保留排序后的组间顺序。行级列排序时 shouldMerge=false，不进入本分支（历史行为不变）。 */
+  if(shouldMerge&&manualSort){
+    const _seq=[],_gm=new Map();
+    shown.forEach(function(r){const k=r.order.id;if(!_gm.has(k)){_gm.set(k,[]);_seq.push(k);}_gm.get(k).push(r);});
+    const _agg=[];
+    _seq.forEach(function(k){const g=_gm.get(k);for(let i=0;i<g.length;i++)_agg.push(g[i]);});
+    shown=_agg;
+  }
   const groupMap=new Map();
   shown.forEach((r,i)=>{if(!groupMap.has(r.order.id))groupMap.set(r.order.id,{start:i,count:0});groupMap.get(r.order.id).count++;});
   lastRowIds[formKey]=shown.map(r=>r.orderIdx);
@@ -2837,6 +2887,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   if(shown.length===0){html+=noMatchRow(formKey,TBL_SCHEMAS[formKey].length+1);}
   shown.forEach((r,i)=>{
     const o=r.order, it=r.item, oi=r.orderIdx;
+    const st=ordStat(r);   /* 2026-09-19.128：整单「调用状态/交付状态」（预计算，行级零额外遍历） */
     /* 2026-08-30.92：库存订单数量=最大库存量（stockMax 优先，历史行回退 orderQty）；交付进度/未交付/结余进度分母自动跟随 */
     const oq=num((formKey==='order_inv'&&it.stockMax!=null&&it.stockMax!=='')?it.stockMax:it.orderQty), dq=num(it.deliveredQty);
     const undel=oq-dq;
@@ -2881,6 +2932,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
           '<td data-key="id" rowspan="'+rs+'" style="font-weight:600">'+esc(o.id)+'</td>'+
           '<td data-key="customer" rowspan="'+rs+'">'+esc(o.customer)+'</td>'+
           '<td data-key="status" rowspan="'+rs+'"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
+          (_noInvHead?('<td data-key="callStatus" rowspan="'+rs+'"><span class="tag '+(ST_CLS[st.call]||'tag-gray')+'">'+esc(st.call)+'</span></td>'+
+                       '<td data-key="deliverStatus" rowspan="'+rs+'"><span class="tag '+(ST_CLS[st.deliver]||'tag-gray')+'">'+esc(st.deliver)+'</span></td>'):'')+
           (_noInvHead?('<td data-key="contractNo" rowspan="'+rs+'">'+esc(o.contractNo||'')+'</td>'):'');
       }
     }else{
@@ -2890,6 +2943,8 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         '<td data-key="id" style="font-weight:600">'+esc(o.id)+'</td>'+
         '<td data-key="customer">'+esc(o.customer)+'</td>'+
         '<td data-key="status"><span class="tag '+statusCls+'">'+esc(o.status)+'</span></td>'+
+        (_noInvHead?('<td data-key="callStatus"><span class="tag '+(ST_CLS[st.call]||'tag-gray')+'">'+esc(st.call)+'</span></td>'+
+                     '<td data-key="deliverStatus"><span class="tag '+(ST_CLS[st.deliver]||'tag-gray')+'">'+esc(st.deliver)+'</span></td>'):'')+
         (_noInvHead?('<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>'):'');
     }
     html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
@@ -6485,7 +6540,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-18.127</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-19.128</div>
 </body>
 </html>
 
