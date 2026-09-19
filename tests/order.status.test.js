@@ -11,7 +11,7 @@
         （原实现按单据编号重排，会覆盖排序结果 → 单据编号/审核状态等升序降序均失效）
      5) 筛选：select 复选多选生效
      6) 底部合计：状态列不进合计，且与数据行同构（1 + schema 列数）
-     7) HEAD_COLS 5→7 不回归 + **对照 git HEAD 基线**：库存订单渲染逐字节零变化
+     7) HEAD_COLS 5→7 不回归 + **对照基线提交**：库存订单渲染逐字节零变化
    真值夹具（可选）：SNAP_JSON=<线上快照绝对路径> 时追加真实数据口径断言；
      期望值来自**独立实现** `_snap/stat-call-deliver.js`（输出 stat-out-20260919-1038.txt）。
    运行：node tests/order.status.test.js
@@ -100,13 +100,19 @@ function colSeq(html, key) {
 }
 function tdKeys(inner) { return [...inner.matchAll(/data-key="([^"]+)"/g)].map(m => m[1]); }
 function cellKeysOfTd(inner) { return [...inner.matchAll(/data-key/g)].length; }
-function gitHeadHtml() {
+/* [基线零回归] 对照锚点 = .128（新增两列）之前的最后一次提交。
+ * 必须是固定 hash，**不能用 HEAD**：本测试一旦随功能一起提交，HEAD 就变成了新版，
+ * 会与自身对比而对消（2026-09-19 实测踩坑：提交后测试必失败）。
+ * rebase / 历史改写导致该 hash 失效时，用 BASELINE_REF 环境变量覆盖，或降级为跳过。
+ */
+const BASELINE_REF = process.env.BASELINE_REF || '4bab983';
+function baselineHtml() {
   const cands = [process.env.GIT_EXE, 'C:/Users/WINDOWS/.workbuddy/binaries/PortableGit/versions/1.2.0/mingw64/bin/git.exe', 'git'];
   for (const g of cands) {
     if (!g) continue;
     try {
       if (g !== 'git' && !fs.existsSync(g)) continue;
-      return execFileSync(g, ['show', 'HEAD:index.html'], { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      return execFileSync(g, ['show', BASELINE_REF + ':index.html'], { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     } catch (e) { /* 换下一个候选 */ }
   }
   return null;
@@ -282,12 +288,12 @@ test('9) 按行级列排序 → 关闭整单合并；按单据级列排序 → �
   } finally { app.dispose(); }
 });
 
-test('10) [基线零回归] 对照 git HEAD：库存订单渲染逐字节不变；销售订单仅多 n 单 × 2 个状态格', () => {
-  const headHtml = gitHeadHtml();
-  if (!headHtml) { console.log('  (跳过：无法获取 git HEAD:index.html)'); return; }
+test('10) [基线零回归] 对照 .128 前基线提交（'+BASELINE_REF+'）：库存订单渲染逐字节不变；销售订单仅多 n 单 × 2 个状态格', () => {
+  const headHtml = baselineHtml();
+  if (!headHtml) { console.log('  (跳过：无法获取基线 '+BASELINE_REF+':index.html——该提交可能已不存在，可用 BASELINE_REF 覆盖)'); return; }
   const appOld = mount(FIXTURE_ORDERS, FIXTURE_PRODUCTS);
   const appNew = mount(FIXTURE_ORDERS, FIXTURE_PRODUCTS);
-  /* 用 HEAD 版 index.html 重建旧沙箱（js/*.js 未改动，可共用） */
+  /* 用基线版 index.html 重建旧沙箱（js/*.js 未改动，可共用） */
   const appBase = createApp({ indexHtml: headHtml, seed: { orders: FIXTURE_ORDERS, products: FIXTURE_PRODUCTS }, quietConsole: true });
   appBase.sandbox.tblPage = { order_frame: { page: 1, size: 100000 }, order_inv: { page: 1, size: 100000 } };
   try {
