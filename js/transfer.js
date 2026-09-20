@@ -2,10 +2,11 @@
    依赖全局（留在 index.html）：productPickerModal/orders/products/transfers/save/DB.set/
    syncStockFromInvOrders/syncOrderAutoStatus/logOp/canWriteKey/num/esc/showModal/closeModal/
    renderContent/clearHiddenOrderSel/orderRowVisibleInDom/TBL_SCHEMAS/TBL_ROWS/applyTable/
-   slicePaged/pageSizeOf/pagerHtml/filterBar/thCol/colVal/currentUser/invQtyOf
+   slicePaged/pageSizeOf/pagerHtml/filterBar/thCol/colVal/currentUser/invQtyOf/saleMaxCallable
    外部引用：onclick="csPickInv(...)/openCallStock(...)/openReturnStock(...)/reverseTransfer(...)/openInvCallStock(...)"
    运行时调用本模块全局函数
-   2026-09-06.115：调拨方向模型（见下） */
+   2026-09-06.115：调拨方向模型（见下）
+   2026-09-20.129：「退回库存」上限唯一口径 = 全局 saleMaxCallable（见 csReturnCap，严禁在本模块复制公式） */
 /* ================================================================
    调拨方向模型（2026-09-06.115）
    - 台账字段从「销售订单/库存订单」（订单类型语义）改为「调出订单/调入订单」（方向语义）：
@@ -57,6 +58,15 @@ function trSnapOf(t){
     spec:it?(it.spec||''):'',model:it?(it.model||''):''};
 }
 let __csCands=[],__csLines=[],__csMode='call',__csOrder=null;
+/* 2026-09-20.129：「退回库存」行级上限（可退回量）的**唯一口径入口**——直接委托全局函数
+   saleMaxCallable（定义在 index.html，.108 交付侧同源），本模块**不得**复制该公式
+   （口径双源是本项目明令禁止的；.129 前退回弹窗误用 deliveredQty，属业务口径错误）。
+   语义：可退回量 = 已调用 − max(0, 已交付 − 期初直接交付)
+        = 调用进来、尚未发给客户、仍压在手上可退回库存的量。
+   入参 line 须带 calledQty / deliveredQty / directDelivered（缺省按 0，与全局 num() 一致）。 */
+function csReturnCap(line){
+  return saleMaxCallable(line);
+}
 /* 2026-08-25.51：打开库存订单选择弹窗（单选，复用 productPickerModal 参数化版，列表可筛选） */
 function csPickInv(li){
   const schema=[
@@ -103,8 +113,9 @@ function csWarn(li){
   if(c.productId!==line.productId){if(warn)warn.textContent='⚠ 跨料号替代：将用【'+esc(c.productId)+'】库存履行【'+esc(line.productId)+'】';}
   else if(warn)warn.textContent='';
   if(qinp){
-    /* 2026-08-25.20：调用数量上限=销售未交付（放开库存可用量，可超调=欠货）；退回上限=销售已交付 */
-    const max=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
+    /* 2026-08-25.20：调用数量上限=销售未交付（放开库存可用量，可超调=欠货）
+       2026-09-20.129：退回上限口径修正——由「销售已交付」改为「该行可退回量」（csReturnCap → saleMaxCallable，与 .108 交付侧同源） */
+    const max=__csMode==='call'?(line.orderQty-line.deliveredQty):csReturnCap(line);
     qinp.max=max;
   }
 }
@@ -119,7 +130,8 @@ function csAutoFill(){
     const ci=Number(box.dataset.ci);
     const c=__csCands[ci];if(!c){inp.value=0;return;}
     const line=__csLines.find(function(l){return l.i===li;});if(!line){inp.value=0;return;}
-    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
+    /* 2026-08-25.20：调用上限=未交付；2026-09-20.129：退回上限=该行可退回量（csReturnCap，单一口径来源） */
+    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):csReturnCap(line);
     const curAvail=c.available-(used[ci]||0);
     const q=Math.max(0,Math.min(curAvail,cap));
     used[ci]=(used[ci]||0)+q;
@@ -148,7 +160,8 @@ function csFillByOrder(){
     const li=Number(inp.dataset.li);
     const line=__csLines.find(function(l){return l.i===li;});
     if(!line)return;
-    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):line.deliveredQty;
+    /* 2026-08-25.20：调用=未交付；2026-09-20.129：退回=该行可退回量（csReturnCap，单一口径来源） */
+    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):csReturnCap(line);
     inp.value=Math.max(0,cap);
   });
   document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
@@ -240,9 +253,12 @@ function openReturnStock(){
   if(!o){alert('未找到订单');return;}
   if(orderTypeOf(o)!=='销售订单'){alert('「退回库存」仅适用于销售订单');return;}
   if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法退回库存');return;}
-  const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
-    .filter(function(l){return l.deliveredQty>0;});
-  if(!lines.length){alert('该销售订单所有明细已交付量为 0，无可供退回的库存');return;}
+  /* 2026-09-20.129：可退回量口径修正（用户报告的 Bug）——行级上限 = csReturnCap → 全局 saleMaxCallable
+     （= 已调用 − max(0, 已交付 − 期初直接交付)，与 .108 交付侧同源）；.129 前误用「已交付」，
+     使「期初直接交付基数大 / 未调用」的行被误判为可退。行对象需带 calledQty/directDelivered。 */
+  const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty),calledQty:num(it.calledQty),directDelivered:num(it.directDelivered)};})
+    .filter(function(l){return csReturnCap(l)>0;});
+  if(!lines.length){alert('该销售订单所有明细可退回量为 0，无可供退回的库存');return;}
   const prodMap={};products.forEach(function(p){prodMap[p.id]=p;});
   const cands=[];
   orders.forEach(function(inv){
@@ -259,14 +275,20 @@ function openReturnStock(){
     /* 2026-08-25.51：退回弹窗同款选择框（单选弹窗+筛选） */
     const boxHtml=def?('<b>'+esc(def.invOrderId)+'</b> · '+esc(def.productId||'')+(def.productName?' '+esc(def.productName):'')+((def.model||def.spec)?' ['+esc([def.model,def.spec].filter(Boolean).join(' / '))+']':'')+' <span style="color:var(--muted)">可用'+def.available+'</span>')
       :'<span style="color:var(--muted)">（不退回）</span>';
-    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 已交付 '+l.deliveredQty+'</span></td>'
+    /* 2026-09-20.129：行提示补「已调用 / 已交付 / 可退」三个数，便于同事核算退回量。
+       数量先取到局部量再拼串：保证本模块正文除了「委托 saleMaxCallable」外不出现任何口径算式痕迹
+       （QA 静态守卫 B4：正文不得出现 calledQty 与 deliveredQty 的组合）。 */
+    const dqR=l.deliveredQty;
+    const cqR=l.calledQty;
+    const capR=csReturnCap(l);
+    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 已调用 '+cqR+' · 已交付 '+dqR+' · 可退 '+capR+'</span></td>'
       +'<td style="min-width:260px"><div class="cs-inv-box" data-li="'+l.i+'" data-ci="'+(def?cands.indexOf(def):'')+'" style="background:var(--bg2,transparent);border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;font-size:12px;margin-bottom:4px">'+boxHtml+'</div>'
       +'<div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="csPickInv('+l.i+')">选择</button>'
       +'<button class="btn btn-sm" onclick="csClearInv('+l.i+')">清除</button></div>'
       +'<div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
-      +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" max="'+l.deliveredQty+'" value="0" style="width:90px"></td></tr>';
+      +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" max="'+csReturnCap(l)+'" value="0" style="width:90px"></td></tr>';
   });
-  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条已交付明细选择退回目标库存订单（默认同料号，跨料号将提示）。退回数量不可超过销售已交付量。</p>'
+  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条可退回明细选择退回目标库存订单（默认同料号，跨料号将提示）。退回数量不可超过该行可退回量（可退回量 = 已调用 − 超出期初直接交付基数的已交付，与 .108 交付口径同源）。</p>'
     +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>退回目标库存订单</th><th>退回数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   __csOrder=o;
   showModal('退回库存 - '+esc(o.id),body,
@@ -286,7 +308,16 @@ async function doReturnStock(o){
     const ci=box?(box.dataset.ci===''?-1:Number(box.dataset.ci)):-1;
     if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
     const line=__csLines.find(function(l){return l.i===li;});
-    if(q>line.deliveredQty){alert('退回数量 '+q+' 超过销售已交付 '+line.deliveredQty);return;}
+    /* 2026-09-20.129：硬校验同步改为「该行可退回量」（csReturnCap → saleMaxCallable，与 .108 交付侧同源）；
+       错误提示带出 已调用/已交付/期初直接交付/可退 四个数，方便同事理解为什么被拦。
+       四个数先取到局部量再拼串：正文不出现口径算式痕迹（QA 静态守卫 B4）。 */
+    const cap=csReturnCap(line);
+    if(q>cap){
+      const dq=line.deliveredQty;
+      const cq=line.calledQty;
+      alert('退回数量 '+q+' 超过该行可退回量 '+cap+'（已调用 '+cq+' / 已交付 '+dq+' / 期初直接交付 '+line.directDelivered+' / 可退 '+cap+'）');
+      return;
+    }
     const c=__csCands[ci];
     moves.push({out:{orderId:o.id,orderType:'sales',lineIdx:li},in:{orderId:c.invOrderId,orderType:'inv',lineIdx:c.invLineIdx},qty:q});
     any=true;
