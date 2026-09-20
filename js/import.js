@@ -485,7 +485,16 @@ async function kdDoImport(){
       var ui=unkMap[o.id+'#'+li];
       var u=(ui!=null)?kdState.unknown[ui]:null;
       if(u==='__SKIP__'){ignoredLines++;return;} // 忽视：此明细不导入
-      if(u&&u!=='__NEW__')pid=u;
+      /* 2026-09-20.131：替换行（选已有产品）留下**金蝶原单快照**，供订单管理「商品编码」列悬停核对。
+         取值一律用 it（Excel 原始行）的原值 —— 本分支只改写**局部变量 pid**，it.productId 未被改写，
+         替换后 pid 已是目标已有产品编码，若从 pid/pm 取则会丢掉金蝶原物料号信息。
+         口径：仅「替换」行写入该快照；新建（__NEW__）/编码本就存在/忽视的行一律不写，
+         渲染层以 origProduct 字段**是否存在**为唯一区分依据，故下方用条件挂 key 而非恒有 key。 */
+      var _orig=null;
+      if(u&&u!=='__NEW__'){
+        pid=u;
+        _orig={productId:String(it.productId==null?'':it.productId).trim(),productName:String(it.productName==null?'':it.productName).trim(),model:String(it.model==null?'':it.model).trim(),spec:String(it.spec==null?'':it.spec).trim()};
+      }
       else if(!pm[pid]){
         var np={id:pid,name:String(it.productName||pid),spec:String(it.spec||''),model:String(it.model||''),unit:String(it.unit||''),stock:0,dailyCap:0,stockMin:0,status:'启用'};
         newProducts.push(np);pm[pid]=np;
@@ -502,6 +511,9 @@ async function kdDoImport(){
          注意：Excel 的解析（:140 列名映射 / :239 / :241 明细解析）保留不动 —— 预检报告仍据此提示同事。 */
       var _impQty=num(it.orderQty)||0;
       var _impItem={productId:pid,productName:pp.name||'',spec:pp.spec||'',model:pp.model||'',orderQty:_impQty,deliveredQty:0,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''};
+      /* 2026-09-20.131：仅替换行挂原单快照；新建/已存在编码行**不存在** origProduct 这个 key（非 null 占位）。
+         存量导入单亦无此字段，渲染层判空即零改动、零迁移。 */
+      if(_orig)_impItem.origProduct=_orig;
       items.push(_impItem);
     });
     if(items.length===0){skipCount++;return;}

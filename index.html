@@ -1107,6 +1107,16 @@ function warnTriSvg(fill,tip){
      esc 不转义真实换行符，属性值换行由 getAttribute 原样取出，配合 .cell-tip{white-space:pre-wrap} 正常多行显示。 */
   return '<svg viewBox="0 0 24 24" style="width:14px;height:14px;vertical-align:-2px;margin-right:3px;cursor:help" data-tip="'+esc(tip)+'"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" fill="'+fill+'"/><path d="M12 9v4M12 17h.01" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
 }
+/* 2026-09-20.131：金蝶导入「替换物料号」的原单信息——单行文案，空项整段省略（不输出空标签、不留双分隔符）。
+   入参 = 落库行上的 origProduct 快照（js/import.js kdDoImport），四项均可能为空串；四项全空 → 返回空串（调用方据此不画图标）。 */
+function kdOrigTip(op){
+  var seg=[];
+  if(op.productId)seg.push('编码 '+op.productId);
+  if(op.productName)seg.push('名称 '+op.productName);
+  if(op.model)seg.push('型号 '+op.model);
+  if(op.spec)seg.push('规格 '+op.spec);
+  return seg.length?('原单：'+seg.join(' ｜ ')):'';
+}
 /* 2026-08-25.63：库存状态 4 档（数量 vs 上下限）——red(数量<0 欠货)/amber(0<数量<最小 缺货风险)/green(最小~最大 正常)/gray(数量>最大 积压)；未设限或限=0 时落 green，0 值落 green（用户口径：>0 且<最小才黄色） */
 function invStockLevel(v,min,max){
   if(num(v)<0)return 'red';
@@ -2912,6 +2922,11 @@ function renderOrderTable(formKey,typeOrders,prodMap){
        图标复用 warnTriSvg('#f59e0b')，位置在数量左侧，与「已交付」4 档警示同款。 */
     const crossRecs=crossCallMap?crossCallMap.get(o.id+'|L'+(r.__li!=null?r.__li:'-')):null;
     const crossTri=(crossRecs&&crossRecs.length)?warnTriSvg('#f59e0b',crossCallTip(crossRecs)):'';
+    /* 2026-09-20.131：金蝶导入「替换行」的原单物料号黄色警示（置于「商品编码」左侧，样式复用 warnTriSvg）。
+       仅未来导入单的替换行带 origProduct —— 存量单/新建行/编码本就存在行无此字段，_origTip 为空串、origTri 为空串，
+       不产生任何 svg 输出，属性值与既有行为完全一致（零迁移、零回填）。 */
+    const _origTip=it.origProduct?kdOrigTip(it.origProduct):'';
+    const origTri=_origTip?warnTriSvg('#f59e0b',_origTip):'';
     const _lvCls=function(lv){return lv==='red'?';background:var(--red)':lv==='amber'?';background:var(--amber)':lv==='green'?';background:var(--green)':lv==='gray'?';background:#9ca3af':'';};
     const pctBarCls=(formKey==='order_inv')?_lvCls(lvD):(pct<0?';background:var(--red)':'');   /* 销售订单进度条保持默认蓝（已交付恒非负） */
     const pctTxtCls=(formKey==='order_inv')?(lvD==='red'?';color:var(--red)':''):(pct<0?';color:var(--red)':'');
@@ -2948,7 +2963,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
         (_noInvHead?('<td data-key="contractNo">'+esc(o.contractNo||'')+'</td>'):'');
     }
     html+='<tr onclick="selRowClick(\''+formKey+'\','+oi+')">'+selCell+headCells+
-      '<td data-key="productId">'+esc(it.productId)+'</td>'+
+      '<td data-key="productId">'+origTri+esc(it.productId)+'</td>'+
       '<td data-key="productName">'+esc(it.productName||(it.productId&&prodMap[it.productId]?prodMap[it.productId].name:''))+'</td>'+
       '<td data-key="model">'+esc(prodMap[it.productId]?prodMap[it.productId].model:'')+'</td>'+
       '<td data-key="spec">'+esc(prodMap[it.productId]?prodMap[it.productId].spec:'')+'</td>'+
@@ -6540,7 +6555,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-20.130</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-20.131</div>
 </body>
 </html>
 
