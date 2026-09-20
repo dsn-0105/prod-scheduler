@@ -39,7 +39,7 @@ flows:
         func_chain: 'openReturnStock() → doReturnStock(o) → applyTransfers(''return'', moves)'
         file: 'js/transfer.js:271 → 291'
         permission: { form: order_frame, act: 'order_frame.saleReturnStock' }
-        precheck: ['订单必须是销售订单', '订单状态不得为 已取消/已暂停', '至少一行 deliveredQty > 0', '退回数量 ≤ 该行销售已交付']
+        precheck: ['订单必须是销售订单', '订单状态不得为 已取消/已暂停', '至少一行可退回量 > 0（可退回量 = 全局 saleMaxCallable = 已调用 − max(0, 已交付 − 期初直接交付)，.129 修正，此前误用已交付）', '退回数量 ≤ 该行可退回量（js/transfer.js csReturnCap → 全局 saleMaxCallable，严禁复制公式）']
       - id: transfer.conv
         name: 改装（库存 → 库存，跨料号）
         trigger_ui: '库存订单区块 → 调用库存补库 → 跨料号行自动判定为 conv'

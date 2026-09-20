@@ -55,6 +55,7 @@ tests/
 ├── db.tx.test.js              前端事务客户端 DB.tx / saveMulti / DB.set 零回归
 ├── write-points.test.js       三个写入点的「恰好一次 /api/tx」不变式（T03）
 ├── transfer.helpers.test.js   调拨纯函数：trRevType 冲销反向 / trSide 方向读取 / trSnapOf 台账快照
+├── transfer.return-cap.test.js 「退回库存」上限口径（.129 = saleMaxCallable）：四类场景 / 单一来源委托 / 退回后不变量
 ├── projection.sync.test.js    投影与回写：订单状态机 / 库存同步 / 入库回写（纯重算 vs 兼容包装）
 ├── import.idempotent.test.js  金蝶导入：幂等（重复导入不增生）/ 决策分支 / directDelivered 口径
 ├── server.tx.test.js          /api/tx 原子性、回滚、权限（服务端）
