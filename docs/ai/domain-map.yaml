@@ -124,7 +124,7 @@ entities:
     write_functions:
       - "save('products') @ index.html:3507（syncStockFromInvOrders 内）"
       - "save('products') @ index.html:3484（backfillInvDeliveredFromStock 内；仅 changed 时）"
-      - "save('products') @ js/import.js:484（kdDoImport 内，条件性）"
+      - "并入 /api/tx 的 products op @ js/import.js:526（kdDoImport 内，仅新建产品时；.124 起原子化）"
     readers: [renderProducts, renderOrderTable, renderDeliveryTable, renderProdPlan, applyTransfers, kdDoImport]
     permission_form: product
     note: stock 字段为派生投影（见 projections.products.stock），其余字段为事实
@@ -149,6 +149,8 @@ entities:
       ⚠️ deliveredQty 的写入方按其所属命令族：
         ① 库存订单行：saveOrder / applyTransfers(调拨) / writebackInbound(报工) / backfillInvDeliveredFromStock(迁移) / restore / clear
         ② 销售订单行：saleDeliverSave(交付) / saleReturnSave(退货) / transfer.apply(调拨调用/退回也改销售行 deliveredQty)
+      ③ .130 起 kdDoImport【不写】deliveredQty/directDelivered（Excel「已交付/已出库数量」不落库 → 新导入单 items[].deliveredQty ≡ 0），
+         故上列销售订单行写入方不含导入；.130 前导入带入的存量值原样保留（零迁移）。
       其中【只有库存订单行】参与「库存投影」（syncStockFromInvOrders 只汇总 orderType==='库存订单'）；
       销售订单行的 deliveredQty 仅驱动订单状态（syncOrderAutoStatus），不动 products.stock。
 
@@ -368,12 +370,13 @@ projections:
       只对「执行中/已完成」生效；「已取消」/「已暂停」为手动状态不被覆盖。
       自动变更时内部 save('orders') 且逐条 logOp（silent=true 时仅统计不记日志）。
     callers:
-      - { file: 'index.html:2319', context: '返回变更条数（函数内）' }
-      - { file: 'index.html:2846', context: 'migrateOrderStatusData 内' }
-      - { file: 'index.html:2898', context: 'migrateOrderCalledQty 内' }
-      - { file: 'index.html:3345', context: 'saveOrder 保存后' }
-      - { file: 'js/import.js:486', context: 'kdDoImport 导入后' }
-      - { file: 'js/transfer.js:329', context: 'applyTransfers 调拨后' }
+      - { file: 'index.html:2433', context: '包装内：syncOrderAutoStatus → recomputeOrderAutoStatus' }
+      - { file: 'index.html:2477', context: 'migrateOrderStatusData 内' }
+      - { file: 'index.html:3136', context: 'saleDeliverSave 交付后' }
+      - { file: 'index.html:3188', context: 'saleReturnSave 退货后' }
+      - { file: 'index.html:3635', context: 'saveOrder 保存后' }
+      - { file: 'js/import.js:525', context: 'kdDoImport 导入后（recomputeOrderAutoStatus）' }
+      - { file: 'js/transfer.js:372', context: 'applyTransfers 调拨后（recomputeOrderAutoStatus）' }
     risk: medium
     invariant_refs: [INV-010, INV-011, INV-012, INV-013]
 
@@ -503,7 +506,7 @@ commands:
     entry: kdDoImport()
     status: 现状
     writes: [products（新建产品时）, orders, logs]
-    file: 'js/import.js:423'
+    file: 'js/import.js:456-542'
     permission: { form: order_frame, act: 'order_frame.kingdeeImport' }
     idempotency_key: "src='kingdee' + srcFile + 原始行号 三元组"
     see_also: flows.yaml#jindie.import

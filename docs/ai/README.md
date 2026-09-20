@@ -141,7 +141,7 @@ transitive consumers:   <间接影响方>
 | `js/logs.js` | 58 | 操作日志 |
 | `js/prodplan-core.js` | 147 | 排产单纯计算 |
 | `js/transfer.js` | 600 | 调拨执行器 + 台账 |
-| `js/import.js` | 498 | 金蝶导入 |
+| `js/import.js` | 542 | 金蝶导入 |
 | `js/guide.js` | 108 | 使用说明 |
 | `server/server.js` | 241 | 零依赖后端 |
 
@@ -173,7 +173,7 @@ transitive consumers:   <间接影响方>
 | `bootstrap()` / `initApp()` 迁移链 | `index.html:5953 / 5964` |
 | `restoreBackup(e)`（恢复）/ `confirmClear()`（清空） | `index.html:5894 / 5940` |
 | `applyTransfers()` | `js/transfer.js:308` |
-| `kdDoImport()` | `js/import.js:423` |
+| `kdDoImport()` | `js/import.js:456` |
 | `logOp()` | `js/logs.js:2` |
 | `DEFAULT_DATA` / `BIZ_KEYS` / `SYSTEM_KEYS` | `server/server.js:16-26` |
 
@@ -220,7 +220,7 @@ transitive consumers:   <间接影响方>
 | 1 | **多表写入无事务**：`applyReport` 至少 3 次独立 `save`，`applyTransfers` 2 次独立网络写，任一步失败即不一致 | `index.html:4614/4628/4636`、`js/transfer.js:325/348` | 🔴 高 |
 | 2 | **`/api/save` 无 CAS / 无 rev 校验**：5 秒轮询窗口内多端并发 = 后写覆盖先写 | `server/server.js:169-170`、`index.html:409` | 🔴 高 |
 | 3 | **表注册遗漏即静默丢数据**：新表必须同时登记 `DEFAULT_DATA` + `BIZ_KEYS`/`SYSTEM_KEYS`（transfers 曾漏登记丢 103 条） | `server/server.js:16-26` | 🔴 高 |
-| 4 | **订单编辑增删行后行索引漂移**：`orderLine` / `dlLine` / `directDelivered` 按行序补回，可能错位 | `index.html:2490`（代码注释自陈）、`index.html:3321` | 🟠 中 |
+| 4 | **订单编辑增删行后行索引漂移**：`orderLine` / `dlLine` / `directDelivered` 按行序补回，可能错位（`directDelivered` 仅存量行涉及，.130 起导入不再写入该字段） | `index.html:2660`（代码注释自陈）、`index.html:3590-3601` | 🟠 中 |
 | 5 | **注释与代码矛盾**：`applyReport` 内 `index.html:4615` 注释写"销售/库存订单都回写"，实际 `4580` 行仅回写库存订单 | `index.html:4580` vs `:4615` | 🟡 低（误导性） |
 | 6 | **默认凭据 + token 内存存储**：`admin123/123456` 默认账号；token 存内存 Map，重启全部失效 | `server/server.js:61-66`、`:95` | 🟠 中 |
 | 7 | **「单表命令」易被反查遗漏**：`order.deliver`/`order.return`/`backfillInvDeliveredFromStock`/`system.*` 只写 `orders` 单表（不改库存），但都会改 `deliveredQty` 并触发状态投影重算——反查时若只盯跨表命令必漏 | `flows.yaml#order.deliver / order.return`、`dependency-map.yaml` 边 `E-042~E-060` | 🟠 中（手册完整性风险） |

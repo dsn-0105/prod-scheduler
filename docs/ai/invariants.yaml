@@ -89,19 +89,20 @@ invariants:
 
   - id: INV-006
     domain: order-sales
-    name: 期初直接交付基数 directDelivered 不被消费为调用额度
-    rule: "金蝶导入的已交付无调用支撑（calledQty 恒无）→ deliveredQty>0 时标记 directDelivered，避免行级上限把全部已交付当作已消耗调用额度"
-    expression: "if(_impDq>0 && !(num(it.calledQty)>0)) _impItem.directDelivered = _impDq"
-    guaranteed_by: kdDoImport
-    file: 'js/import.js:463-466'
+    name: 期初直接交付基数 directDelivered 不被消费为调用额度（.130 起导入不再写入该字段）
+    rule: ".130 起：金蝶导入不写入 directDelivered（Excel「已交付/已出库数量」不落库 → 新导入单 items[].deliveredQty ≡ 0），该路径不再产生期初基数；对【存量行】（.130 前导入 / .97 历史迁移带入）与「交付-退货」链路，本不变量仍成立——行级可调用余量按 calledQty − max(0, deliveredQty − directDelivered) 计算，避免把期初已交付当作已消耗调用额度"
+    expression: "saleMaxCallable: Math.max(0, num(it.calledQty) - Math.max(0, num(it.deliveredQty) - num(it.directDelivered))) ；.130 前导入的写入式（已废止，仅解释存量数据成因）：if(_impDq>0 && !(num(it.calledQty)>0)) _impItem.directDelivered = _impDq"
+    guaranteed_by: saleMaxCallable（口径单一来源）+ kdDoImport（.130 前为写入方；.130 起不再写入）
+    file: 'index.html:3038-3039'
     supporting_code: 'saveOrder 按行序从旧行补回 directDelivered（须产品一致）'
-    supporting_file: 'index.html:3321-3323'
+    supporting_file: 'index.html:3601（注释 index.html:3590）'
     status: partial
-    violation_consequence: '后续交付会被行级上限拦截，导入的订单无法继续交付'
+    violation_consequence: '存量行/退货链路的后续交付会被行级上限拦截；若误把（存量）期初已交付当作已消耗调用额度，同样会误拦后续交付'
     gap_detail: |
-      ⚠️ partial 的原因：directDelivered 靠「按行序补回」维护（index.html:3321），
+      ⚠️ partial 的原因：directDelivered 靠「按行序补回」维护（index.html:3601），
       订单编辑增删行后行序漂移 → directDelivered 可能挂到错误行上或被丢弃（字段重建会丢未在弹窗中出现的字段）。
-      代码注释自陈该风险（同 .24/.33/.40 已知）。
+      代码注释自陈该风险（同 .24/.33/.40 已知）。仅存量行涉及（.130 起新导入单无该字段）。
+    status_note: '.130 起导入不再写入 directDelivered（新单无基数可言）；本不变量仅对存量行与交付-退货链路有约束力（详见 change-log .130 条目）'
 
   # ===== 报工 / 交付域 =====
   - id: INV-007
@@ -326,13 +327,13 @@ invariants:
     rule: '依赖数组索引的字段（orderLine / dlLine / deliveryIdx / directDelivered / 勾选集合）在数组增删后应保持有效'
     expression: '索引一致性'
     guaranteed_by: '若干局部补丁（clearSel / clearGhostSel / clearHiddenOrderSel / clearHiddenProdPlanSel / 按行序补回 directDelivered）'
-    file: 'index.html:3333-3341 / 3321-3323 / js/import.js:495 / js/transfer.js:353-358'
+    file: 'index.html:3590-3601（directDelivered 按行序补回）/ 3652 / 3666 / 5984（clearSel 定义）/ js/import.js:539（clearSel 调用）/ js/transfer.js:353-358'
     status: partial
     violation_consequence: '关联数据挂到错误的行/单上（静默错账）'
     gap_detail: |
       ⚠️ partial：已有 4 组补丁处理「勾选幽灵」与「directDelivered 按行序补回」，
       但 orderLine（交付计划行→订单行）与 deliveryIdx（排产单→交付计划）**无对应补丁**。
-      代码注释在多处自陈该风险：index.html:2490（orderLine 漂移）、:3321（directDelivered 漂移）。
+      代码注释在多处自陈该风险：index.html:2660（orderLine 漂移）、:3591（directDelivered 漂移）。
     related: [INV-023, INV-006]
 
   - id: INV-025
@@ -418,13 +419,14 @@ invariants:
     rule: 'saleDeliverSave 行级校验：本次交付 ≤ min(未交付(=orderQty−deliveredQty), saleMaxCallable(it))；越限整批拒绝'
     expression: 'maxRow = min(max(0, orderQty−deliveredQty), max(0, calledQty − max(0, deliveredQty−directDelivered)))'
     guaranteed_by: [saleDeliverSave, saleMaxCallable]
-    file: 'index.html:2831-2843 / 2748-2750'
+    file: 'index.html:3120-3133（行级校验）/ 3111-3140（saleDeliverSave）'
     status: enforced
     violation_consequence: '放行会允许交付量超过已调用库存，形成无库存支撑的交付（账实不符）'
     note: |
-      saleMaxCallable 口径（.108）：期初直接交付基数 directDelivered 不消耗调用额度，
-      只有超出 directDelivered 的已交付才从 calledQty 扣减。退货会下调 directDelivered（:2895），
+      saleMaxCallable 口径（.108，.130 未变）：期初直接交付基数 directDelivered 不消耗调用额度，
+      只有超出 directDelivered 的已交付才从 calledQty 扣减。退货会下调 directDelivered（index.html:3185），
       因此「退货 → 交付上限」存在联动，改动任一侧都需重新验证本不变量。
+      注：.130 起金蝶导入不再写入 directDelivered（新导入单 deliveredQty≡0、无基数），本行口径仅对存量行生效。
 
   - id: INV-031
     domain: order-inventory
@@ -454,7 +456,7 @@ gap_summary:
     - { id: INV-021, name: 表注册表一致性, impact: '静默丢数据' }
     - { id: INV-022, name: initApp 加载完整性, impact: '整键覆盖丢数据' }
     - { id: INV-005, name: calledQty 截断无自愈, impact: '台账与累计不等' }
-    - { id: INV-006, name: directDelivered 行序漂移, impact: '后续交付被拦' }
+    - { id: INV-006, name: directDelivered 行序漂移（仅存量行，.130 起导入不再写入该字段）, impact: '后续交付被拦' }
     - { id: INV-024, name: 索引即主键漂移, impact: '关联挂错行' }
     - { id: INV-025, name: 权限双层次粒度不一致, impact: '越权写入' }
   yellow:

@@ -222,21 +222,23 @@ edges:
     kind: reads
     mechanism: "saveOrder 按行序从旧行补回 directDelivered（须产品一致，防索引漂移错位）"
     sync: true
-    file: 'index.html:3321-3323'
+    file: 'index.html:3590-3601'
     risk: medium
-    note: '字段重建会丢未在弹窗中出现的内部字段（directDelivered），必须靠行序补回——这是索引漂移风险的来源之一'
+    note: '字段重建会丢未在弹窗中出现的内部字段（directDelivered），必须靠行序补回——这是索引漂移风险的来源之一。.130 起新导入单不再带该字段，本边仅对存量行（.130 前导入/历史迁移）生效'
 
   - id: E-016
     from: entities.orders.items.directDelivered
     to: projections.order.calledQty
     kind: guards
-    mechanism: "directDelivered（期初直接交付基数）在导入时标记，避免行级上限把全部已交付当作已消耗调用额度"
+    mechanism: "saleMaxCallable 读取 directDelivered 计算行级可调用余量（.130 起该基数不再由导入写入，仅存量行/历史迁移带入的行有值）"
     sync: true
-    file: 'js/import.js:463-466'
+    file: 'index.html:3038-3039 / js/import.js:503-504'
     risk: medium
     note: |
-      .108 引入。kdDoImport 中：if(_impDq>0 && !(num(it.calledQty)>0)) _impItem.directDelivered=_impDq。
-      删除 directDelivered 或改变其语义会让「已交付」被误判为「已消耗调用额度」，导致后续交付被拦。
+      .108 引入（导入时标记期初基数，写入式见下）；.130 起导入不再写入该字段——Excel「已交付/已出库数量」不落库，
+      新导入单 items[].deliveredQty ≡ 0，无基数可言（见 change-log .130 条目）。
+      存量行仍然成立：if(_impDq>0 && !(num(it.calledQty)>0)) _impItem.directDelivered=_impDq 生成的基数继续生效，
+      删除 directDelivered 或改变其语义会让（存量）期初已交付被误判为「已消耗调用额度」，导致后续交付被拦。
     invariant_refs: [INV-006]
 
   - id: E-017
@@ -433,9 +435,9 @@ edges:
     from: commands.jindie.import
     to: entities.products
     kind: writes
-    mechanism: "未知编码决策=新建 → newProducts.push(np) → products.push.apply(products, newProducts) → save('products')"
+    mechanism: "未知编码决策=新建 → newProducts.push(np) → products.push.apply(products, newProducts) → 并入同一次 /api/tx 的 products op（.124 起原子化为一次事务，原多次 save 已废止）"
     sync: true
-    file: 'js/import.js:457-458 / 484'
+    file: 'js/import.js:490-491 / 522 / 526'
     risk: high
     note: '新建产品 stock=0 / dailyCap=0，需人工补全（导入完成 alert 中明确提示）'
 
@@ -443,9 +445,9 @@ edges:
     from: commands.jindie.import
     to: entities.orders
     kind: writes
-    mechanism: "覆盖时 orders.splice(exIdx,1)；随后 orders.push.apply(orders,newOrders) → save('orders')"
+    mechanism: "覆盖时 orders.splice(exIdx,1)；随后 orders.push.apply(orders,newOrders) → 并入同一次 /api/tx 的 orders op（.124 起原子化）"
     sync: true
-    file: 'js/import.js:478 / 483-485'
+    file: 'js/import.js:516 / 521 / 529'
     risk: high
     note: |
       splice 导致索引漂移 → 导入末尾 clearSel('order_frame') 清理勾选（.5 修复）。
@@ -455,9 +457,9 @@ edges:
     from: commands.jindie.import
     to: projections.orders.status
     kind: triggers
-    mechanism: "kdDoImport 末尾调 syncOrderAutoStatus()（Excel 已交付全量 → 已完成）"
+    mechanism: "kdDoImport 末尾调 recomputeOrderAutoStatus()（.130 起 Excel 已交付不导入 → 导入单恒「执行中」；.130 前 Excel 已交付全量可判「已完成」）"
     sync: true
-    file: 'js/import.js:486'
+    file: 'js/import.js:525'
     risk: medium
 
   - id: E-038
@@ -466,7 +468,7 @@ edges:
     kind: guards
     mechanism: "三元组判重 src='kingdee'+srcFile+原始行号 → 弹「跳过 / 覆盖」选择；已取消/已暂停订单禁覆盖"
     sync: true
-    file: 'js/import.js:437 / 473 / 477'
+    file: 'js/import.js:459-461 / 477-478 / 515'
     risk: high
     invariant_refs: [INV-018, INV-024]
 
@@ -801,13 +803,13 @@ high_risk_chains:
   - id: HR-003
     name: 金蝶导入（kdDoImport）
     command: commands.jindie.import
-    entry: 'js/import.js:423'
+    entry: 'js/import.js:456'
     write_set:
-      - { order: 1, target: entities.orders,   via: '覆盖时 orders.splice(exIdx, 1)（原地删除旧单，触发索引漂移）', file: 'js/import.js:478' }
-      - { order: 2, target: entities.products, via: "products.push.apply(newProducts) + save('products', products)  ← 独立网络写 1", file: 'js/import.js:484' }
-      - { order: 3, target: entities.orders,   via: "orders.push.apply(newOrders) + save('orders', orders)  ← 独立网络写 2", file: 'js/import.js:483-485' }
-      - { order: 4, target: projections.orders.status, via: 'syncOrderAutoStatus()', file: 'js/import.js:486' }
-      - { order: 5, target: entities.logs,     via: "logOp('导入', ...)  ← 独立网络写 3", file: 'js/import.js:493' }
+      - { order: 1, target: entities.orders,   via: '覆盖时 orders.splice(exIdx, 1)（原地删除旧单，触发索引漂移）', file: 'js/import.js:516' }
+      - { order: 2, target: entities.products, via: "products.push.apply(newProducts)（仅新建产品时）→ 并入同一次 /api/tx 的 products op（.124 起原子化，原独立 save 已废止）", file: 'js/import.js:522 / 526' }
+      - { order: 3, target: entities.orders,   via: "orders.push.apply(newOrders) → 并入同一次 /api/tx 的 orders op（.124 起原子化）", file: 'js/import.js:521 / 529' }
+      - { order: 4, target: projections.orders.status, via: 'recomputeOrderAutoStatus()（.124 起写盘前内存重算，随 orders 同一次提交）', file: 'js/import.js:525' }
+      - { order: 5, target: entities.logs,     via: "logOp('导入', ...)  ← best-effort 独立通道（silent，不入 tx）", file: 'js/import.js:537' }
     idempotency_key: "src='kingdee' + srcFile + 原始行号（三元组判重）"
     unknown_code_state_machine: ['未决策（不导入）', '新建（黄）', '替换（绿）', '忽视（红）']
     empty_value_rules:
@@ -815,13 +817,14 @@ high_risk_chains:
       - '数字空 = 0 + 警告'
       - '文本空 = "空"'
       - '商品编码空 = 跳过该行'
-    failure_behavior: '多表多步网络写，无事务；splice 后失败会留下「旧单已删、新单未加」的中间态'
+      - '已交付 / 已出库数量（.130 起）= 不落库：落库 items[].deliveredQty ≡ 0、不写 directDelivered（字段保留、存量不动），该数字仅进预检报告提示'
+    failure_behavior: '一次 /api/tx 原子提交（.124 起）：任一失败 → 一字不写，DB.tx 已 pullAll + rehydrateFromServer 复原内存。.124 之前为「多表多步网络写、无事务」，splice 后失败会留下「旧单已删、新单未加」的中间态（历史语义，已废止）'
     known_defects:
-      - 'orders.splice 导致全局索引漂移（既有补丁：clearSel 清勾选，js/import.js:495）'
+      - 'orders.splice 导致全局索引漂移（既有补丁：clearSel 清勾选，js/import.js:539）'
       - '新建产品 stock=0/dailyCap=0 需人工补全，无后续提醒机制'
     guards:
-      - '未知编码全部决策后才允许导入（js/import.js:426-439）'
-      - '已取消/已暂停订单禁覆盖（js/import.js:477）'
+      - '未知编码全部决策后才允许导入（js/import.js:459-461）'
+      - '已取消/已暂停订单禁覆盖（js/import.js:515）'
 
   - id: HR-004
     name: 销售订单交付 / 退货（saleDeliverSave / saleReturnSave）

@@ -320,7 +320,7 @@ flows:
       - '新增场景：订单编号不得重复'
     write_set:
       - { order: 1, step: '组装表头 o', detail: '遍历 fields.order 非行字段，从 of_<key> 取值；orderType 控件缺失时兜底补回；引字段（type=ref）经 lookupRef 重算', file: 'index.html:3271-3332' }
-      - { order: 2, step: '组装明细 items', detail: '遍历 #orderItemsTbl 行；按行序从旧行补回 directDelivered（须 productId 一致）；引字段重算', file: 'index.html:3312-3328' }
+      - { order: 2, step: '组装明细 items', detail: '遍历 #orderItemsTbl 行；按行序从旧行补回 directDelivered（须 productId 一致）；引字段重算', file: 'index.html:3590-3601' }
       - { order: 3, step: '写内存', detail: 'idx>=0 → orders[idx] = o（保留 src/srcFile）；idx<0 → orders.push(o)', file: 'index.html:3335-3343' }
       - { order: 4, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:3344' }
       - { order: 5, step: 'syncOrderAutoStatus()', detail: '自动判定状态（内部可能再 save(''orders'')）—— 【独立网络写 2，条件性】', file: 'index.html:3345' }
@@ -340,7 +340,7 @@ flows:
   - id: jindie.import
     name: 金蝶 xlsx 导入销售订单
     entry: kdDoImport()
-    file: 'js/import.js:423-497'
+    file: 'js/import.js:456-542'
     trigger_ui: '销售订单区块 → 「导入金蝶订单」→ 选 xlsx → 预览 + 决策未知编码/冲突 → 确认导入'
     permission: { form: order_frame, act: 'order_frame.kingdeeImport' }
     idempotency:
@@ -353,29 +353,29 @@ flows:
       - '日期空 → 错误（被 blocked 拦截，blocked 行不进 R.list）'
       - '数字空 → 0 + 警告'
       - '文本空 → 字符串 "空"（customer / contractNo 用）'
-      - '商品编码空 → 跳过该行（:448 if(!pid)return）'
+      - '商品编码空 → 跳过该行（js/import.js:484 if(!pid)return）'
     prechecks:
       - 'R（kdReport）与 kdState 存在'
       - '未知编码全部已决策'
       - '每行 startDate / deadline 非空'
       - '覆盖时目标订单不得为已取消/已暂停'
     write_set:
-      - { order: 1, step: '（覆盖时）orders.splice(exIdx, 1)', detail: '原地删除旧单 —— 立即触发全局索引漂移', file: 'js/import.js:478' }
-      - { order: 2, step: 'products.push.apply(newProducts)', detail: '未知编码选「新建」时构造产品 {id,name,spec,model,unit,stock:0,dailyCap:0,stockMin:0,status:''启用''}', file: 'js/import.js:455-458' }
-      - { order: 3, step: "save('products')", detail: '【独立网络写 1，仅当有新产品的条件性写】', file: 'js/import.js:484' }
-      - { order: 4, step: 'orders.push.apply(newOrders) + save(''orders'')', detail: '【独立网络写 2】新单固定 orderType=销售订单、status=执行中、src=kingdee、srcFile', file: 'js/import.js:483-485' }
-      - { order: 5, step: 'syncOrderAutoStatus()', detail: '按未交付合计自动判定（Excel 已交付全量 → 已完成）—— 【条件性写 3】', file: 'js/import.js:486' }
-      - { order: 6, step: "logOp('导入', '订单管理', detail)", detail: '【独立网络写 4】（写 logs）detail 含导入单数/行数/覆盖数/忽视数/新建产品数/跳过数', file: 'js/import.js:493' }
-      - { order: 7, step: "clearSel('order_frame')", detail: '清理勾选（因 splice 导致索引漂移，.5 修复）', file: 'js/import.js:495' }
+      - { order: 1, step: '（覆盖时）orders.splice(exIdx, 1)', detail: '原地删除旧单 —— 立即触发全局索引漂移', file: 'js/import.js:516' }
+      - { order: 2, step: 'products.push.apply(newProducts)', detail: '未知编码选「新建」时构造产品 {id,name,spec,model,unit,stock:0,dailyCap:0,stockMin:0,status:''启用''}；仅新建产品时作为伴随 op 并入同一次 /api/tx（.124 起原子化，原「独立 save(''products'')」已废止）', file: 'js/import.js:490-491 / 522 / 526' }
+      - { order: 3, step: 'orders.push.apply(newOrders) + 组装 tx ops', detail: '【一次原子提交】新单固定 orderType=销售订单、status=执行中、src=kingdee、srcFile；orders（+ 条件性 products）并入同一次 /api/tx（.124 起；原「独立网络写 1/2」已废止）', file: 'js/import.js:521 / 526-529' }
+      - { order: 4, step: 'recomputeOrderAutoStatus()', detail: '【投影前置】写盘前按未交付合计在内存判定状态（纯内存、随 orders 同一次提交）；.130 起 Excel 已交付不再导入 → 导入单恒「执行中」，.130 前 Excel 已交付全量可判「已完成」', file: 'js/import.js:525' }
+      - { order: 5, step: "logOp('导入', '订单管理', detail)", detail: 'best-effort 独立通道（silent，不入 tx）detail 含导入单数/行数/覆盖数/忽视数/新建产品数/跳过数', file: 'js/import.js:537' }
+      - { order: 6, step: "clearSel('order_frame')", detail: '清理勾选（因 splice 导致索引漂移，.5 修复）', file: 'js/import.js:539' }
     perspective_recompute: [projections.orders.status]
     item_construction:
       - 'productName/spec/model 以产品主数据为准回填（不是 Excel 原值）'
-      - 'deliveredQty > 0 且 calledQty 无值 → 标记 directDelivered（.108）'
+      - '.130：Excel「已交付 / 已出库数量」**不落库** —— 落库 items[].deliveredQty 恒 0、不再写 directDelivered（原 .108 期初基数口径对本路径废止；字段保留、存量数据不动）；该列仅进预检报告提示（固定提示 + 有已交付行时的行数/合计/涉及订单汇总）'
       - 'stockMax / stockMin 置空字符串（销售订单不用）'
     failure_behavior: |
-      3~4 次独立网络写 + 中途 splice：
-        若 splice 成功、save('orders') 失败 → 旧单已从内存数组中删除但未落库（服务器仍是旧数据，下一次 pullAll 会恢复）——
-        但内存与服务器不一致期间若发生其他 save('orders')，会把「已删旧单」的版本写上去 → 静默丢单。
+      一次 /api/tx 原子提交（.124 起）：任一步失败 → 一字不写，DB.tx 已 pullAll + rehydrateFromServer 复原业务内存，
+      不进入成功态、不弹「导入完成」。
+      （历史语义、.124 之前：3~4 次独立网络写 + 中途 splice —— 若 splice 成功而 save('orders') 失败，
+       会在内存与服务器不一致期间被后续 save('orders') 写上去 → 静默丢单。）
     rollback: '无。人工手段：从备份恢复（restoreBackup）。'
     known_defects:
       - 'orders.splice 触发索引漂移（既有补丁：clearSel）'
@@ -434,20 +434,20 @@ flows:
   - id: order.deliver
     name: 销售订单交付（saleDeliverSave）
     entry: saleDeliverDlg() → saleDeliverSave(oi)
-    file: 'index.html:2751（弹窗 2751-2799）/ 2821（保存 2821-2850）'
+    file: 'index.html:3041（弹窗 saleDeliverDlg）/ 3111-3140（保存 saleDeliverSave）'
     trigger_ui: '订单管理 → 销售订单区块 → 勾选 1 张 → 「交付」按钮 → 弹窗逐行填本次交付数量 → 确认交付'
     permission: { form: order_frame, act: 'order_frame.saleDeliver' }
     prechecks:
-      - '必须恰好勾选 1 张销售订单（saleDeliverDlg：2754-2755）'
-      - '订单存在且状态不得为 已取消/已暂停（:2759）'
-      - '订单有明细行（:2760-2761）'
-      - '至少一行本次交付数量 > 0（:2842）'
-      - '行级上限：本次交付 ≤ min(未交付, saleMaxCallable(it))；越限则整批拒绝（:2831-2843）'
+      - '必须恰好勾选 1 张销售订单（saleDeliverDlg：3044-3045）'
+      - '订单存在且状态不得为 已取消/已暂停（3049）'
+      - '订单有明细行（3050-3051）'
+      - '至少一行本次交付数量 > 0（3132）'
+      - '行级上限：本次交付 ≤ min(未交付, saleMaxCallable(it))；越限则整批拒绝（3120-3133）'
     write_set:
-      - { order: 1, step: '改内存：行级增量', detail: 'updates.forEach(u => o.items[u.li].deliveredQty = num(...) + u.qty)', file: 'index.html:2844' }
-      - { order: 2, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:2845' }
-      - { order: 3, step: 'syncOrderAutoStatus()', detail: '交付使未交付合计降到 0 → 自动「已完成」—— 【条件性写 2】', file: 'index.html:2846' }
-      - { order: 4, step: "logOp('新增','销售订单','交付「id」N 台（M 行）')", detail: '【独立网络写 3】（写 logs）', file: 'index.html:2847' }
+      - { order: 1, step: '改内存：行级增量', detail: 'updates.forEach(u => o.items[u.li].deliveredQty = num(...) + u.qty)', file: 'index.html:3134' }
+      - { order: 2, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:3135' }
+      - { order: 3, step: 'syncOrderAutoStatus()', detail: '交付使未交付合计降到 0 → 自动「已完成」—— 【条件性写 2】', file: 'index.html:3136' }
+      - { order: 4, step: "logOp('新增','销售订单','交付「id」N 台（M 行）')", detail: '【独立网络写 3】（写 logs）', file: 'index.html:3137' }
     perspective_recompute: [projections.orders.status]
     NOT_in_write_set:
       - '⚠️ products.stock —— 本命令【不写库存】、不调用 syncStockFromInvOrders()。销售订单 deliveredQty 只驱动订单状态，不参与库存投影（库存只由库存订单行汇总）。'
@@ -462,19 +462,19 @@ flows:
   - id: order.return
     name: 销售订单退货（saleReturnSave）
     entry: saleReturnDlg(orderId) → saleReturnSave(orderId)
-    file: 'index.html:2852（弹窗 2852-2873）/ 2874（保存 2874-2902）'
+    file: 'index.html:3142（弹窗 saleReturnDlg）/ 3164-3192（保存 saleReturnSave）'
     trigger_ui: '订单管理 → 销售订单区块 → 「退货」按钮 → 弹窗逐行填退货数量 → 确认退货'
     permission: { form: order_frame, act: 'order_frame.saleReturn' }
     prechecks:
-      - '订单存在且有明细行（:2854-2856）'
-      - '至少一行退货数量 > 0（:2889）'
-      - '行级上限：退货 ≤ 可退货 = 当前已交付 max(0, num(it.deliveredQty))（:2883, :2890）'
+      - '订单存在且有明细行（3143-3146）'
+      - '至少一行退货数量 > 0（3179）'
+      - '行级上限：退货 ≤ 可退货 = 当前已交付 max(0, num(it.deliveredQty))（3173, 3180）'
     write_set:
-      - { order: 1, step: '改内存：行级减量', detail: '_it.deliveredQty = max(0, num(...) - u.qty)', file: 'index.html:2893' }
-      - { order: 2, step: '改内存：直接交付基数下调', detail: 'if(directDelivered != null) _it.directDelivered = min(num(directDelivered), num(deliveredQty))（防负基数/超额豁免；.108）', file: 'index.html:2895' }
-      - { order: 3, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:2897' }
-      - { order: 4, step: 'syncOrderAutoStatus()', detail: '退货使未交付合计回升 → 「已完成」可能退回「执行中」—— 【条件性写 2】', file: 'index.html:2898' }
-      - { order: 5, step: "logOp('新增','销售订单','退货「id」N 台（M 行）')", detail: '【独立网络写 3】', file: 'index.html:2899' }
+      - { order: 1, step: '改内存：行级减量', detail: '_it.deliveredQty = max(0, num(...) - u.qty)', file: 'index.html:3183' }
+      - { order: 2, step: '改内存：直接交付基数下调', detail: 'if(directDelivered != null) _it.directDelivered = min(num(directDelivered), num(deliveredQty))（防负基数/超额豁免；.108，仅存量行有该字段）', file: 'index.html:3184-3185' }
+      - { order: 3, step: "save('orders')", detail: '【独立网络写 1】', file: 'index.html:3187' }
+      - { order: 4, step: 'syncOrderAutoStatus()', detail: '退货使未交付合计回升 → 「已完成」可能退回「执行中」—— 【条件性写 2】', file: 'index.html:3188' }
+      - { order: 5, step: "logOp('新增','销售订单','退货「id」N 台（M 行）')", detail: '【独立网络写 3】', file: 'index.html:3189' }
     perspective_recompute: [projections.orders.status]
     NOT_in_write_set:
       - '⚠️ products.stock —— 与 order.deliver 同：退货不改库存。'
@@ -482,7 +482,7 @@ flows:
     failure_behavior: '同 order.deliver：save 成功 + syncOrderAutoStatus 失败 → 状态未跟随（启动迁移兜底）'
     rollback: '无自动回滚；人工手段：重新「交付」补回（受 saleMaxCallable 上限约束）'
     known_defects:
-      - '退货同时下调 directDelivered（:2895）——改这里会改变后续所有交付的行级上限，属高影响改动'
+      - '退货同时下调 directDelivered（index.html:3185）——改这里会改变后续所有交付的行级上限，属高影响改动（.130 起新导入单无该字段，仅存量行受影响）'
     related_edges: [E-046, E-047, E-048]
 
   # ===== 9. 启动迁移链 =====
