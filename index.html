@@ -2446,12 +2446,37 @@ function syncOrderAutoStatus(silent){
 }
 /* 迁移（2026-08-25.3）：存量订单状态对齐——旧「待排产」→「执行中」；
    并按自动规则初始化存量执行中/已完成订单（全部交付完成的旧单直接标已完成，幂等）。 */
-/* 2026-08-25.35：存量销售订单明细行回填 calledQty（已调用=调用库存累计）。
-   从调拨台账（未冲销 reversed=false 记录）统计：type=call 累加、type=return 扣减，下限 0；幂等（已有 calledQty 的行跳过）。 */
-function migrateOrderCalledQty(){
-  if(!Array.isArray(transfers)||!transfers.length)return;
-  const map={};   // orderId|lineIdx → qty
-  transfers.forEach(t=>{
+/* 2026-09-20.132：销售订单「已调用」字段配置补齐（存量库幂等迁移·事故根因 A）。
+   .35 只把 calledQty 写进 defaultFields.order 模板，**从未**像 stockMax/stockMin/spec/model 那样
+   「补齐存量 fields 配置」——老库 fields.order 永远没有该字段 → 订单弹窗不渲染「已调用」列 →
+   它不是表单字段 → saveOrder 按表单重建 items 时整列丢值（详见 .132 复盘）。
+   本迁移把字段补回 fields（+fieldsDraft），幂等；已存在则一字不动。 */
+const ORDER_CALLED_KEY='calledQty';
+function migrateOrderCalledQtyField(){
+  let cfgChanged=false;
+  [fields,fieldsDraft].forEach(cfg=>{
+    if(!cfg||!Array.isArray(cfg.order))return;
+    if(cfg.order.some(f=>f.key===ORDER_CALLED_KEY))return;
+    let insIdx=-1;
+    cfg.order.forEach((f,i)=>{ if(f.key==='deliveredQty')insIdx=i; });
+    const def={key:ORDER_CALLED_KEY,label:'已调用',type:'number',required:false,locked:true,level:'line'};
+    if(insIdx>=0)cfg.order.splice(insIdx+1,0,def);else cfg.order.push(def);
+    cfgChanged=true;
+  });
+  if(cfgChanged){
+    if(fieldsAudit!=='draft')save('fields',fields);
+    if(fieldsDraft)save('fieldsDraft',fieldsDraft);
+    logOp('字段设置','订单管理','系统迁移：明细行补齐「已调用」字段（修复编辑保存丢值）');
+  }
+}
+/* 【口径唯一来源】销售订单「已调用」净额：call 累加 / return 扣减，不设下限（调用方按需 max 0）；
+   已冲销原记录不计（冲销生成的反向 call/return 记录正常参与）。
+   方向读取走 trSide 同源规则：新结构 call 销售在调入侧(in)、return 销售在调出侧(out)；旧结构销售恒在 salesOrderId。
+   返回 map: orderId|lineIdx → 净额。.132 起被 migrateOrderCalledQty（存量回填）与
+   repairOrphanTransferLineIdx（孤儿行号修复）共用——本口径**只此一处**，禁止再抄第二份。 */
+function calledQtyNetMap(){
+  const map={};
+  (Array.isArray(transfers)?transfers:[]).forEach(t=>{
     if(t.reversed)return;                       /* 已冲销原记录不计；冲销生成的反向记录（revType）正常参与 */
     const ty=t.type;
     if(ty!=='call'&&ty!=='return')return;       /* .115：conv/move/冲销反向不涉及销售 calledQty */
@@ -2466,6 +2491,13 @@ function migrateOrderCalledQty(){
     const k=so+'|'+sl;
     map[k]=(map[k]||0)+(ty==='call'?num(t.qty):-num(t.qty));
   });
+  return map;
+}
+/* 2026-08-25.35：存量销售订单明细行回填 calledQty（已调用=调用库存累计）。
+   从调拨台账（未冲销 reversed=false 记录）统计：type=call 累加、type=return 扣减，下限 0；幂等（已有 calledQty 的行跳过）。 */
+function migrateOrderCalledQty(){
+  if(!Array.isArray(transfers)||!transfers.length)return;
+  const map=calledQtyNetMap();   // orderId|lineIdx → 净额（口径见 calledQtyNetMap）
   let changed=false;
   orders.forEach(o=>{
     if(!Array.isArray(o.items))return;
@@ -2477,6 +2509,58 @@ function migrateOrderCalledQty(){
     });
   });
   if(changed){save('orders',orders);logOp('系统','订单管理','系统迁移：销售订单明细回填已调用数量 calledQty');}
+}
+/* 2026-09-20.132：孤儿台账行号修复（一次性·幂等·事故数据修复）。
+   事故第 4 步留下的疤：删行后行索引漂移，而台账 out/inLineIdx 存的仍是旧行号 →
+   指向不存在/料号不符的行（越界），applyTransfers 前置校验（transfer.js）要求 items[lineIdx] 存在
+   → 该记录**无法用 UI 冲销/退回**；刷新时的台账回填也因键 orderId|lineIdx 不匹配而落空。
+   修复规则（保守，宁可不动也不猜）：
+     ① 仅非冲销记录；仅销售侧（订单行号只属于销售订单明细）
+     ② 该侧 lineIdx 指向的行「不存在」或「料号 ≠ 台照料号」→ 判为孤儿
+     ③ 候选 = 本单中料号与台照料号**完全一致**的行；**唯一候选才改写**，多候选/零候选原样保留并记日志
+     ④ 被改写的行按 calledQtyNetMap（唯一口径）重算「已调用」，不碰其它行
+     ⑤ meta.fixOrphanLineIdx20260920 标记一次性；orders+transfers 一次 DB.tx 原子提交 */
+async function repairOrphanTransferLineIdx(){
+  if(!meta)return;
+  if(meta.fixOrphanLineIdx20260920)return;
+  const fixed=[],skipped=[];
+  transfers.forEach(t=>{
+    if(t.reversed)return;
+    ['out','in'].forEach(side=>{
+      const s=trSide(t,side);
+      if(!s.orderId||s.orderType!=='sales')return;
+      if(s.lineIdx==null||s.lineIdx<0)return;
+      const o=orders.find(x=>x.id===s.orderId);
+      if(!o||!Array.isArray(o.items))return;
+      const want=String(s.productId==null?'':s.productId);
+      if(!want)return;
+      const cur=o.items[s.lineIdx];
+      if(cur&&String(cur.productId==null?'':cur.productId)===want)return;   /* 行号指向正确 → 非孤儿 */
+      const cands=[];
+      o.items.forEach((it,li)=>{ if(String(it.productId==null?'':it.productId)===want)cands.push(li); });
+      if(cands.length!==1){skipped.push(t.id+'（'+s.orderId+' 行'+s.lineIdx+' 料号 '+want+' 候选 '+cands.length+' 行）');return;}
+      const to=cands[0];
+      if(t[side+'OrderId']!=null&&t[side+'OrderType']!=null)t[side+'LineIdx']=to;   /* 新结构（方向模型） */
+      else t.salesLineIdx=to;                                                       /* 旧结构（销售侧恒在 sales*） */
+      fixed.push({id:t.id,order:s.orderId,from:s.lineIdx,to:to});
+    });
+  });
+  /* 重算口径必须基于「改写之后」的台账：改写前键是旧行号，按新行号取值会取不到而误写成 0 */
+  const net=calledQtyNetMap();
+  let cq=0;
+  fixed.forEach(f=>{
+    const o=orders.find(x=>x.id===f.order),it=o&&o.items[f.to];
+    if(!it)return;
+    const v=Math.max(0,net[f.order+'|'+f.to]||0);      /* 下限 0：与 .35 回填口径一致 */
+    if(num(it.calledQty)!==v){it.calledQty=v;cq++;}
+  });
+  meta.fixOrphanLineIdx20260920=true;
+  if(!fixed.length&&!cq){save('meta',meta);return;}
+  const ok=await DB.tx([{key:'orders',value:orders},{key:'transfers',value:transfers}],true);
+  if(!ok){meta.fixOrphanLineIdx20260920=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
+  save('meta',meta);
+  logOp('系统','调拨台账','系统修复：孤儿台账行号对齐 '+fixed.length+' 条（'+fixed.map(f=>f.id+' '+f.order+' 行'+f.from+'→'+f.to).join('；')+'）'+(cq?('；按台账净额重算已调用 '+cq+' 行'):''));
+  if(skipped.length)logOp('系统','调拨台账','系统修复：以下孤儿台账行号无法唯一确定，保留原样待人工核对——'+skipped.join('；'));
 }
 function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
@@ -3572,6 +3656,124 @@ function batchPickProducts(){
   });
 }
 
+/* ================================================================
+   2026-09-20.132：订单明细「内部字段保全」+「行号漂移重映射」（编辑保存前置）
+   ----------------------------------------------------------------
+   根因 B：saveOrder 按弹窗表单 .oi_field **重建** items，凡「不在字段配置里」的行内字段
+     （calledQty / directDelivered / origProduct）一律收集不到 → 保存即丢。
+     丢 calledQty 的连锁：列表「已调用」变 0 → saleMaxCallable=0 → 该行交付/退回被
+     「可调用余量 0」卡死。
+   根因 D'：删行/插行使订单行索引漂移，而调拨台账 out/inLineIdx、交付计划行 orderLine
+     存的都是**行号**——漂移后指向不存在的行（越界）或错行。
+   本组函数在保存前一次处理：①保序匹配新旧行 ②拒存仍有引用的被删行 ③回带内部字段
+     ④按映射改写台账/交付计划行号。纯函数（只改入参对象），便于单测。
+   ================================================================ */
+
+/* 内部行字段：不进字段配置、不进弹窗表单，但必须随行保留（丢失 = 数量口径错 / 溯源断链） */
+const ORDER_INTERNAL_LINE_KEYS=['calledQty','directDelivered','origProduct'];
+
+/* 新旧明细行「保序匹配」：返回 src[]（下标=新行号，值=旧行号，-1=新行无来源）。
+   料号相同且相对顺序一致即视为同一行（贪心向前推进）——删行/插行/整体重排都能对上；
+   换品改码的行匹配不上（src=-1，不臆造字段，是否允许由引用守卫判定）。 */
+function matchOrderLines(oldLines,newLines){
+  const src=[];
+  for(let i=0;i<newLines.length;i++)src.push(-1);
+  if(!Array.isArray(oldLines)||!oldLines.length)return src;
+  const pidOf=x=>String((x&&x.productId!=null)?x.productId:'');
+  let p=0;
+  newLines.forEach((it,ni)=>{
+    if(!pidOf(it))return;
+    for(let oi=p;oi<oldLines.length;oi++){
+      if(pidOf(oldLines[oi])===pidOf(it)){src[ni]=oi;p=oi+1;return;}
+    }
+  });
+  return src;
+}
+
+/* 回带内部字段：src 命中的新行，从旧行复制表单收集不到的键。返回回带条数。
+   **表单已带值的键以表单为准**（.132 起 calledQty 起已是只读表单列，A 迁移补配置后由表单带出）。 */
+function carryInternalLineFields(oldLines,items,src){
+  if(!Array.isArray(oldLines))return 0;
+  let n=0;
+  items.forEach((it,ni)=>{
+    const oi=src[ni];
+    if(oi<0)return;
+    const old=oldLines[oi];
+    if(!old)return;
+    ORDER_INTERNAL_LINE_KEYS.forEach(k=>{
+      if(it[k]!==undefined)return;
+      if(old[k]===undefined)return;
+      it[k]=old[k];n++;
+    });
+  });
+  return n;
+}
+
+/* 被删行引用守卫：src 未命中的旧行（含换品改码）若仍被「未冲销调拨台账」或「交付计划行」
+   引用 → 返回提示文案（调用方拒存）；无引用 → null（可安全删除）。
+   与 .111 订单级删除守卫同风格：给出**可执行的清零路径**，绝不静默丢值。 */
+function guardRemovedOrderLines(o,src){
+  const kept={};
+  src.forEach(oi=>{ if(oi>=0)kept[oi]=1; });
+  const probs=[];
+  (o.items||[]).forEach((it,oi)=>{
+    if(kept[oi])return;
+    const nm=(it.productName||'')+(it.productId?('（'+it.productId+'）'):'');
+    const label='产品「'+(nm||('第'+(oi+1)+'行'))+'」（原第'+(oi+1)+'行）';
+    let tr=0,dl=0;
+    transfers.forEach(t=>{
+      if(t.reversed)return;                    /* 已冲销原记录数量口径为 0，不拦 */
+      ['out','in'].forEach(side=>{
+        const s=trSide(t,side);
+        if(s.orderId===o.id&&s.orderType==='sales'&&Number(s.lineIdx)===oi)tr++;
+      });
+    });
+    deliveries.forEach(d=>{
+      if(d.orderId!==o.id)return;
+      deliveryItems(d).forEach(x=>{
+        if(x.orderLine==null||x.orderLine==='')return;
+        if(Number(x.orderLine)===oi)dl++;
+      });
+    });
+    if(tr||dl)probs.push('　· '+label+(tr?('｜未冲销调拨台账 '+tr+' 条'):'')+(dl?('｜交付计划行 '+dl+' 条'):''));
+  });
+  if(!probs.length)return null;
+  return '订单「'+o.id+'」以下明细行仍有业务引用，不能直接删除或改产品编码：\n'+probs.join('\n')+
+    '\n\n如需删除/改码：请先到「调拨台账」冲销这些行的调用/退回记录；已下推交付计划的，请先删除对应交付计划行，再回到本弹窗保存。';
+}
+
+/* 行号重映射：由 src（新行→旧行）推出「旧行→新行」，改写以订单行号为键的关联数据：
+     ① 调拨台账 out/inLineIdx（新结构直改；旧结构销售侧写回 salesLineIdx）
+     ② 交付计划行 orderLine（排产单经 dlLine→交付计划行 orderLine 自动跟随，无需改）
+   返回 {oldToNew, tr, dl}（tr/dl = 实际改写条数）。仅在编辑订单时调用。 */
+function remapOrderLineRefs(o,src){
+  const oldToNew={};
+  src.forEach((oi,ni)=>{ if(oi>=0)oldToNew[oi]=ni; });
+  let tr=0,dl=0;
+  transfers.forEach(t=>{
+    ['out','in'].forEach(side=>{
+      const s=trSide(t,side);
+      if(s.orderId!==o.id||s.orderType!=='sales')return;
+      if(s.lineIdx==null||s.lineIdx<0)return;
+      const ni=oldToNew[s.lineIdx];
+      if(ni===undefined||ni===s.lineIdx)return;
+      if(t[side+'OrderId']!=null&&t[side+'OrderType']!=null)t[side+'LineIdx']=ni;   /* 新结构（方向模型） */
+      else t.salesLineIdx=ni;                                                       /* 旧结构：销售侧恒在 sales* */
+      tr++;
+    });
+  });
+  deliveries.forEach(d=>{
+    if(d.orderId!==o.id)return;
+    deliveryItems(d).forEach(x=>{
+      if(x.orderLine==null||x.orderLine==='')return;
+      const ni=oldToNew[Number(x.orderLine)];
+      if(ni===undefined||ni===Number(x.orderLine))return;
+      x.orderLine=ni;dl++;
+    });
+  });
+  return {oldToNew:oldToNew,tr:tr,dl:dl};
+}
+
 function saveOrder(idx){
   const cols=fields.order;
   const o={};
@@ -3602,8 +3804,9 @@ function saveOrder(idx){
   const items=[];
   /* 2026-08-30.92：库存订单数量=最大库存量（校验/过滤以 stockMax 为准） */
   const _oqOf=function(it){return num((o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?it.stockMax:it.orderQty);};
-  /* .108：directDelivered（期初直接交付基数，只读内部字段，不进弹窗输入项）——行对象保存时按表单重建会丢字段，
-     故按行序从旧行补回（须产品一致，防止删行/换品后索引漂移错位；增删行漂移风险同 .24/.33/.40 已知） */
+  /* .132：旧明细行引用——内部字段保全 / 行号重映射 / 被删行守卫 统一在下方 .132 块处理
+     （替换 .108 只补 directDelivered 的按索引补丁：该补丁在「删前面行」时索引已漂移，
+       既不命中、又无任何提示，是本次 calledQty 静默归零的同一条漏链） */
   const _oldLines=(idx>=0&&orders[idx]&&orders[idx].items)?orders[idx].items:null;
   document.querySelectorAll('#orderItemsTbl tbody tr').forEach((tr,li)=>{
     const it={};
@@ -3611,15 +3814,25 @@ function saveOrder(idx){
       const f=cols.find(c=>c.key===el.dataset.key);
       it[el.dataset.key]=(f&&f.type==='number')?num(el.value):(el.value||'');
     });
-    if(it.productId||_oqOf(it)>0){
-      const _old=_oldLines&&_oldLines[li];
-      if(_old&&String(_old.productId)===String(it.productId)&&_old.directDelivered!=null&&_old.directDelivered!==''&&num(_old.directDelivered)>0)it.directDelivered=num(_old.directDelivered);
-      items.push(it);
-    }
+    if(it.productId||_oqOf(it)>0)items.push(it);
   });
   if(items.length===0){alert('请至少填写一行产品明细（选择产品并填写'+(o.orderType==='库存订单'?'最大库存量':'订单数量')+'）');return;}
   const bad=items.find(it=>!it.productId||_oqOf(it)<=0);
   if(bad){alert('存在"未选产品或'+(o.orderType==='库存订单'?'最大库存量':'数量')+'为0"的明细行，请补全或删除该行');return;}
+  /* .132：编辑保存前置——①保序匹配新旧行 ②拒存仍有引用的被删行 ③回带内部字段 ④台账/交付计划行号重映射。
+     顺序不可换：先守卫（拒存则一字不写）→ 再回带 → 最后重映射（重映射会改 transfers/deliveries，须在守卫之后）。 */
+  if(_oldLines){
+    const _src=matchOrderLines(_oldLines,items);
+    const _blk=guardRemovedOrderLines(orders[idx],_src);
+    if(_blk){alert(_blk);return;}
+    carryInternalLineFields(_oldLines,items,_src);
+    const _rm=remapOrderLineRefs(orders[idx],_src);
+    if(_rm.tr||_rm.dl){
+      if(_rm.tr)save('transfers',transfers);
+      if(_rm.dl)save('deliveries',deliveries);
+      logOp('编辑','订单管理','订单「'+o.id+'」明细行号对齐：调拨台账 '+_rm.tr+' 条、交付计划行 '+_rm.dl+' 条改指新行号');
+    }
+  }
   // 引用字段重算（基于关联键实时取值，确保存储正确）
   orderHeadFields().forEach(f=>{ if(f.type==='ref'){ o[f.key]=lookupRef(f.refForm,f.refMatch,o[f.refKey],f.refField); } });
   orderLineFields().forEach(f=>{ if(f.type==='ref'){ items.forEach(it=>{ it[f.key]=lookupRef(f.refForm,f.refMatch,it[f.refKey],f.refField); }); } });
@@ -6470,8 +6683,12 @@ async function initApp(){
   syncStockFromInvOrders();
   // 订单管理：存量状态对齐（待排产→执行中）+ 按未交付合计初始化自动状态（2026-08-25.3，须在反填之后）
   migrateOrderStatusData();
+  // 订单管理：字段配置补齐「已调用」（2026-09-20.132，事故根因 A：老库配置缺键 → 弹窗不渲染该列 → 保存即丢值）
+  migrateOrderCalledQtyField();
   // 销售订单明细回填已调用数量 calledQty（2026-08-25.35，从调拨台账统计）
   migrateOrderCalledQty();
+  // 调拨台账「孤儿行号」修复（2026-09-20.132，一次性幂等：删行漂移留下的越界引用 → 唯一候选才对齐 + 按台账净额重算已调用）
+  await repairOrphanTransferLineIdx();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -6555,7 +6772,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-20.131</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-20.132</div>
 </body>
 </html>
 
