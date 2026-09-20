@@ -3,7 +3,9 @@
    tests/import.idempotent.test.js —— 金蝶导入黄金样例（幂等 / 决策 / 口径）
    ================================================================ */
 /* 覆盖（P1-4 清单）：金蝶导入幂等 —— 同一份金蝶文件重复导入不得产生重复订单/重复产品，
-   以及决策分支（新建 / 选已有 / 忽视 / 跳过 / 重命名）与 .108 directDelivered 口径。
+   以及决策分支（新建 / 选已有 / 忽视 / 跳过 / 重命名）与导入口径。
+   .130 起口径：Excel「已交付 / 已出库数量」**不落库**（落库 deliveredQty 恒 0、不写 directDelivered），
+   该数字仅进预检报告提示；原 .108「落 directDelivered 期初基数」用例随之替换（见「.130 导入口径」节）。
 
    为什么值得单独钉死：导入是**唯一的批量写入入口**，线上最典型的误操作就是「同一份文件
    点两次确认」。改造前 products 与 orders 分两次写，重复导入时一旦中途失败就留下孤儿产品；
@@ -329,10 +331,12 @@ test('导入决策：商品编码为空的行被跳过（不产生空产品行�
 });
 
 /* ================================================================
-   .108 directDelivered 口径
+   .130 导入口径：已交付数量不再导入
+   （本节替换原 .108「落 directDelivered 期初基数」用例——口径已由用户拍板变更：
+     Excel「已交付 / 已出库数量」仅进预检提示，不落库；directDelivered 不再写入）
    ================================================================ */
 
-test('导入口径：deliveredQty>0 且无 calledQty → 落 directDelivered（期初直接交付基数）', async () => {
+test('导入口径（.130）：Excel deliveredQty=5 → 落库恒为 0，且不落 directDelivered', async () => {
   const app = recApp({ orders: [], products: [{ id: 'P1', name: '甲', spec: '', model: '', unit: '台', stock: 0, status: '启用' }] });
   const o = kdOrder('O-KD1', [kdItem('P1', 20, 5)]);
   app.setGlobals({
@@ -340,33 +344,107 @@ test('导入口径：deliveredQty>0 且无 calledQty → 落 directDelivered（�
     kdState: { unknown: {}, conflict: {} },
   });
   await app.run('kdDoImport()');
-  assert.equal(await app.run('orders[0].items[0].deliveredQty'), 5);
-  assert.equal(await app.run('orders[0].items[0].directDelivered'), 5, '.108：无调用支撑 → 视为期初直接交付');
+
+  assert.equal(await app.run('orders[0].items[0].deliveredQty'), 0, '.130：已交付不导入 → 落库恒 0');
+  assert.equal(await app.run('typeof orders[0].items[0].deliveredQty'), 'number', 'deliveredQty 字段必须保留（只改值，不删字段）');
+  assert.equal(await app.run('orders[0].items[0].directDelivered'), undefined, '.130：不再写 directDelivered');
   app.dispose();
 });
 
-test('导入口径：带 calledQty 时**不**落 directDelivered（有调用支撑，已交付不由期初基数解释）', async () => {
-  const app = recApp({ orders: [], products: [{ id: 'P1', name: '甲', spec: '', model: '', unit: '台', stock: 0, status: '启用' }] });
-  const o = kdOrder('O-KD1', [kdItem('P1', 20, 5, { calledQty: 2 })]);
+test('导入口径（.130）：原会落 directDelivered 的两类场景（无 / 有 calledQty）现在都不落', async () => {
+  for (const extra of [{}, { calledQty: 2 }]) {
+    const app = recApp({ orders: [], products: [{ id: 'P1', name: '甲', spec: '', model: '', unit: '台', stock: 0, status: '启用' }] });
+    const o = kdOrder('O-KD1', [kdItem('P1', 20, 5, extra)]);
+    app.setGlobals({
+      kdReport: kdReport(o, { pm: { P1: { id: 'P1', name: '甲' } }, unknown: [] }),
+      kdState: { unknown: {}, conflict: {} },
+    });
+    await app.run('kdDoImport()');
+    const tag = 'calledQty=' + (extra.calledQty || 0);
+    assert.equal(await app.run('orders[0].items[0].deliveredQty'), 0, '已交付恒 0（' + tag + '）');
+    assert.equal(await app.run('orders[0].items[0].directDelivered'), undefined, 'directDelivered 不再出现（' + tag + '）');
+    app.dispose();
+  }
+});
+
+test('导入口径（.130）回归：orderQty / 产品主数据回填 / 行备注等其余字段不受影响', async () => {
+  const app = recApp({ orders: [], products: [{ id: 'P1', name: '主数据名', spec: 'S1', model: 'M1', unit: '台', stock: 0, status: '启用' }] });
+  const o = kdOrder('O-KD1', [kdItem('P1', 20, 5, { lineNotes: '急件' })]);
   app.setGlobals({
-    kdReport: kdReport(o, { pm: { P1: { id: 'P1', name: '甲' } }, unknown: [] }),
+    kdReport: kdReport(o, { pm: { P1: { id: 'P1', name: '主数据名', spec: 'S1', model: 'M1', unit: '台' } }, unknown: [] }),
     kdState: { unknown: {}, conflict: {} },
   });
   await app.run('kdDoImport()');
-  assert.equal(await app.run('orders[0].items[0].directDelivered'), undefined, '有 calledQty → 不置期初基数');
+
+  const it = plain(await app.run('orders[0].items[0]'));
+  assert.equal(it.orderQty, 20, '数量照常导入');
+  assert.equal(it.productName, '主数据名', '产品名称以主数据为准回填');
+  assert.equal(it.spec, 'S1', '规格回填不变');
+  assert.equal(it.model, 'M1', '型号回填不变');
+  assert.equal(it.lineNotes, '急件', '行备注照常导入');
+  assert.equal(it.stockMax, '', '销售订单 stockMax 仍为空串');
+  assert.equal(it.stockMin, '', '销售订单 stockMin 仍为空串');
+  assert.equal(Object.prototype.hasOwnProperty.call(it, 'directDelivered'), false, '落库对象不再带 directDelivered 键');
   app.dispose();
 });
 
-test('导入口径：deliveredQty=0 → 不落 directDelivered（避免 0 值污染判定）', async () => {
-  const app = recApp({ orders: [], products: [{ id: 'P1', name: '甲', spec: '', model: '', unit: '台', stock: 0, status: '启用' }] });
-  const o = kdOrder('O-KD1', [kdItem('P1', 20, 0)]);
+/* ================================================================
+   预检提示（.130）：已交付数字仅进预检报告
+   预检报告本身是 HTML 字符串 + showModal；沙箱里用 showModal 桩捕获字符串，
+   即可对「提示文案」做断言（不依赖真实 DOM，见 README §5 不可测边界）
+   ================================================================ */
+
+/** 跑真实 kdPrecheckAndShow → 返回 kdShowReport 交给 showModal 的字符串 */
+async function precheckBody(listFixture, pm, filename) {
+  const app = createApp({ installRecorder: true });
   app.setGlobals({
-    kdReport: kdReport(o, { pm: { P1: { id: 'P1', name: '甲' } }, unknown: [] }),
-    kdState: { unknown: {}, conflict: {} },
+    orders: [],
+    products: [],
+    renderContent: function () {},
+    renderAll: function () {},
   });
-  await app.run('kdDoImport()');
-  assert.equal(await app.run('orders[0].items[0].directDelivered'), undefined);
-  app.dispose();
+  const cap = { title: '', body: '' };
+  app.setGlobal('showModal', function (title, body) {
+    cap.title = title;
+    cap.body = body;
+  });
+  await app.run(
+    'kdPrecheckAndShow(' + JSON.stringify(listFixture) + ',' + JSON.stringify(pm) + ',' + JSON.stringify(filename) + ',0)'
+  );
+  return { app: app, cap: cap };
+}
+
+test('预检提示（.130）：固定提示恒显示；有已交付行时追加汇总（行数 / 合计 / 涉及订单）', async () => {
+  const o1 = kdOrder('O-KD1', [kdItem('P1', 20, 5), kdItem('P1', 10, 0)]);
+  const o2 = kdOrder('O-KD2', [kdItem('P1', 8, 3)]);
+  const r = await precheckBody([o1, o2], { P1: { id: 'P1', name: '甲' } }, 'kd-dv.xlsx');
+
+  assert.match(r.cap.title, /金蝶订单导入/, '仍是金蝶预检报告弹窗');
+  assert.match(r.cap.body, /已交付数量不导入系统/, '固定提示恒显示');
+  assert.match(r.cap.body, /本次文件有 <b>2<\/b> 行明细带已交付数量（合计 <b>8<\/b>）/, '汇总受影响明细行数与合计数量');
+  assert.match(r.cap.body, /涉及订单：O-KD1、O-KD2/, '列出涉及订单号（无已交付行的行不计入）');
+  assert.match(r.cap.body, /金蝶已交付数量不导入系统/, '底部提示文案已随 .130 口径更新');
+  assert.doesNotMatch(r.cap.body, /已交付数量 为空时按/, '旧文案「已交付数量 为空时按 0 导入」不得残留');
+  r.app.dispose();
+});
+
+test('预检提示（.130）：涉及订单超过 10 张 → 只列前 10 个并追加「等 N 张」', async () => {
+  const list = [];
+  for (let i = 1; i <= 12; i++) list.push(kdOrder('O-KD' + i, [kdItem('P1', 20, i)]));
+  const r = await precheckBody(list, { P1: { id: 'P1', name: '甲' } }, 'kd-many.xlsx');
+
+  assert.match(r.cap.body, /涉及订单：O-KD1、O-KD2、O-KD3、O-KD4、O-KD5、O-KD6、O-KD7、O-KD8、O-KD9、O-KD10 等 12 张/, '最多列 10 个 + 「等 N 张」');
+  assert.doesNotMatch(r.cap.body, /O-KD11/, '第 11 张之后不再逐个列出');
+  r.app.dispose();
+});
+
+test('预检提示（.130）：本次文件无已交付行 → 仅固定提示，不出现汇总', async () => {
+  const o1 = kdOrder('O-KD1', [kdItem('P1', 20, 0)]);
+  const r = await precheckBody([o1], { P1: { id: 'P1', name: '甲' } }, 'kd-nodv.xlsx');
+
+  assert.match(r.cap.body, /已交付数量不导入系统/, '固定提示仍在（与本次文件内容无关）');
+  assert.doesNotMatch(r.cap.body, /行明细带已交付数量/, '无已交付行 → 不出汇总');
+  r.app.dispose();
 });
 
 /* ================================================================

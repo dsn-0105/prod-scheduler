@@ -57,7 +57,7 @@ tests/
 ├── transfer.helpers.test.js   调拨纯函数：trRevType 冲销反向 / trSide 方向读取 / trSnapOf 台账快照
 ├── transfer.return-cap.test.js 「退回库存」上限口径（.129 = saleMaxCallable）：四类场景 / 单一来源委托 / 退回后不变量
 ├── projection.sync.test.js    投影与回写：订单状态机 / 库存同步 / 入库回写（纯重算 vs 兼容包装）
-├── import.idempotent.test.js  金蝶导入：幂等（重复导入不增生）/ 决策分支 / directDelivered 口径
+├── import.idempotent.test.js  金蝶导入：幂等（重复导入不增生）/ 决策分支 / 导入口径（.130：已交付不落库、不写 directDelivered）
 ├── server.tx.test.js          /api/tx 原子性、回滚、权限（服务端）
 ├── server.canwrite.test.js    canWrite 权限规则 / D1 修复回归（服务端）
 ├── e2e-http.verify.js         真机 HTTP 端到端验收脚本（T03 判据⑥，手动执行）

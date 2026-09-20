@@ -189,6 +189,12 @@ function kdRenameId(base){
   while(orders.some(function(o){return o.id===cand;})){i++;cand=base+'_'+i;}
   return cand;
 }
+/* 2026-09-20.130：预检提示里的数字显示（最多 3 位小数，去掉浮点噪声） */
+function kdNumTxt(v){
+  var n=Number(v);
+  if(!isFinite(n))return '0';
+  return String(Math.round(n*1000)/1000);
+}
 
 function importKingdeeXLSX(e){
   var file=e.target.files[0];
@@ -261,6 +267,14 @@ function kdPrecheckAndShow(list,pm,filename,noOrderId){
   });
   /* 去重 emptyText（同一订单可能客户+合同号都空） */
   var emptyTextUniq=[],seenE={};emptyText.forEach(function(o){if(!seenE[o.id]){seenE[o.id]=1;emptyTextUniq.push(o);}});
+  /* 2026-09-20.130：统计 Excel「已交付 / 已出库数量」仅供预检提示（该数字不落库）。
+     dvLines=带已交付的明细行数、dvTotal=合计数量、dvOrderIds=涉及订单号（按解析顺序） */
+  var dvLines=0,dvTotal=0,dvOrderIds=[];
+  list.forEach(function(o){
+    var hit=0;
+    o.items.forEach(function(it){var q=num(it.deliveredQty)||0;if(q>0){dvLines++;dvTotal+=q;hit++;}});
+    if(hit>0)dvOrderIds.push(o.id);
+  });
   var totalOrders=list.length;
   var issuesCount=emptyTextUniq.length+dateMissing.length+conflict.length+unknown.length+lineSkip.length;
   var ERR_ABS=50,ERR_PCT=0.30;
@@ -270,7 +284,8 @@ function kdPrecheckAndShow(list,pm,filename,noOrderId){
   var blocked=(dateMissing.length>0)||(issuesCount>threshold);
   kdReport={list:list,pm:pm,filename:filename,noOrderId:noOrderId,
     emptyText:emptyTextUniq,dateMissing:dateMissing,conflict:conflict,unknown:unknown,lineSkip:lineSkip,
-    totalOrders:totalOrders,issuesCount:issuesCount,threshold:threshold,blocked:blocked};
+    totalOrders:totalOrders,issuesCount:issuesCount,threshold:threshold,blocked:blocked,
+    dvLines:dvLines,dvTotal:dvTotal,dvOrderIds:dvOrderIds};
   kdState={conflict:{},unknown:{},emptyTextApplied:true};
   kdShowReport();
 }
@@ -290,6 +305,16 @@ function kdShowReport(){
   }else{
     body+='<div style="margin:10px 0;padding:8px 12px;border-radius:8px;background:#f3fbf3;color:#1a7a1a;border:1px solid #c8e6c8;font-size:13px">各项问题可在下方批量处理，确认后即可导入。</div>';
   }
+  /* 2026-09-20.130：金蝶「已交付数量」不再导入订单 —— 固定提示一条（无论本次文件有没有已交付都显示）；
+     若本次文件确有行 deliveredQty>0，再追加汇总（受影响明细行数 / 合计数量 / 涉及订单号）供同事核对。 */
+  body+='<div style="margin:10px 0;padding:8px 12px;border-radius:8px;background:#fdf6e3;color:#8a6d00;border:1px solid #e8d9a0;font-size:13px">';
+  body+='ⓘ <b>已交付数量不导入系统</b>：金蝶的「已交付 / 已出库数量」仅供本报告参考核对，<b>不写入导入订单</b>——导入单的「已交付 / 交付进度」一律从 <b>0</b> 起算（导入单未被调用/交付/报工联动时可直接删除）；如需体现历史交付，请导入后在系统内用「交付」登记。';
+  if(R.dvLines>0){
+    var _dvIds=R.dvOrderIds.slice(0,10).map(function(x){return esc(x);}).join('、');
+    if(R.dvOrderIds.length>10)_dvIds+=' 等 '+R.dvOrderIds.length+' 张';
+    body+='<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e8d9a0">本次文件有 <b>'+R.dvLines+'</b> 行明细带已交付数量（合计 <b>'+kdNumTxt(R.dvTotal)+'</b>），涉及订单：'+_dvIds+'。<b>这些数量不会被导入。</b></div>';
+  }
+  body+='</div>';
   function sec(title,count,inner){
     if(count===0)return '';
     return '<div style="margin-top:12px"><div style="font-weight:600;font-size:13px;margin-bottom:6px">'+title+'（'+count+'）</div>'+inner+'</div>';
@@ -344,7 +369,8 @@ function kdShowReport(){
     body+=sec('明细行跳过（商品编码为空）',R.lineSkip.length,
       '<div style="font-size:12px;color:#666">以下明细行因缺少商品编码将被跳过（不导入）：'+R.lineSkip.map(function(u){return esc(u.o.id+'#'+u.li);}).join('、')+'</div>');
   }
-  body+='<div style="margin-top:10px;font-size:12px;color:#666">提示：数量 / 已交付数量 为空时按 <b>0</b> 导入；金额、单价、税额等字段不导入。</div>';
+  /* 2026-09-20.130：文案随口径更新 —— 数量空按 0；已交付数量不导入系统（见上方黄色提示块） */
+  body+='<div style="margin-top:10px;font-size:12px;color:#666">提示：数量为空时按 <b>0</b> 导入；<b>金蝶已交付数量不导入系统</b>（导入单「已交付 / 交付进度」从 0 起算）；金额、单价、税额等字段不导入。</div>';
   var foot='<button class="btn" onclick="closeModal()">取消</button>'+
     (R.blocked?'<button class="btn btn-primary" disabled style="opacity:.5;cursor:not-allowed">问题过多，无法导入</button>':
       '<button class="btn btn-primary" onclick="kdDoImport()">确认导入（'+R.totalOrders+' 单）</button>');
@@ -466,11 +492,16 @@ async function kdDoImport(){
       }
       /* 落库时回填产品名称/规格/型号（以产品主数据为准，非 Excel 原值） */
       var pp=pm[pid]||{};
-      var _impQty=num(it.orderQty)||0,_impDq=num(it.deliveredQty)||0;
-      /* .108：金蝶导入的已交付无调用支撑（calledQty 恒无），deliveredQty>0 即视为期初直接交付基数 directDelivered——
-         避免 .100 行级上限把全部已交付当作已消耗调用额度、导致后续交付被拦（防新导入数据再入坑） */
-      var _impItem={productId:pid,productName:pp.name||'',spec:pp.spec||'',model:pp.model||'',orderQty:_impQty,deliveredQty:_impDq,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''};
-      if(_impDq>0&&!(num(it.calledQty)>0))_impItem.directDelivered=_impDq;
+      /* 2026-09-20.130：金蝶导入**不带入已交付数量** —— 落库行 deliveredQty 恒为 0。
+         理由：Excel「已出库数量/已交付」是金蝶侧纸面数字，导入单并未在系统内产生任何联动
+         （无调用、无交付、无报工），若带入则被 saleOrderTrace（index.html）判定为「有业务痕迹」
+         而禁止删除。仅改未来导入：存量导入单的 deliveredQty/directDelivered 一律保持原样，
+         不做迁移、不做清洗。
+         连带取消 .108 的「期初直接交付基数 directDelivered」：该字段语义是「有已交付但无调用支撑」
+         的补偿（豁免行级上限），已交付不再导入后对本路径失去意义，故不再写入。
+         注意：Excel 的解析（:140 列名映射 / :239 / :241 明细解析）保留不动 —— 预检报告仍据此提示同事。 */
+      var _impQty=num(it.orderQty)||0;
+      var _impItem={productId:pid,productName:pp.name||'',spec:pp.spec||'',model:pp.model||'',orderQty:_impQty,deliveredQty:0,lineNotes:String(it.lineNotes||''),stockMax:'',stockMin:''};
       items.push(_impItem);
     });
     if(items.length===0){skipCount++;return;}
