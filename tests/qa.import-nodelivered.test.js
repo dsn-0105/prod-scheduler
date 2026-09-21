@@ -540,9 +540,9 @@ test('预检提示：旧文案与旧口径痕迹零残留（防回潮守卫）',
   assert.equal((IMPORT_SRC.match(/directDelivered/g) || []).length, 2, 'import.js 里 directDelivered 仅允许出现在注释中（2 处）');
 });
 
-test('水印锚点：index.html 恰 1 处 build 2026-09-20.132、0 处 .131', () => {
-  assert.equal((INDEX_SRC.match(/build 2026-09-20\.132/g) || []).length, 1, '.132 应恰 1 处');
-  assert.equal((INDEX_SRC.match(/build 2026-09-20\.131/g) || []).length, 0, '旧 .131 应 0 处');
+test('水印锚点：index.html 恰 1 处 build 2026-09-21.133、0 处 .132', () => {
+  assert.equal((INDEX_SRC.match(/build 2026-09-21\.133/g) || []).length, 1, '.133 应恰 1 处');
+  assert.equal((INDEX_SRC.match(/build 2026-09-20\.132/g) || []).length, 0, '旧 .132 应 0 处');
 });
 
 /* ================================================================

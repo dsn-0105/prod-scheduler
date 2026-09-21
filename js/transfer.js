@@ -2,11 +2,14 @@
    依赖全局（留在 index.html）：productPickerModal/orders/products/transfers/save/DB.set/
    syncStockFromInvOrders/syncOrderAutoStatus/logOp/canWriteKey/num/esc/showModal/closeModal/
    renderContent/clearHiddenOrderSel/orderRowVisibleInDom/TBL_SCHEMAS/TBL_ROWS/applyTable/
-   slicePaged/pageSizeOf/pagerHtml/filterBar/thCol/colVal/currentUser/invQtyOf/saleMaxCallable
+   slicePaged/pageSizeOf/pagerHtml/filterBar/thCol/colVal/currentUser/invQtyOf/saleMaxCallable/
+   saleRemainCallable
    外部引用：onclick="csPickInv(...)/openCallStock(...)/openReturnStock(...)/reverseTransfer(...)/openInvCallStock(...)"
    运行时调用本模块全局函数
    2026-09-06.115：调拨方向模型（见下）
-   2026-09-20.129：「退回库存」上限唯一口径 = 全局 saleMaxCallable（见 csReturnCap，严禁在本模块复制公式） */
+   2026-09-20.129：「退回库存」上限唯一口径 = 全局 saleMaxCallable（见 csReturnCap，严禁在本模块复制公式）
+   2026-09-21.133：「调用库存」剩余可调用量唯一口径 = 全局 saleRemainCallable
+     （= max(0, 未交付 − saleMaxCallable)，定义在 index.html）；本模块只委托、严禁复制公式 */
 /* ================================================================
    调拨方向模型（2026-09-06.115）
    - 台账字段从「销售订单/库存订单」（订单类型语义）改为「调出订单/调入订单」（方向语义）：
@@ -114,8 +117,10 @@ function csWarn(li){
   else if(warn)warn.textContent='';
   if(qinp){
     /* 2026-08-25.20：调用数量上限=销售未交付（放开库存可用量，可超调=欠货）
-       2026-09-20.129：退回上限口径修正——由「销售已交付」改为「该行可退回量」（csReturnCap → saleMaxCallable，与 .108 交付侧同源） */
-    const max=__csMode==='call'?(line.orderQty-line.deliveredQty):csReturnCap(line);
+       2026-09-20.129：退回上限口径修正——由「销售已交付」改为「该行可退回量」（csReturnCap → saleMaxCallable，与 .108 交付侧同源）
+       2026-09-21.133：调用上限口径修正——由「销售未交付」改为「该行剩余可调用量」
+       （saleRemainCallable → 未交付 − saleMaxCallable，与 .108 交付侧 / .129 退回侧同源，单一口径委托） */
+    const max=__csMode==='call'?saleRemainCallable(line.it):csReturnCap(line);
     qinp.max=max;
   }
 }
@@ -130,8 +135,9 @@ function csAutoFill(){
     const ci=Number(box.dataset.ci);
     const c=__csCands[ci];if(!c){inp.value=0;return;}
     const line=__csLines.find(function(l){return l.i===li;});if(!line){inp.value=0;return;}
-    /* 2026-08-25.20：调用上限=未交付；2026-09-20.129：退回上限=该行可退回量（csReturnCap，单一口径来源） */
-    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):csReturnCap(line);
+    /* 2026-08-25.20：调用上限=未交付；2026-09-20.129：退回上限=该行可退回量（csReturnCap，单一口径来源）
+       2026-09-21.133：调用上限=该行剩余可调用量（saleRemainCallable，单一口径委托） */
+    const cap=__csMode==='call'?saleRemainCallable(line.it):csReturnCap(line);
     const curAvail=c.available-(used[ci]||0);
     const q=Math.max(0,Math.min(curAvail,cap));
     used[ci]=(used[ci]||0)+q;
@@ -139,7 +145,7 @@ function csAutoFill(){
   });
   document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
 }
-/* 2026-08-25.57：自动填充展开框——按库存可用量（原逻辑）/ 按订单数量（全部行填未交付） */
+/* 2026-08-25.57：自动填充展开框——按库存可用量（原逻辑）/ 按剩余订单数量（全部行填该行剩余可调用量） */
 function csToggleFillMenu(btn){
   const old=document.getElementById('csFillMenu');
   if(old){old.remove();return;}
@@ -147,21 +153,22 @@ function csToggleFillMenu(btn){
   m.id='csFillMenu';
   m.style.cssText='position:fixed;z-index:260;background:var(--bg,#fff);border:1px solid #d1d5db;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);min-width:150px;padding:4px;font-size:13px';
   m.innerHTML='<div class="cs-fill-opt" style="padding:6px 10px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,.06)\'" onmouseout="this.style.background=\'\'" onclick="csAutoFill();csToggleFillMenu()">按库存可用量填充</div>'
-    +'<div class="cs-fill-opt" style="padding:6px 10px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,.06)\'" onmouseout="this.style.background=\'\'" onclick="csFillByOrder();csToggleFillMenu()">按订单数量填充</div>';
+    +'<div class="cs-fill-opt" style="padding:6px 10px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,.06)\'" onmouseout="this.style.background=\'\'" onclick="csFillByOrder();csToggleFillMenu()">按剩余订单数量填充</div>';
   const r=btn.getBoundingClientRect();
   m.style.left=Math.max(8,r.left)+'px';
   m.style.top=(r.bottom+4)+'px';
   document.body.appendChild(m);
 }
-/* 按订单数量填充：所有行的调用数量填为该行未交付数量（超库存可用量=欠货，.20 已放开） */
+/* 按剩余订单数量填充：所有行的调用数量填为该行剩余可调用量（= 未交付 − 已调用未发出；超库存可用量=欠货，.20 已放开） */
 function csFillByOrder(){
   if(!__csLines)return;
   document.querySelectorAll('.cs-qty').forEach(function(inp){
     const li=Number(inp.dataset.li);
     const line=__csLines.find(function(l){return l.i===li;});
     if(!line)return;
-    /* 2026-08-25.20：调用=未交付；2026-09-20.129：退回=该行可退回量（csReturnCap，单一口径来源） */
-    const cap=__csMode==='call'?(line.orderQty-line.deliveredQty):csReturnCap(line);
+    /* 2026-08-25.20：调用=未交付；2026-09-20.129：退回=该行可退回量（csReturnCap，单一口径来源）
+       2026-09-21.133：调用=该行剩余可调用量（saleRemainCallable，单一口径委托，超调行自然填 0） */
+    const cap=__csMode==='call'?saleRemainCallable(line.it):csReturnCap(line);
     inp.value=Math.max(0,cap);
   });
   document.querySelectorAll('.cs-qty').forEach(function(inp){csWarn(Number(inp.dataset.li));});
@@ -175,9 +182,14 @@ function openCallStock(){
   if(!o){alert('未找到订单');return;}
   if(orderTypeOf(o)!=='销售订单'){alert('「调用库存」仅适用于销售订单');return;}
   if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法调用库存');return;}
-  const lines=(o.items||[]).map(function(it,i){return {i:i,productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
-    .filter(function(l){return (l.orderQty-l.deliveredQty)>0;});
-  if(!lines.length){alert('该销售订单所有明细均已交付，无可调用库存');return;}
+  /* 2026-09-21.133：调用侧行级上限口径修正（用户报告的 Bug）——可调用余量 = saleRemainCallable(it)
+     = max(0, 未交付 − saleMaxCallable)（与 .108 交付侧 / .129 退回侧同源）；.133 前误用「未交付」，
+     未扣减已调用 calledQty，导致「已调用 5 再填 38（订单 38）」被放行 → 累计超调。
+     行对象携带 item 引用（it:it），供 saleRemainCallable/csWarn/csAutoFill/csFillByOrder/doCallStock
+     统一委托全局单一口径；既有字段保留不动。 */
+  const lines=(o.items||[]).map(function(it,i){return {i:i,it:it,productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',orderQty:num(it.orderQty),deliveredQty:num(it.deliveredQty)};})
+    .filter(function(l){return saleRemainCallable(l.it)>0;});
+  if(!lines.length){alert('该销售订单所有明细剩余可调用量均为 0，无可调用库存');return;}
   const prodMap={};products.forEach(function(p){prodMap[p.id]=p;});
   const cands=[];
   orders.forEach(function(inv){
@@ -192,24 +204,29 @@ function openCallStock(){
   __csCands=cands;__csLines=lines;__csMode='call';
   let rows='';
   lines.forEach(function(l){
-    const undel=l.orderQty-l.deliveredQty;
+    const undel=Math.max(0,l.orderQty-l.deliveredQty);
+    /* 2026-09-21.133：行提示补「已调用 M · 可调用 K」三个数（与 openReturnStock 的 .129 三数提示风格一致），
+       便于同事核算可调用余量。三个数先取到局部量再拼串：保证本模块正文除「委托全局函数」外不出现口径算式痕迹
+       （QA 静态守卫 B4/B6）。 */
+    const cq=num(l.it.calledQty);
+    const rem=saleRemainCallable(l.it);
     const pm=[l.model,l.spec].filter(Boolean).join(' / ');
     let def=cands.filter(function(c){return c.productId===l.productId;}).sort(function(a,b){return b.available-a.available;})[0];
     /* 2026-08-25.51：下拉改选择框（单选弹窗+筛选）——显示 编码/名称/型号/规格/可用量，默认预填同料号最大可用 */
     const boxHtml=def?('<b>'+esc(def.invOrderId)+'</b> · '+esc(def.productId||'')+(def.productName?' '+esc(def.productName):'')+((def.model||def.spec)?' ['+esc([def.model,def.spec].filter(Boolean).join(' / '))+']':'')+' <span style="color:var(--muted)">可用'+def.available+'</span>')
       :'<span style="color:var(--muted)">（不调用）</span>';
-    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 未交付 '+undel+'</span></td>'
+    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 未交付 '+undel+' · 已调用 '+cq+' · 可调用 '+rem+'</span></td>'
       +'<td style="min-width:260px"><div class="cs-inv-box" data-li="'+l.i+'" data-ci="'+(def?cands.indexOf(def):'')+'" style="background:var(--bg2,transparent);border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;font-size:12px;margin-bottom:4px">'+boxHtml+'</div>'
       +'<div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="csPickInv('+l.i+')">选择</button>'
       +'<button class="btn btn-sm" onclick="csClearInv('+l.i+')">清除</button></div>'
       +'<div class="cs-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td>'
       +'<td><input type="number" class="cs-qty" data-li="'+l.i+'" min="0" value="0" style="width:90px"></td></tr>';
   });
-  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过销售未交付量；可超出库存可用量，超出部分库存订单记欠货（已交付为负）。</p>'
+  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细选择被调用的库存订单（默认同料号，跨料号将提示）。调用数量不可超过该行剩余可调用量（剩余可调用量 = 未交付 − 已调用未发出，与 .108 交付口径同源）；可超出库存可用量，超出部分库存订单记欠货（已交付为负）。</p>'
     +'<div class="table-wrap"><table><thead><tr><th>销售明细</th><th>调用库存订单</th><th>调用数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   __csOrder=o;
   showModal('调用库存 - '+esc(o.id),body,
-    /* 2026-08-25.57：自动填充 + 右侧展开框（按库存可用量 / 按订单数量=填未交付） */
+    /* 2026-08-25.57：自动填充 + 右侧展开框（按库存可用量 / 按剩余订单数量=填该行剩余可调用量） */
     '<span style="position:relative"><button class="btn" onclick="csAutoFill()">自动填充</button>'+
     '<button class="btn" onclick="csToggleFillMenu(this)" title="更多填充方式" style="padding:2px 7px">▾</button></span>'+
     '<button class="btn btn-primary" onclick="doCallStock(__csOrder)">确认调用</button>'+
@@ -228,9 +245,18 @@ async function doCallStock(o){
     if(ci<0){alert('第'+(li+1)+'行未选择库存订单');return;}
     const c=__csCands[ci];
     const line=__csLines.find(function(l){return l.i===li;});
-    const undel=line.orderQty-line.deliveredQty;
-    /* 2026-08-25.20：放开「不超过库存可用量」校验（可超调=库存订单记欠货），仅校验不超过销售未交付 */
-    if(q>undel){alert('调用数量 '+q+' 超过销售未交付 '+undel);return;}
+    /* 2026-08-25.20：放开「不超过库存可用量」校验（可超调=库存订单记欠货），仅校验不超过该行上限
+       2026-09-21.133：硬校验同步改为「该行剩余可调用量」（saleRemainCallable，单一口径委托，与 .108/.129 同源）；
+       错误提示带出 订单数量/已交付/已调用/剩余可调用量 四个数，方便同事理解为什么被拦。
+       四个数先取到局部量再拼串：正文不出现口径算式痕迹（QA 静态守卫 B4/B6）。 */
+    const cap=saleRemainCallable(line.it);
+    if(q>cap){
+      const oq=line.orderQty;
+      const dq=line.deliveredQty;
+      const cq=num(line.it.calledQty);
+      alert('调用数量 '+q+' 超过该行剩余可调用量 '+cap+'（订单数量 '+oq+' / 已交付 '+dq+' / 已调用 '+cq+' / 剩余可调用量 '+cap+'）');
+      return;
+    }
     moves.push({out:{orderId:c.invOrderId,orderType:'inv',lineIdx:c.invLineIdx},in:{orderId:o.id,orderType:'sales',lineIdx:li},qty:q});
     any=true;
   });

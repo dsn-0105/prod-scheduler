@@ -18,7 +18,8 @@
         B3 `csReturnCap` 函数体必须**只**委托 `saleMaxCallable`（不得内联公式）
         B4 `js/transfer.js` 不得出现 `calledQty` 的公式副本（口径单源硬约束）
         B5 退回三处 UI 入口（csWarn 的 max / csAutoFill 的 cap / csFillByOrder 的 cap）都用 `csReturnCap`
-        B6 **调用（call）分支不得被本次修复波及**：仍为 `line.orderQty - line.deliveredQty`
+        B6 **调用（call）分支**：.133 起亦单源化——三处 call 分支必须委托 `saleRemainCallable(line.it)`，
+           不得再内联旧算式 `line.orderQty - line.deliveredQty`（.133 修复了调用侧未扣减 calledQty 的超调 Bug）
      §C 既有行为回归（修复不得破坏）
         C1 `applyTransfers('return')`：销售侧 `max(0, called − q)`、库存侧 `deliveredQty += q`（可负）
         C2 `applyTransfers('call')`：销售侧 `calledQty += q`、库存侧 `deliveredQty −= q`
@@ -279,10 +280,14 @@ test('B5 退回三处 UI 入口（csWarn.max / csAutoFill.cap / csFillByOrder.ca
   });
 });
 
-test('B6 调用（call）分支不得被本次修复波及：仍为 orderQty − deliveredQty', () => {
-  assert.match(FN.csWarn, /__csMode\s*===\s*'call'\s*\?\s*\(\s*line\.orderQty\s*-\s*line\.deliveredQty\s*\)/, 'csWarn 的 call 分支保持原式');
-  assert.match(FN.csAutoFill, /__csMode\s*===\s*'call'\s*\?\s*\(\s*line\.orderQty\s*-\s*line\.deliveredQty\s*\)/, 'csAutoFill 的 call 分支保持原式');
-  assert.match(FN.csFillByOrder, /__csMode\s*===\s*'call'\s*\?\s*\(\s*line\.orderQty\s*-\s*line\.deliveredQty\s*\)/, 'csFillByOrder 的 call 分支保持原式');
+test('B6 调用（call）分支 .133 起单源化：三处均委托 saleRemainCallable(line.it)，不再内联 orderQty−deliveredQty', () => {
+  assert.match(FN.csWarn, /__csMode\s*===\s*'call'\s*\?\s*saleRemainCallable\s*\(\s*line\.it\s*\)/, 'csWarn 的 call 分支须委托 saleRemainCallable(line.it)');
+  assert.match(FN.csAutoFill, /__csMode\s*===\s*'call'\s*\?\s*saleRemainCallable\s*\(\s*line\.it\s*\)/, 'csAutoFill 的 call 分支须委托 saleRemainCallable(line.it)');
+  assert.match(FN.csFillByOrder, /__csMode\s*===\s*'call'\s*\?\s*saleRemainCallable\s*\(\s*line\.it\s*\)/, 'csFillByOrder 的 call 分支须委托 saleRemainCallable(line.it)');
+  /* .133 修复：调用侧不得再内联旧上限算式（口径单源；旧式会漏扣已调用 calledQty） */
+  [FN.csWarn, FN.csAutoFill, FN.csFillByOrder].forEach((b, k) => {
+    assert.doesNotMatch(b, /__csMode\s*===\s*'call'\s*\?\s*\(\s*line\.orderQty\s*-\s*line\.deliveredQty\s*\)/, '第' + k + ' 处不得再内联旧调用上限算式');
+  });
   assert.match(FN.doReturnStock, /applyTransfers\s*\(\s*'return'/, '退回仍以 return 类型落盘');
 });
 
