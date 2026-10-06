@@ -765,7 +765,10 @@ const HARD_FIELDS={
     {key:'orderId',label:'订单编号'},{key:'customer',label:'客户'},{key:'productId',label:'产品编码'},
     {key:'productName',label:'产品名称'},{key:'orderTotal',label:'订单总量'},{key:'delivered',label:'已交付'},
     {key:'undelivered',label:'未交付'},{key:'planQty',label:'本批计划'},{key:'finalDate',label:'最终交付期'},
-    {key:'firstDate',label:'首次交付日'},{key:'notes',label:'备注'}
+    {key:'firstDate',label:'首次交付日'},{key:'notes',label:'备注'},
+    /* 2026-10-06.134：单据头新增「交付计划编号」planNo（系统生成、必填、全局唯一、不可修改）——
+       纳入字段级日志对比以保日志完整；编辑态该值由 doSaveDelivery 原样保留，故不产生噪音日志。 */
+    {key:'planNo',label:'交付计划编号'}
   ],
   prodPlan:[
     {key:'planDate',label:'计划生产日期'},{key:'materialReadyDate',label:'物料齐套时间'},{key:'finalDate',label:'交付期'},{key:'status',label:'状态'},
@@ -841,6 +844,9 @@ const defaultFields={
     {key:'notes',label:'备注',type:'text',required:false,locked:false,level:'head'}
   ],
   delivery:[
+    /* 2026-10-06.134：单据头「交付计划编号」planNo（JFJH-YYYYMMDD-XXXXX，系统生成 · 必填 · 全局唯一 · 不可修改）。
+       置于首位以与交付计划列表第 1 列列序一致；required:true → 导入模板该列表头标红。 */
+    {key:'planNo',label:'交付计划编号',type:'text',required:true,locked:true},
     {key:'orderId',label:'订单编号',type:'text',required:true,locked:true},
     {key:'customer',label:'客户名称',type:'text',required:true,locked:true},
     {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
@@ -2624,6 +2630,45 @@ function migrateDeliveryOrderLine(){
   });
   if(changed){save('deliveries',deliveries);logOp('系统','交付计划','系统迁移：存量交付计划行回填来源订单行索引 orderLine');}
 }
+/* 迁移（2026-10-06.134）：交付计划**字段配置**补齐「交付计划编号」planNo。
+   背景：fields 是**持久化**的——线上已有旧 fields.delivery 配置时，不加本迁移则导出/导入模板
+         不会带上「交付计划编号」列（与 .132 的 calledQty 事故同型：改模板漏改存量配置）。
+   逻辑：确保持久化 fields.delivery 首位含 planNo；缺失则 unshift 到首位；已存在但定义不符则逐项纠正。幂等。 */
+function migrateDeliveryPlanNoField(){
+  if(!fields||!Array.isArray(fields.delivery))return;
+  const DEF={key:'planNo',label:'交付计划编号',type:'text',required:true,locked:true};
+  let changed=false;
+  const i=fields.delivery.findIndex(f=>f&&f.key==='planNo');
+  if(i<0){
+    fields.delivery.unshift(JSON.parse(JSON.stringify(DEF)));
+    changed=true;
+  }else{
+    const f=fields.delivery[i];
+    ['label','type','required','locked'].forEach(k=>{if(f[k]!==DEF[k]){f[k]=DEF[k];changed=true;}});
+    if(i!==0){fields.delivery.splice(i,1);fields.delivery.unshift(f);changed=true;}   /* 列序对齐：编号恒为首列 */
+  }
+  if(changed){save('fields',fields);logOp('系统','交付计划','系统迁移：字段配置补齐「交付计划编号」');}
+}
+/* 迁移（2026-10-06.134）：存量交付计划回填「交付计划编号」planNo（幂等，initApp 中在 migrateDeliveryCreatedAt 之后调用）。
+   口径（用户拍板）：按 createdAt 分组，组内按 deliveries 数组顺序（创建先后）从 00001 递增；
+                     createdAt 缺失兜底 '2026-08-23'。
+   实现单源硬要求：取号**一律复用 nextDeliveryPlanNo**，严禁复制第二份编号公式。
+       其「扫描 deliveries 现取 max+1」+「边赋值边立即可见」→ 天然实现「按日期分组、组内递增」，
+       且与后续新单生成口径 100% 一致（否则回填后新单会与存量撞号）。
+   【返工 P-3】幂等判据由「真值判空」改为 **trim 后判空**：null/undefined/''/'   ' 一律视为缺号，
+       空白值被真实编号**覆盖**（不是保留）——否则 '   ' 为 truthy 会被放过，形成「空白 + 00001」并存，
+       直接打穿「必填」口径。'' 的既有处理（赋号）不变。 */
+function migrateDeliveryPlanNo(){
+  let n=0;
+  deliveries.forEach(d=>{
+    if(!d)return;
+    if(d.planNo!=null&&String(d.planNo).trim()!=='')return;   /* 幂等：已有**非空白**编号的记录一律跳过 */
+    const date=fmtDate(d.createdAt)||'2026-08-23';       /* createdAt 缺失兜底（与 .17 回填口径一致） */
+    d.planNo=nextDeliveryPlanNo(date);
+    n++;
+  });
+  if(n>0){save('deliveries',deliveries);logOp('系统','交付计划','系统迁移：存量交付计划回填交付计划编号 '+n+' 条');}
+}
 /* 旧数据迁移：平铺字段 → items[] */
 /* 【P1·.125·A】纯变更器（只改内存 orders，不写盘）；供 restoreBackup 把 orders 并入同一次 DB.tx。 */
 function migrateOrdersMutation(){
@@ -3087,6 +3132,39 @@ function nextOrderNo(dateStr,type){
     }
   });
   return prefix+String(max+1).padStart(5,'0');
+}
+
+/* 交付计划编号：JFJH-YYYYMMDD-XXXXX（JFJH 固定前缀 · 单据时间去横线 · 当日 5 位序号左补零，每日从 00001 刷新）
+   口径单源：新增保存 / 存量回填迁移 / 导入补号**一律**复用本函数，工程内不得出现第二份编号公式副本。
+   生成策略与既有 nextOrderNo 完全同款：同前缀 max+1；另加去重兜底，防脏数据撞号。
+   【2026-10-06.134 返工 P-2】日期格式守卫：dateStr 不匹配 /^\d{4}-\d{2}-\d{2}$/ 时兜底为 '2026-08-23'
+       （项目既有「未知单据时间」哨兵值，同 saveDelivery / migrateDeliveryCreatedAt 口径）。原因：
+       'abc' → JFJH-abc-00001、'2026-8-5' → JFJH-202685-00001（形似合法、语义是「2026 年 85 月」），
+       都会产出不匹配 /^JFJH-\d{8}-\d{5}$/ 的脏编号。正常路径（saveDelivery 传 todayStr()）恒合法，行为零变化。
+   【2026-10-06.134 返工 I8b·用户批准】读取侧容错：max 扫描与去重集合在比较前先 String(...).trim()，
+       使带外围空白的存量编号（'  JFJH-20260823-00042  '）被正确计数——否则同桶新单会另起 00001，
+       待同桶长到第 42 条时又会生成「trim 后与存量完全相同」的可见重号。
+       ⚠️ 只容错**读取路径**：不 trim 存量数据、不改迁移清洗口径（migrateDeliveryPlanNo 仍只把「纯空白」
+          判为缺号并覆盖，非空含外围空白的既有编号一字不改）。正常路径（编号全干净）行为零变化。 */
+function nextDeliveryPlanNo(dateStr){
+  const _ds=String(dateStr==null?'':dateStr);
+  const d=(/^\d{4}-\d{2}-\d{2}$/.test(_ds)?_ds:'2026-08-23').replace(/-/g,'');
+  const prefix='JFJH-'+d+'-';
+  let max=0;
+  (deliveries||[]).forEach(x=>{
+    const v=(x&&x.planNo!=null)?String(x.planNo).trim():'';   /* I8b：比较/解析前先 trim（不改存量） */
+    if(v.indexOf(prefix)===0){
+      const n=parseInt(v.slice(prefix.length),10);
+      if(!isNaN(n)&&n>max)max=n;
+    }
+  });
+  let n=max+1;
+  /* 去重兜底：编号已存在于 deliveries 的 planNo 集合中则继续 +1，直到不冲突（防御脏数据导致的撞号）；
+     I8b：集合同样以 trim 后的值构建，保证「trim 后等值」不会被重复发号。 */
+  const used={};
+  (deliveries||[]).forEach(x=>{if(x&&x.planNo!=null){const v=String(x.planNo).trim();if(v)used[v]=1;}});
+  while(used[prefix+String(n).padStart(5,'0')])n++;
+  return prefix+String(n).padStart(5,'0');
 }
 
 /* ===== 2026-08-30.97/.98：销售订单「交付/退货」操作（已交付=交付−退货驱动） ===== */
@@ -4093,9 +4171,12 @@ function renderDelivery(){
     const dlListRows=(d)=>{const its=deliveryItems(d).map((it,li)=>({it,li}));const pos=its.filter(x=>num(x.it.planQty)>0);return pos.length>0?pos:its;};
     const rows=[];
     deliveries.forEach(d=>dlListRows(d).forEach(x=>rows.push({d,it:x.it,li:x.li,di:deliveries.indexOf(d)})));
-    /* 2026-08-25.23：单据级汇总字段（订单总量/本批计划/已排产）拆到明细行——单据级仅保留单据属性 6 列；
+    /* 2026-08-25.23：单据级汇总字段（订单总量/本批计划/已排产）拆到明细行——单据级仅保留单据属性 7 列；
        明细级新增「已排产」行级字段（ppPlannedOf 该单据+该产品已排产，排除已取消，不落库实时计算） */
+    /* 2026-10-06.134：单据头新增「交付计划编号」planNo，置于**第 1 列**（勾选框之后、单据时间之前）。
+       ⚠️ 列集合三处必须严格一致：本 schema 前 HEAD_COLS 项 ↔ HEAD_COLS ↔ headHtml 的前 HEAD_COLS 个 <td>。 */
     TBL_SCHEMAS.delivery=[
+      {key:'planNo',label:'交付计划编号',type:'text',get:r=>r.d.planNo},
       {key:'createdAt',label:'单据时间',type:'date',get:r=>r.d.createdAt},
       {key:'orderId',label:'订单编号',type:'text',get:r=>r.d.orderId},
       {key:'customer',label:'客户',type:'text',get:r=>r.d.customer},
@@ -4116,8 +4197,8 @@ function renderDelivery(){
     TBL_ROWS.delivery=rows;
     let shown=applyTable('delivery',rows);
     const dAll=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存，供底部合计行） */
-    /* 单据级列合并（订单管理同款）：前 6 列按单据 rowspan 合并；仅未按明细级列排序时合并，避免明细行打散致 rowspan 断裂 */
-    const HEAD_COLS=6;
+    /* 单据级列合并（订单管理同款）：前 7 列按单据 rowspan 合并；仅未按明细级列排序时合并，避免明细行打散致 rowspan 断裂 */
+    const HEAD_COLS=7;
     const manualSort=tState('delivery').sort;
     const sortKey=manualSort?manualSort.key:null;
     const lineKeys=TBL_SCHEMAS.delivery.slice(HEAD_COLS).map(c=>c.key);
@@ -4154,6 +4235,7 @@ function renderDelivery(){
       const selCell=shouldMerge?(isFirst?'<td class="sel-col" rowspan="'+rs+'"><input type="checkbox" '+selChecked+' data-sel-id="'+di+'" data-sel-form="delivery" onclick="event.stopPropagation();selRowClick(\'delivery\','+di+')"></td>':''):'<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+di+'" data-sel-form="delivery" onclick="event.stopPropagation();selRowClick(\'delivery\','+di+')"></td>';
       let headCells='';
       const headHtml=
+        '<td data-key="planNo" rowspan="'+rs+'">'+esc(d.planNo||'')+'</td>'+
         '<td data-key="createdAt" rowspan="'+rs+'">'+fmtDate(d.createdAt)+'</td>'+
         '<td data-key="orderId" rowspan="'+rs+'" style="font-weight:600">'+esc(d.orderId)+'</td>'+
         '<td data-key="customer" rowspan="'+rs+'">'+esc(d.customer)+'</td>'+
@@ -5348,8 +5430,12 @@ function deliveryModal(idx,prefill){
   const d=prefill!=null?{...prefill}:(idx!=null?{...deliveries[idx]}:{});
   /* 新增且已带订单（如「生成交付计划」）：明细稍后由 deliveryOrderChange 从订单带出，先不渲染 */
   const items=(idx<0&&d.orderId)?[]:deliveryItems(d);
-  /* 表头区：订单/客户/交付参数（订单编号由订单下推生成，不可更改） */
+  /* 表头区：订单/客户/交付参数（订单编号由订单下推生成，不可更改）
+     2026-10-06.134：新增「交付计划编号」只读展示格（系统生成 · 不可修改；新增态提示保存后自动生成） */
+  const _planNoTxt=(idx<0)?'（保存后自动生成）':(d.planNo||'');
   let body='<div class="form-row">'+
+    '<div><label>交付计划编号 <span style="font-weight:400;color:var(--muted);font-size:12px">（系统生成，不可修改）</span></label><input type="text" id="dl_planNo" readonly value="'+esc(_planNoTxt)+'" style="width:100%;background:#f6f8fa;color:var(--muted)"></div>'+
+    '</div><div class="form-row">'+
     '<div><label>订单编号 * <span style="font-weight:400;color:var(--muted);font-size:12px">（由订单下推，不可更改）</span></label><select id="dl_orderId" disabled onchange="deliveryOrderChange()"><option value="">请选择订单</option>'+deliveryOrderOptions(d.orderId)+'</select></div>'+
     '<div><label>客户名称 *</label><input type="text" id="dl_customer" value="'+esc(d.customer)+'"></div>'+
     '</div><div class="form-row">'+
@@ -5412,8 +5498,18 @@ function saveDelivery(idx){
   doSaveDelivery(d,idx);
 }
 function doSaveDelivery(d,idx){
-  if(idx>=0){const oldD=deliveries[idx];deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');}
-  else{deliveries.push(d);logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+')，本批计划交付'+d.planQty);}
+  if(idx>=0){
+    /* 2026-10-06.134：交付计划编号系统生成、不可手动修改 —— 编辑一律保留原编号（显式赋值，
+       防表单未带该值时被抹掉）；老数据万一缺号则按同一口径兜底补号。 */
+    d.planNo=deliveries[idx].planNo||nextDeliveryPlanNo(d.createdAt);
+    const oldD=deliveries[idx];deliveries[idx]=d;logFieldDiffs('交付计划',HARD_FIELDS.delivery,oldD,d,d.orderId+'('+d.customer+')');
+  }
+  else{
+    /* 2026-10-06.134：新增（库存管理「生成交付计划」下推 → 保存）时自动生成编号（口径单源：nextDeliveryPlanNo） */
+    d.planNo=nextDeliveryPlanNo(d.createdAt);
+    deliveries.push(d);
+    logOp('新增','交付计划','新增交付计划「'+d.orderId+'」('+d.customer+') 编号 '+d.planNo+'，本批计划交付'+d.planQty);
+  }
   save('deliveries',deliveries);
   closeModal();
   renderContent();
@@ -6682,6 +6778,10 @@ async function initApp(){
   migrateDeliveryCreatedAt();
   // 存量交付计划行回填 orderLine（订单管理「已计划未交付」按明细行区分，2026-08-25.34）
   migrateDeliveryOrderLine();
+  // 交付计划：字段配置补齐「交付计划编号」planNo（2026-10-06.134，持久化 fields 老库缺键 → 导出/模板不带该列）
+  migrateDeliveryPlanNoField();
+  // 存量交付计划回填「交付计划编号」planNo（2026-10-06.134，须在 migrateDeliveryCreatedAt 之后：依赖 createdAt 已兜底回填）
+  migrateDeliveryPlanNo();
   // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突
   migrateInventoryOrderIds();
   // 订单类型改名：存量「框架订单」→「销售订单」（含历史数据一次性对齐）
@@ -6780,7 +6880,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-09-21.133</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-06.134</div>
 </body>
 </html>
 

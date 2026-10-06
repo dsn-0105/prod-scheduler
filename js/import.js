@@ -48,10 +48,12 @@ function importXLSX(e){
         }
         if(cfg.formKey==='order')newData=groupOrderRows(newData);
         setDataByVar(cfg.varName,newData);
+        /* 2026-10-06.134：交付计划导入后归一化「交付计划编号」（补号 / 重编号）；其余表单行为零改动 */
+        var dnorm=(cfg.formKey==='delivery')?normalizeImportedDeliveryPlanNo():null;
         save(cfg.varName,newData);
-        logOp('导入',cfg.sheet,'导入 '+newData.length+' 条记录到「'+cfg.sheet+'」（覆盖前 '+exist+' 条）');
+        logOp('导入',cfg.sheet,'导入 '+newData.length+' 条记录到「'+cfg.sheet+'」（覆盖前 '+exist+' 条）'+(dnorm?('；交付计划编号补号 '+dnorm.filled+' 条 / 重编号 '+dnorm.renumbered+' 条'):''));
         renderAll();
-        alert('导入成功！共导入 '+newData.length+' 条记录到「'+cfg.sheet+'」。\n\n原有数据已自动备份，可在顶部「恢复」中还原。');
+        alert('导入成功！共导入 '+newData.length+' 条记录到「'+cfg.sheet+'」。'+(dnorm?('\n\n交付计划编号：补号 '+dnorm.filled+' 条，重编号 '+dnorm.renumbered+' 条。'):'')+'\n\n原有数据已自动备份，可在顶部「恢复」中还原。');
       }else{
         /* 全量导入 */
         var plan=[],totalNew=0;
@@ -92,19 +94,56 @@ function importXLSX(e){
           }
           importPreBackup();
         }
+        var dnormTotal={filled:0,renumbered:0};
         plan.forEach(function(p){
           setDataByVar(p.cfg.varName,p.data);
+          /* 2026-10-06.134：交付计划导入后归一化「交付计划编号」（仅 delivery 分支；product/order 行为零改动） */
+          var dnorm=(p.cfg.formKey==='delivery')?normalizeImportedDeliveryPlanNo():null;
+          if(dnorm){dnormTotal.filled+=dnorm.filled;dnormTotal.renumbered+=dnorm.renumbered;}
           save(p.cfg.varName,p.data);
-          logOp('导入',p.cfg.sheet,'全量导入 '+p.data.length+' 条记录');
+          logOp('导入',p.cfg.sheet,'全量导入 '+p.data.length+' 条记录'+(dnorm?('；交付计划编号补号 '+dnorm.filled+' 条 / 重编号 '+dnorm.renumbered+' 条'):''));
         });
         renderAll();
-        alert('导入成功！共导入 '+plan.length+' 个表单的数据。\n\n原有数据已自动备份，可在顶部「恢复」中还原。');
+        var dnormTip=(dnormTotal.filled||dnormTotal.renumbered)?('\n\n交付计划编号：补号 '+dnormTotal.filled+' 条，重编号 '+dnormTotal.renumbered+' 条。'):'';
+        alert('导入成功！共导入 '+plan.length+' 个表单的数据。'+dnormTip+'\n\n原有数据已自动备份，可在顶部「恢复」中还原。');
       }
     }catch(err){alert('导入失败：'+err.message+'\n\n请确认文件为 .xlsx 格式。');}
     importFormKey='';
     e.target.value='';
   };
   reader.readAsArrayBuffer(file);
+}
+
+/* ================================================================
+   交付计划编号导入兜底（2026-10-06.134）
+   背景：交付计划支持 xlsx 覆盖导入（表头按 fields.delivery 映射），导入进来的记录可能缺号或撞号。
+   口径单源（硬约束）：取号**一律复用** index.html 的全局 nextDeliveryPlanNo
+       （格式 JFJH-YYYYMMDD-XXXXX，同前缀 max+1 + 去重兜底），本模块**不复制**任何编号公式。
+       可见性已实测：js/import.js 与 index.html 主脚本处于同一作用域，运行时全局函数可解析，
+       故**无需**「极薄兜底扫描」——避免与 QA 的「口径副本」静态守卫冲突。
+   规则：缺失 planNo → 自动补号（日期取 createdAt，缺失兜底 '2026-08-23'）；
+         重复 planNo → 保留首次出现，后续重复项重新分配新号。
+   【返工 P-3】与 index.html 的 migrateDeliveryPlanNo 同源同修：判空一律 **trim 后判空**——
+       null/undefined/''/'   ' 均视为缺号并计入「补号」；非空值把 **trim 后的干净值写回** d.planNo
+       （'  JFJH-...  ' 落库为 'JFJH-...'），避免空白编号留存又不占号（形成「空白 + 00001」并存）。
+   返回 {filled, renumbered} 供导入成功提示与操作日志复用。
+================================================================ */
+function normalizeImportedDeliveryPlanNo(){
+  if(!Array.isArray(deliveries)||!deliveries.length)return {filled:0,renumbered:0};
+  var seen={},filled=0,renumbered=0;
+  deliveries.forEach(function(d){
+    if(!d||typeof d!=='object')return;
+    var no=d.planNo==null?'':String(d.planNo).trim();   /* P-3：trim 后判空（空白 = 缺号） */
+    if(no&&!seen[no]){
+      seen[no]=1;                                        /* 首次出现：保留（导入编号优先） */
+      if(no!==d.planNo)d.planNo=no;                       /* P-3：归一化外围空白，落库为干净值 */
+      return;
+    }
+    var next=nextDeliveryPlanNo(d.createdAt||'2026-08-23');
+    d.planNo=next;seen[next]=1;
+    if(no)renumbered++;else filled++;
+  });
+  return {filled:filled,renumbered:renumbered};
 }
 
 /* ================================================================
