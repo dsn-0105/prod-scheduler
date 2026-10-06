@@ -50,7 +50,18 @@ function pushLogEntry(entry){
    仅把「何时落盘」由「每次同步调用」改为「同段末合并一次」。
    安全性：`.125` 四个事务写入点（bulkDelete / delProdPlan / confirmClear / restoreBackup）走的是
    `pushLogEntry` + 单次 `DB.tx([...,{key:'logs',value:logs}])`，**不调 logOp** → 不经本路径、不受影响。
-   已知残留（本轮不处理）：两个不同用户浏览器**跨进程**同时写 logs，仍可能丢一条。 */
+   已知残留（本轮未处理，完整登记见 docs/系统知识.md §8 L4~L6）：
+     ① 两个不同用户浏览器**跨进程**同时写 logs，仍可能丢一条（合并只覆盖同一浏览器内的同段重复写）；
+     ② **同用户的相邻同步段**亦可能丢：`DB.set` 的 `expectedRev` 在**调用瞬间**取值、`serverRevs[k]`
+        只在响应回来后刷新，故两段之间若上一次响应未回，第二次 flush 仍会 409 且被静默吞掉；
+        线上 `initApp` 内各 logOp 前后均为整轮网络 `await`（响应来得及回），触发本 bug 的那两次迁移
+        也确认在**同一段**内、已被合并覆盖 —— 属既有语义、非本轮回归；
+     ③ 单段 ≥500 次 `logOp`（= LOG_MAX）时，合并写提交的是「500 条全新条目」，没有任何后缀能与服务端
+        旧值前缀匹配 → 服务端 `logsAppendOK` 无 p 命中 → 整段被拒，且客户端内存此时已不含服务端任何
+        条目 → 此后每段写持续被拒（粘性，须刷新页面重新 `DB.get('logs')` 才恢复）。
+        边界实测：单段新条目 K≤499 放行、K≥500 拒绝。**2026-10-06 线上实测：订单总数 159、
+        单次可翻转上限 153 ≪ 500 → 当前不可达**（唯一批量产生者是 recomputeOrderAutoStatus 的
+        changed.forEach(logOp)）；**订单总数接近 500 时须重新评估本条**。 */
 let logFlushPending=false;
 function scheduleLogFlush(){
   if(logFlushPending)return;
