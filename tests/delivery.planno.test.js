@@ -48,8 +48,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createApp, ROOT } = require('./harness/sandbox');
+/* 【.135】权威水印单一来源：BUILD/PREV 只在 tests/harness/build.js 维护，本文件不再写字面量 */
+const { BUILD, PREV, buildMarkRe, buildAnyRe } = require('./harness/build');
 
 const INDEX_SRC = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+/* 【.135】排空微任务：js/logs.js 的 logOp 落盘自 .135 起**推迟到一个微任务**（同段合并），
+   故「同步段内调用 → 立刻断言落盘次数」的用例必须先排空。用 setImmediate 而非
+   `await Promise.resolve()`，确保所有已排队微任务（含连锁）全部跑完再断言。 */
+function drain() { return new Promise(function (r) { setImmediate(r); }); }
 const IMPORT_SRC = fs.readFileSync(path.join(ROOT, 'js', 'import.js'), 'utf8');
 
 /** 跨 realm 值转成本 realm 纯值（vm 返回的对象原型属于 vm realm） */
@@ -258,11 +265,13 @@ test('B4 回填：全部已有编号 / 空库 → 零写入（不落盘、不写
   app2.dispose();
 });
 
-test('B5 回填：有改动时恰好写 1 次 deliveries + 1 次 logs，日志文案含条数', () => {
+test('B5 回填：有改动时恰好写 1 次 deliveries + 1 次 logs，日志文案含条数', async () => {
   const app = createApp({ seed: { deliveries: [dl('K1', '2026-08-23'), dl('K2', '2026-08-23')] } });
   app.run('migrateDeliveryPlanNo()');
+  /* 【.135】日志条目在同步段内已入内存，落盘推迟到微任务；排空后再断言（仍是「恰 1 次」口径） */
+  await drain();
   assert.equal(app.recorder.countOf('deliveries'), 1, '一次落盘');
-  assert.equal(app.recorder.countOf('logs'), 1, '一条迁移日志');
+  assert.equal(app.recorder.countOf('logs'), 1, '一条迁移日志（.135 同段合并后仍恰 1 次）');
   const logs = plain(app.getGlobal('logs'));
   assert.match(String(logs[0].detail), /系统迁移：存量交付计划回填交付计划编号 2 条/, '日志须写明回填条数');
   app.dispose();
@@ -338,7 +347,7 @@ test('B9【返工 P-2/P-3】脏 createdAt + 空白 planNo 叠加：落库编号�
 /* ================================================================
    §C migrateDeliveryPlanNoField —— 持久化字段配置补齐（导出/模板列的前提）
    ================================================================ */
-test('C1 老库 fields.delivery 缺 planNo → unshift 到首位，并落盘 fields', () => {
+test('C1 老库 fields.delivery 缺 planNo → unshift 到首位，并落盘 fields', async () => {
   const app = createApp({
     seed: { fields: { delivery: [
       { key: 'orderId', label: '订单编号', type: 'text', required: true, locked: true },
@@ -346,12 +355,14 @@ test('C1 老库 fields.delivery 缺 planNo → unshift 到首位，并落盘 fie
     ] } },
   });
   app.run('migrateDeliveryPlanNoField()');
+  /* 【.135】排空微任务后再断言 logs 落盘次数（logOp 落盘已改为同段合并） */
+  await drain();
   const f = plain(app.getGlobal('fields')).delivery;
   assert.deepEqual(f.map(function (x) { return x.key; }), ['planNo', 'orderId', 'planQty'], 'planNo 必须在第 1 位');
   assert.deepEqual(f[0], { key: 'planNo', label: '交付计划编号', type: 'text', required: true, locked: true },
     '必须与 defaultFields.delivery[0] 定义一致（required=true → 导入模板标红；locked=true → 不可删除）');
   assert.equal(app.recorder.countOf('fields'), 1, '一次落盘 fields');
-  assert.equal(app.recorder.countOf('logs'), 1, '一条迁移日志');
+  assert.equal(app.recorder.countOf('logs'), 1, '一条迁移日志（.135 同段合并后仍恰 1 次）');
   app.dispose();
 });
 
@@ -804,9 +815,9 @@ test('I4 导出/模板：planNo 经持久化 fields.delivery 自然纳入（导�
   app.dispose();
 });
 
-test('I5 水印：权威水印恰 1 处 build 2026-10-06.134，且注释里无同名带 < 形态（deploy.sh 精确匹配）', () => {
-  assert.equal((INDEX_SRC.match(/>build 2026-10-06\.134</g) || []).length, 1, '权威水印应恰 1 处');
-  assert.equal((INDEX_SRC.match(/build 2026-09-21\.133/g) || []).length, 0, '旧 .133 应 0 处');
+test('I5 水印：权威水印恰 1 处 build '+BUILD+'，且注释里无同名带 < 形态（deploy.sh 精确匹配）', () => {
+  assert.equal((INDEX_SRC.match(buildMarkRe(BUILD)) || []).length, 1, '权威水印应恰 1 处');
+  assert.equal((INDEX_SRC.match(buildAnyRe(PREV)) || []).length, 0, '上一版本 '+PREV+' 应 0 处');
 });
 
 test('I6 表单只读：交付计划编号在弹窗内为 readonly（“不可手动修改”）', () => {

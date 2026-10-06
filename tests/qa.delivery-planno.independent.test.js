@@ -13,7 +13,7 @@
      V7  表单只读与编辑保全（真实渲染弹窗 HTML + 篡改注入）
      V8  导出与模板（真实调用 exportForm / downloadTemplate，捕获表头）
      V9  导入兜底（真实驱动 importXLSX 全流程：假 FileReader + 打桩 XLSX.parse）
-     V10 线上真实 tblLayout 列序下的实际列位置 + rowspan 合并不破裂（真实跑 applyTableLayout）
+     V10 【机制锚点】历史 tblLayout 列序（.134 线上快照，不含 planNo）下的追加位置 + rowspan 合并不破裂（真实跑 applyTableLayout）
      V11 水印锚点 / 残留 / git 工作树
 
    运行：node --test tests/qa.delivery-planno.independent.test.js
@@ -26,6 +26,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { createApp, ROOT, extractInlineScripts } = require('./harness/sandbox');
+/* 【.135】权威水印单一来源：BUILD/PREV 只在 tests/harness/build.js 维护，本文件不再写字面量 */
+const { BUILD, PREV, buildMarkRe, buildAnyRe } = require('./harness/build');
 
 const INDEX_SRC = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const IMPORT_SRC = fs.readFileSync(path.join(ROOT, 'js', 'import.js'), 'utf8');
@@ -869,10 +871,12 @@ test('V9-4【第3轮·反虚设】口径守卫：真公式副本必命中 / 仅�
 });
 
 /* ================================================================
-   V10 线上真实列布局场景（重点）：planNo 实际列位置 + rowspan 合并不破裂
+   V10 历史列布局场景（.134 线上快照，重点）：新列追加位置 + rowspan 合并不破裂
+        —— 机制锚点，非现阶段线上列序（.135 起线上 planNo 已在首位）
    ================================================================ */
 
-/** 线上 data.json 的 tblLayout.delivery.order 真实值（不含 planNo） */
+/** 线上 data.json 在 **.134 部署前**的 tblLayout.delivery.order 真实值（不含 planNo）；
+    .135 起线上该列序已改（用户手动把 planNo 拖到首位、orderId 移至末位）——本常量固化的是历史快照 */
 const PROD_ORDER = ['createdAt', 'orderId', 'customer', 'productName', 'ppStatus', 'productId', 'spec',
   'model', 'lineNotes', '_planQty', '_ppPlanned', 'orderQty', 'deliveredQty', '_undel', 'firstDate', 'finalDate'];
 
@@ -1001,7 +1005,14 @@ test('V10-1 无自定义布局（tblLayout 空）：planNo 位于勾选框之后
   app.dispose();
 });
 
-test('V10-2 线上真实 tblLayout（order 不含 planNo）：planNo 被追加到最末列，不满足「第 1 列」需求', () => {
+test('V10-2 applyTableLayout 追加机制：已存 order 不含新键时 planNo 被追加到最末列（机制锚点，非线上现状）', () => {
+  /* 【.135 口径订正】本用例断言的是 `applyTableLayout` 的**通用追加机制**（已存顺序过滤仍存在的 +
+     新增列按当前顺序追加到末尾），该机制自 .134 起未变，故断言原样保留、仍然有效。
+     ⚠️ 但它**不再代表线上现状**：.134 部署后用户已**自行在页面上把 planNo 拖到首位**，线上
+     `tblLayout.delivery.order` 现为 17 列、`planNo` 在首位、`orderId` 移至末位（2026-10-06；
+     docs/系统知识.md §8 L1 已关闭）。故原措辞「线上真实 tblLayout … 不满足需求」已失真，改为机制口径。
+     **保留价值**：若日后要把某个新列直接指定为首列，仍须同步迁移 `tblLayout[m].order`（而非改
+     `applyTableLayout` 通用逻辑）——本用例正是这条规则的保护网。 */
   const app = app0({ deliveries: PROD_SEED, tblLayout: { delivery: { order: PROD_ORDER.slice(), widths: {} } } });
   const p = renderDeliveryWithProbe(app);
 
@@ -1018,11 +1029,11 @@ test('V10-2 线上真实 tblLayout（order 不含 planNo）：planNo 被追加�
   console.log('---- V10 线上布局 applyTableLayout 后首个数据行列序 ----');
   console.log(JSON.stringify(bodyKeys));
 
-  /* 【QA 结论·缺陷】已存 order 过滤仍存在的 + 新增列按当前顺序追加到末尾
-     → planNo 被追加到最末，用户口径「第 1 列（最左）」在线上真实场景下不成立。 */
-  assert.equal(headKeys.indexOf('planNo'), headKeys.length - 1, '当前行为：表头 planNo 落到最末列');
-  assert.equal(bodyKeys.indexOf('planNo'), bodyKeys.length - 1, '当前行为：数据行 planNo 落到最末列');
-  assert.notEqual(headKeys.indexOf('planNo'), 0, '当前行为：planNo 不是第 1 数据列');
+  /* 【机制结论】已存 order 过滤仍存在的 + 新增列按当前顺序追加到末尾
+     → 已存布局不含新键时，该新列必然落在最末（这正是「新增列默认位置」的成因）。 */
+  assert.equal(headKeys.indexOf('planNo'), headKeys.length - 1, '机制行为：表头 planNo 落到最末列');
+  assert.equal(bodyKeys.indexOf('planNo'), bodyKeys.length - 1, '机制行为：数据行 planNo 落到最末列');
+  assert.notEqual(headKeys.indexOf('planNo'), 0, '机制行为：planNo 不是第 1 数据列');
   /* 已存列序整体保留（除 planNo 外，order 中 16 列按原顺序在前；首格 null = 选择列表头） */
   const headKeysNoSel = headKeys.filter(function (k) { return k !== null; });
   assert.deepEqual(headKeysNoSel.slice(0, 16), PROD_ORDER, '已存 16 列顺序必须完整保留');
@@ -1031,7 +1042,7 @@ test('V10-2 线上真实 tblLayout（order 不含 planNo）：planNo 被追加�
   app.dispose();
 });
 
-test('V10-3 线上真实列序下 rowspan 合并不破裂（网格化验证列对齐）', () => {
+test('V10-3 历史列序（.134 线上快照）下 rowspan 合并不破裂（网格化验证列对齐）', () => {
   const app = app0({ deliveries: PROD_SEED, tblLayout: { delivery: { order: PROD_ORDER.slice(), widths: {} } } });
   const p = renderDeliveryWithProbe(app);
   app.run('applyTableLayout()');
@@ -1099,11 +1110,14 @@ test('V10-3 线上真实列序下 rowspan 合并不破裂（网格化验证列�
    V11 水印 / 残留 / 工作树
    ================================================================ */
 
-test('V11-1 权威水印恰 1 处 >build 2026-10-06.134<；旧 .133 权威形态 0 处', () => {
-  assert.equal((INDEX_SRC.match(/>build 2026-10-06\.134</g) || []).length, 1, '.134 权威形态应恰 1 处');
-  assert.equal((INDEX_SRC.match(/>build 2026-09-21\.133</g) || []).length, 0, '旧 .133 权威形态应 0 处');
-  /* deploy.sh 的提取口径：注释里的 build 字样不得带 '<' 后缀造成重复计数 */
+test('V11-1 权威水印恰 1 处 >build '+BUILD+'<；上一版本 '+PREV+' 权威形态 0 处', () => {
+  assert.equal((INDEX_SRC.match(buildMarkRe(BUILD)) || []).length, 1, BUILD+' 权威形态应恰 1 处');
+  assert.equal((INDEX_SRC.match(buildMarkRe(PREV)) || []).length, 0, '上一版本 '+PREV+' 权威形态应 0 处');
+  /* 任意版本的权威形态全文件只能 1 处（deploy.sh 的提取口径：注释里的 build 字样不得带 '<' 后缀造成重复计数） */
   assert.equal((INDEX_SRC.match(/>build 20\d\d-\d\d-\d\d\.\d+</g) || []).length, 1, '全文件权威水印形态只能有 1 处');
+  /* 反向守卫：BUILD 与 index.html 实际水印必须相等（防 harness 常量忘记随版本推进而「测了个寂寞」） */
+  const actual = (INDEX_SRC.match(/>build (20\d\d-\d\d-\d\d\.\d+)</) || [])[1];
+  assert.equal(actual, BUILD, 'index.html 水印须与 tests/harness/build.js 的 BUILD 一致');
 });
 
 test('V11-2 initApp 迁移接线顺序：createdAt → orderLine → planNoField → planNo', () => {

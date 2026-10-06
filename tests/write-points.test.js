@@ -465,6 +465,10 @@ test('④ 投影函数已是纯重算：recompute* 只改内存，sync* 兼容�
   /* --- 兼容包装 syncOrderAutoStatus：变化时落盘 orders（日志由 recompute 先发，两表互不影响） --- */
   app.recorder.reset();
   await app.run('orders[1].status="执行中"; syncOrderAutoStatus();');
-  assert.deepEqual(plain(app.recorder.of('save').map((c) => c.key)), ['logs', 'orders']);
+  /* 【.135】logOp 落盘改为「同段合并」（微任务延迟）→ logs 不再先于 orders；顺序不再是不变量，
+     改为「各恰一次」断言（两表本就是两次独立写、非原子）。 */
+  assert.deepEqual(plain(app.recorder.of('save').map((c) => c.key)).slice().sort(), ['logs', 'orders'],
+    '两表各写一次（.135 起不锁顺序）');
+  assert.equal(app.recorder.countOf('orders'), 1, '恰 1 次 orders 落盘');
   assert.equal(await app.run('orders[1].status'), '已完成');
 });

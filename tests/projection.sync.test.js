@@ -182,7 +182,12 @@ test('订单状态机：silent=true 时连日志都不记（存量初始化批�
 test('订单状态机包装：有变更落盘 orders，无变更一字不写', async () => {
   const app1 = recApp({ orders: [invOrder('O-DONE', [invLine('P1', 100, 100)])] });
   assert.equal(await app1.run('syncOrderAutoStatus()'), 1);
-  assert.deepEqual(savedKeys(app1), ['logs', 'orders'], '日志先发（recompute 内），随后落盘 orders');
+  /* 【.135】logOp 落盘改为「同段合并」（微任务延迟）→ logs 不再先于 orders 落盘。
+     两表写入顺序**不再是不变量**（该包装本就是两次独立写、非原子，顺序从未被依赖），
+     故此处只断言「各恰一次」，不锁顺序。 */
+  assert.equal(app1.recorder.countOf('logs'), 1, '恰 1 次日志落盘');
+  assert.equal(app1.recorder.countOf('orders'), 1, '恰 1 次 orders 落盘');
+  assert.deepEqual(savedKeys(app1).slice().sort(), ['logs', 'orders'], '两表各写一次（顺序不作断言）');
   app1.dispose();
 
   const app2 = recApp({ orders: [invOrder('O-OPEN', [invLine('P1', 10, 100)])] });

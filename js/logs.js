@@ -9,7 +9,11 @@
      · 新增 makeLogEntry()（只造条目，不写盘、不入内存）与 pushLogEntry()（只入内存，不写盘），
        供「多表原子写」路径复用：调用方把日志条目先入内存，再把 logs 并入**同一次** DB.tx
        （.125：bulkDelete / delProdPlan / confirmClear / restoreBackup 四处多表写点），
-       从而不再出现「N 条日志 = N 次独立 save」的分步写。 */
+       从而不再出现「N 条日志 = N 次独立 save」的分步写。
+
+   【build 2026-10-06.135】logOp 落盘改为**同段合并**（微任务延迟，scheduleLogFlush）：
+     原来每次 logOp 都整表覆盖写 logs，同一同步段内两次调用必有一次吃乐观锁 409 且被 silent 静默吞掉
+     （线上实证丢条 + journal 累计 195 次冲突）。修法详见 logOp 上方大段注释——签名与外部语义不变。 */
 let logs=[];
 /* 固定格式 'YYYY-MM-DD HH:mm:ss'（本地时区）；d 缺省 = now */
 function logTimeStr(d){
@@ -33,12 +37,35 @@ function pushLogEntry(entry){
   if(logs.length>500)logs=logs.slice(0,500);
   return entry;
 }
+/* 【build 2026-10-06.135】同一次同步执行内的多次 logOp 合并为**一次**落盘（微任务延迟）。
+   事故背景（线上实测坐实）：logOp 每次都 `save('logs',logs,true)` —— 对共享 logs 表**整表覆盖写**。
+   同一同步段内两次调用 → 第二条携带**过期 rev** → 服务端乐观锁 409 冲突拦截 → 因 silent=true
+   被**静默吞掉**（不弹窗、不重试）→ 该条审计记录**永久丢失**。
+   实证：2026-10-06 12:53:47 `[冲突拦截] key=logs user=admin expectedRev=0 curRev=1`；
+   被吞掉的正是「存量交付计划回填交付计划编号 62 条」那条（**回填本身成功、业务数据无损，仅日志缺条**）：
+   `migrateDeliveryPlanNoField()` 与 `migrateDeliveryPlanNo()` 在同一次 initApp 内各 logOp 一次即触发。
+   journal 保留期内 logs 表冲突累计 **195 次**（orders 1 / productionPlans 8，后两者非静默、有提示）。
+   修法：落盘推迟到一个微任务；期间到达的 logOp 只入内存，到点用**当时最新**的 logs 与 rev 落盘一次。
+   口径不变（重要）：签名、条目结构、logUserName、截断 500、silent 语义**一律不动**，
+   仅把「何时落盘」由「每次同步调用」改为「同段末合并一次」。
+   安全性：`.125` 四个事务写入点（bulkDelete / delProdPlan / confirmClear / restoreBackup）走的是
+   `pushLogEntry` + 单次 `DB.tx([...,{key:'logs',value:logs}])`，**不调 logOp** → 不经本路径、不受影响。
+   已知残留（本轮不处理）：两个不同用户浏览器**跨进程**同时写 logs，仍可能丢一条。 */
+let logFlushPending=false;
+function scheduleLogFlush(){
+  if(logFlushPending)return;
+  logFlushPending=true;
+  Promise.resolve().then(function(){
+    logFlushPending=false;
+    save('logs',logs,true);   /* 取「当时最新」的 logs 与 rev */
+  });
+}
 function logOp(action,target,detail,field,oldv,newv){
   pushLogEntry(makeLogEntry(action,target,detail,field,oldv,newv));
   /* 【P1】.124：silent=true —— 日志是 best-effort 副作用，不能因为 logs 表的乐观锁 409
      让用户看到「本次保存未生效」的假告警（他的主业务其实已经成功）。
      silent 下 DB.set 的 409 分支只 pullAll 刷新 revs（下次写自动恢复）而不弹窗。 */
-  save('logs',logs,true);
+  scheduleLogFlush();
 }
 /* 【P1】.124：清空日志为 admin 专属（服务端会拒绝非 admin 的整表清空/缩减）。
    前端同步收敛：非 admin 不渲染「清空日志」按钮，避免点了才吃 403。 */

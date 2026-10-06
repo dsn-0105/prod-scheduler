@@ -23,6 +23,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createApp } = require('./harness/sandbox');
+/* 【.135】权威水印单一来源：BUILD/PREV 只在 tests/harness/build.js 维护，本文件不再写字面量 */
+const { BUILD, PREV, buildAnyRe } = require('./harness/build');
 
 const ROOT = path.join(__dirname, '..');
 const IMPORT_JS = path.join(ROOT, 'js', 'import.js');
@@ -540,10 +542,10 @@ test('预检提示：旧文案与旧口径痕迹零残留（防回潮守卫）',
   assert.equal((IMPORT_SRC.match(/directDelivered/g) || []).length, 2, 'import.js 里 directDelivered 仅允许出现在注释中（2 处）');
 });
 
-test('水印锚点：index.html 恰 1 处 build 2026-10-06.134、0 处 .133', () => {
-  /* 2026-10-06.134（交付计划编号 planNo 批次）：权威水印随版本推进至 .134，本锚点同步前移 */
-  assert.equal((INDEX_SRC.match(/build 2026-10-06\.134/g) || []).length, 1, '.134 应恰 1 处');
-  assert.equal((INDEX_SRC.match(/build 2026-09-21\.133/g) || []).length, 0, '旧 .133 应 0 处');
+test('水印锚点：index.html 恰 1 处 build '+BUILD+'、0 处上一版本 '+PREV, () => {
+  /* .135：权威水印随版本推进前移；锚点值不再硬编码，改引 tests/harness/build.js 单一来源 */
+  assert.equal((INDEX_SRC.match(buildAnyRe(BUILD)) || []).length, 1, BUILD+' 应恰 1 处');
+  assert.equal((INDEX_SRC.match(buildAnyRe(PREV)) || []).length, 0, '上一版本 '+PREV+' 应 0 处');
 });
 
 /* ================================================================
