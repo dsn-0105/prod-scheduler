@@ -23,7 +23,10 @@ let fail = 0;
 
 function checkFile(abs, label) {
   try {
-    execFileSync(process.execPath, ['--check', abs], { stdio: 'pipe' });
+    /* stdio 用 ['ignore','pipe','pipe'] 而非 'pipe'：==='pipe' 会为子进程同时创建 **stdin** 管道，
+       本机环境在创建 stdin 管道时报 EBUSY，导致 8 个检查全部假失败（bash 里裸 node --check 全 OK）。
+       `node --check` 不读 stdin，忽略之行为零变化。 */
+    execFileSync(process.execPath, ['--check', abs], { stdio: ['ignore', 'pipe', 'pipe'] });
     console.log('OK   ' + label);
     return true;
   } catch (e) {
