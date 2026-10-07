@@ -2568,6 +2568,48 @@ async function repairOrphanTransferLineIdx(){
   logOp('系统','调拨台账','系统修复：孤儿台账行号对齐 '+fixed.length+' 条（'+fixed.map(f=>f.id+' '+f.order+' 行'+f.from+'→'+f.to).join('；')+'）'+(cq?('；按台账净额重算已调用 '+cq+' 行'):''));
   if(skipped.length)logOp('系统','调拨台账','系统修复：以下孤儿台账行号无法唯一确定，保留原样待人工核对——'+skipped.join('；'));
 }
+/* 2026-10-07.138：排产单「来源交付计划」索引漂移修复（一次性·幂等·事故数据修复）。
+   事故（用户 2026-10-07 报告）：C04.03.008 库存管理「已计划未交付」显示 0，但排产单里还有 200 台；
+   C02.02.026 数据全错。取证结论——报工回写订单「已交付」本身准确（20 样本 19 例分毫不差），
+   坏的是「已计划未交付 / 结余」的归集链路，两个根因叠加：
+     R1（.137 已防复发）deliveries 删除只做 splice、全工程无重排 productionPlans[].deliveryIdx
+        → 每删一张交付计划，其后排产单引用集体前移一位，绑到**别人的交付计划**；
+     R2（.138 已收口）done 归集按 dlLine 直取交付行不校验产品 → 别产品完成量灌进本行。
+   本迁移把**存量**错位引用一次性绑回正确交付计划（判定见 ppDlLinkDecide，纯函数）：
+     ① 只改 productionPlans[].deliveryIdx / deliveryPlanNo 两个字段；不触碰报工流水 / 交付数量 /
+        订单已交付 / 计划量 / 交付计划本身 / 调拨台账
+     ② 无法唯一确定的（零候选 / 多候选且归集口径不等价）**保持原样**并记日志，交人工核对
+     ③ meta.fixProdPlanDlIdx20261007 标记一次性（幂等：外键齐备后二次运行零变更）；
+        productionPlans 一次 DB.tx 原子提交，失败 → 标记复位，下次启动幂等重试 */
+async function rebindProdPlanDlIdx(){
+  if(!meta||meta.fixProdPlanDlIdx20261007)return;
+  const moves=[],manuals=[];
+  let nIdx=0,nNo=0;
+  productionPlans.forEach(p=>{
+    const r=ppDlLinkDecide(p);
+    if(r.act==='skip')return;
+    if(r.act==='manual'){manuals.push(p.id+'（订单 '+p.orderId+'：'+r.level+'）');return;}
+    const to=(r.to==null)?null:r.to;
+    const no=(to==null)?null:(String((deliveries[to]&&deliveries[to].planNo)||'')||null);
+    const chIdx=(p.deliveryIdx!==to);
+    const chNo=(String(p.deliveryPlanNo||'')!==String(no||''));
+    if(!chIdx&&!chNo)return;
+    p.deliveryIdx=to;
+    p.deliveryPlanNo=no;
+    if(chIdx){nIdx++;moves.push(p.id+' '+(r.from==null?'null':r.from)+'→'+(to==null?'null':to)+(no?('['+no+']'):''));}
+    else nNo++;
+  });
+  meta.fixProdPlanDlIdx20261007=true;
+  if(moves.length||nNo){
+    const ok=await DB.tx([{key:'productionPlans',value:productionPlans}],true);
+    if(!ok){meta.fixProdPlanDlIdx20261007=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
+    const head=moves.slice(0,20).join('；')+(moves.length>20?('；…等共 '+moves.length+' 张'):'');
+    logOp('系统','排产计划','系统修复：排产单来源交付计划索引重绑 '+nIdx+' 张、回填稳定外键 '+nNo+' 张'+(nIdx?('（'+head+'）'):''));
+  }
+  save('meta',meta);
+  /* 留人工的提示必须**独立落日志**：自动重绑为空时（全是多解）同样要有人能看到（.138 测试抓到） */
+  if(manuals.length)logOp('系统','排产计划','系统修复：以下排产单来源无法唯一确定，保留原样待人工核对——'+manuals.join('；'));
+}
 function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
   if(changed){
@@ -2811,19 +2853,11 @@ function buildPlannedUndelMap(){
     productionPlans.forEach(pp=>{
       if(ppDlIdxOf(pp)!==di||pp.status==='已取消')return;
       ppItems(pp).forEach(y=>{
-        /* 2026-08-25.54：存量排产单（无 dlLine）按 productId 反查该交付计划行（唯一匹配时取 orderLine 归行级，多行歧义保持产品级）——
-           修复：交付计划行带 orderLine（.33）而存量排产单 done 归产品级，两侧 key 不匹配导致「已计划未交付」不减少 */
-        /* 2026-10-07.137：dlLine 行仅在 productId 与本排产行一致时采用；不一致视为无行 → 进下方按 productId 的回退链（防串料） */
-        let dlRow=null;
-        if(y.dlLine!=null){
-          const _cand=deliveryItems(d)[y.dlLine];
-          if(_cand&&String(_cand.productId)===String(y.productId))dlRow=_cand;
-        }
-        if(!dlRow){
-          const _rows=deliveryItems(d).filter(function(x){return String(x.productId)===String(y.productId);});
-          if(_rows.length===1)dlRow=_rows[0];
-        }
-        const k=dlRow&&dlRow.orderLine!=null&&dlRow.orderLine!==''?(d.orderId+'|L'+dlRow.orderLine):(d.orderId+'|'+(y.productId||''));
+        /* 行解析口径（dlLine 命中且产品一致 → 否则产品唯一匹配 → 否则退化产品级）已收敛到 ppDoneKeyOf（prodplan-core.js）：
+           .54 修「交付计划行带 orderLine 而存量排产单 done 归产品级 → 两侧 key 不匹配 → 已计划未交付不减少」；
+           .138 修根因 R2「dlLine 取行不校验产品 → 别产品完成量灌进本行（C04.03.008 事故）」。
+           两侧同源，**禁止在此再写一份行解析**。 */
+        const k=ppDoneKeyOf(d,y);
         if(!m[k])m[k]={plan:0,done:0};
         m[k].done+=ppDoneOf(y);
       });
@@ -5199,7 +5233,9 @@ function ppOrderLineOf(p,it){
   if(pdi==null||it.dlLine==null)return null;
   const dl=deliveries[pdi];
   if(!dl)return null;
-  const drow=deliveryItems(dl)[it.dlLine];
+  /* 2026-10-07.138：经 ppDlRowOf 同源解析（产品一致才认行）——报工回写订单行不再取到别产品的行号。
+     回写目标本身另有 productId 校验（inboundTargetOf），故本处为「存储的 orderLine 是否可信」的收口。 */
+  const drow=ppDlRowOf(dl,it);
   return (drow&&drow.orderLine!=null)?drow.orderLine:null;
 }
 /* 2026-08-25.49：订单管理「调拨查询」——跳转调拨台账并预设本订单筛选（调用+退回+冲销全包含），时间倒序
@@ -5532,13 +5568,19 @@ function doSaveDelivery(d,idx){
    规则：有 deliveryPlanNo 的单 → 按编号重新定位索引；目标计划已删 → deliveryIdx 置 null
    （退化为不占额度的独立单，与其 plan/done 同时退出归集自洽）；无外键的存量单保持原样。
    返回被修正的排产单数。 */
+/* 2026-10-07.137：删除交付计划后按稳定外键 deliveryPlanNo 重排全部排产单的来源索引（防 R1 索引漂移）。
+   2026-10-07.138：目标计划已删 → 索引与外键一并清空（不留悬空编号）；返回**实际变更的排产单张数**
+   （调用方据此决定 productionPlans 是否并入同一次事务——清零外键也算变更，漏计会导致内存改了但没落盘）。 */
 function relinkProdPlanDeliveryIdx(){
   let n=0;
   productionPlans.forEach(p=>{
     if(!p||!p.deliveryPlanNo)return;
     const i=deliveries.findIndex(d=>d&&String(d.planNo||'')===String(p.deliveryPlanNo));
     const to=i>=0?i:null;
-    if(p.deliveryIdx!==to){p.deliveryIdx=to;n++;}
+    let ch=false;
+    if(p.deliveryIdx!==to){p.deliveryIdx=to;ch=true;}
+    if(i<0&&p.deliveryPlanNo){p.deliveryPlanNo=null;ch=true;}
+    if(ch)n++;
   });
   return n;
 }
@@ -6836,6 +6878,8 @@ async function initApp(){
   migrateOrderCalledQty();
   // 调拨台账「孤儿行号」修复（2026-09-20.132，一次性幂等：删行漂移留下的越界引用 → 唯一候选才对齐 + 按台账净额重算已调用）
   await repairOrphanTransferLineIdx();
+  // 排产单「来源交付计划」索引漂移重绑（2026-10-07.138，一次性幂等：删交付计划留下的错位引用 → 判定可信才重绑 + 回填 deliveryPlanNo 外键）
+  await rebindProdPlanDlIdx();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -6919,7 +6963,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.137</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.138</div>
 </body>
 </html>
 
