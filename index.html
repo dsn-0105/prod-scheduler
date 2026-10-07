@@ -1132,6 +1132,21 @@ function invStockLevel(v,min,max){
 }
 /* 2026-08-30.92：订单行数量（库存订单=最大库存量 stockMax，销售订单=orderQty；历史空 stockMax 回退 orderQty） */
 function invQtyOf(o,it){return (o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?num(it.stockMax):num(it.orderQty);}
+/* ═══════════ 2026-10-07.139：「已计划未交付 / 结余」取值唯一入口（口径单源，禁止他处再算） ═══════════
+   pu 取自 buildPlannedUndelMap()：{plan:Σ交付计划计划量, done:Σ名下排产单入库累计(排除已取消)}。
+   · 已计划未交付 = max(0, plan − done)：**展示列，恒非负**。报工入库量受「不超过本次排产数量」硬校验
+     （saveReport），计算逻辑上不会出现负数（用户 2026-10-07 确认）。
+   · 结余 = 已交付 + (plan − done)：**不钳制**，欠产以负数呈现（用户 2026-10-07 要求）。
+   两列仅在「计划量被削至低于完成量」（done > plan，如删减交付计划、超产报工）时出现差值：
+   此时已计划未交付=0、结余为负——这是有意的列语义差异，不是数据错误。
+   ⚠ 报工不改变结余（done↑ 与 已交付↑ 等量）；只有增删/改交付计划量才会改变结余。
+     该不变量由 applyReport 的运行时守卫（invBalGuard* 系列）强制，由 auditInvInvariants() 全库自检。 */
+function invPuOf(puMap,orderId,li,productId){
+  if(!puMap)return null;
+  return puMap[orderId+'|L'+(li!=null?li:'-')]||puMap[orderId+'|'+(productId||'')]||null;
+}
+function invPlannedUndelOf(pu){return pu?Math.max(0,num(pu.plan)-num(pu.done)):0;}
+function invBalanceOf(delivered,pu){return num(delivered)+(pu?(num(pu.plan)-num(pu.done)):0);}
 /* 2026-08-30.90：库存订单行「一句话总结」（用户口径：已交付=当前实物库存余量，结余=未来预期库存）——
    组合覆盖 7 种状态：欠货+计划补足/欠货+计划不足/欠货+计划过量/缺货无计划/缺货有计划/正常/积压；欠货统一加「需要尽快生产」 */
 function invRowSummary(dq,balance,min,max,lvD,lvB){
@@ -2610,6 +2625,36 @@ async function rebindProdPlanDlIdx(){
   /* 留人工的提示必须**独立落日志**：自动重绑为空时（全是多解）同样要有人能看到（.138 测试抓到） */
   if(manuals.length)logOp('系统','排产计划','系统修复：以下排产单来源无法唯一确定，保留原样待人工核对——'+manuals.join('；'));
 }
+/* ═══════ 2026-10-07.139：「C02.02.026 已交付虚增 +200」一次性订正（用户 2026-10-07 明确同意） ═══════
+   来由（取证见 _diag/c02026-诊断报告.md）：10-06 当时版本（.134~.136，R2 修复前）遗留的孤例回写残留。
+     全库 Δ(已交付) vs Δ(完成量) 核对：17 行有变化、16 行守恒，唯本行 +200；
+     同窗口 transfers 内容 0 变化（排除调拨）；用 .138 代码重放该报工序列末态完全守恒（不可复现）。
+   订正：该行已交付 −200（0 → −200）→ 「结余」由 0 恢复为用户期望的 −700（= −1200 + 500 − 1000），
+       「报工不改变结余」不变量随之恢复。
+   幂等：meta.fixInvDeliveredDrift20261007 一次性标记；**前置基线校验**——仅当该行当前已交付等于
+       预期基线（0）时才改写，否则跳过并记日志（避免二次伤害 / 覆盖人工订正）。
+   原子：orders 一次 DB.tx 提交；失败 → 标记复位（内存由 DB.tx 的 pullAll 复原），下次启动幂等重试。 */
+async function fixInvDeliveredDrift20261007(){
+  if(!meta||meta.fixInvDeliveredDrift20261007)return;
+  const ORDER='KCDD-20260821-00008',PROD='C02.02.026',DRIFT=200,EXPECT=0;
+  meta.fixInvDeliveredDrift20261007=true;
+  const o=(orders||[]).find(x=>String(x.id)===ORDER);
+  const oi=o?orderItems(o):[];
+  const it=oi.find(x=>String(x.productId)===PROD)||null;
+  if(!o||!it){save('meta',meta);return;}                    /* 订单/行不存在：仅置标记（不产生日志噪音） */
+  if(num(it.deliveredQty)!==EXPECT){
+    logOp('系统','库存管理','系统修复：跳过「'+ORDER+'」'+PROD+' 的已交付订正——当前值 '+num(it.deliveredQty)+' 与预期基线 '+EXPECT+' 不符（可能已人工订正），请人工复核');
+    save('meta',meta);
+    return;
+  }
+  it.deliveredQty=EXPECT-DRIFT;                             /* 0 → −200 */
+  const stockChanged=recomputeStockFromInvOrders();
+  const ops=[{key:'orders',value:orders}];
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,true);
+  if(!ok){meta.fixInvDeliveredDrift20261007=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
+  logOp('系统','库存管理','系统修复：「'+ORDER+'」'+PROD+' 已交付订正 '+EXPECT+' → '+(EXPECT-DRIFT)+'（10-06 报工回写残留 +200，恢复「报工不改变结余」不变量）');
+}
 function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
   if(changed){
@@ -2989,19 +3034,16 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     /* 2026-08-30.94：库存订单删除「已调用/未交付」列（已调用=销售订单调用累计，库存恒 0；未交付计算保留在统计层） */
     ...(formKey!=='order_inv'?[{key:'calledQty',label:'已调用',type:'number',get:r=>r.item.calledQty}]:[]),   /* 2026-08-25.35：调用库存累计 */
     ...(formKey!=='order_inv'?[{key:'_undel',label:'未交付',type:'number',get:r=>invQtyOf(r.order,r.item)-num(r.item.deliveredQty)}]:[]),
-    ...(formKey!=='order_frame'?[{key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>{
-       /* 2026-08-25.17 新口径：Σ交付计划.planQty − Σ名下排产单入库累计(排除已取消)，只跟生产入库走（调拨/导入初始不参与）。
-          .33 行级：优先按订单行索引 orderLine 查行级 key，无则回退产品级 */
-       const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
-       return pu?Math.max(0,pu.plan-pu.done):0; }}]:[]),
-    /* 2026-08-25.60：结余=已交付+已计划未交付（纯计算列，仅库存订单显示；销售订单共用模板不含此列） */
-    ...(formKey==='order_inv'?[{key:'_balance',label:'结余',type:'number',get:r=>{
-       const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
-       return num(r.item.deliveredQty)+(pu?Math.max(0,pu.plan-pu.done):0); }}]:[]),
+    ...(formKey!=='order_frame'?[{key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>
+       /* .139：经 invPuOf/invPlannedUndelOf 唯一入口（恒非负） */
+       invPlannedUndelOf(invPuOf(puMap,r.order.id,r.__li,r.item.productId))}]:[]),
+    /* 2026-08-25.60：结余=已交付+(计划−完成)（纯计算列，仅库存订单显示；销售订单共用模板不含此列）
+       .139：改为**不钳制**——欠产以负数呈现（用户 2026-10-07 要求） */
+    ...(formKey==='order_inv'?[{key:'_balance',label:'结余',type:'number',get:r=>
+       invBalanceOf(r.item.deliveredQty,invPuOf(puMap,r.order.id,r.__li,r.item.productId))}]:[]),
     /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，放结余后；与进度列同款百分比口径，可>100%） */
     ...(formKey==='order_inv'?[{key:'_balPct',label:'结余进度',type:'number',get:r=>{
-       const pu=puMap[r.order.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[r.order.id+'|'+(r.item.productId||'')];
-       const bal=num(r.item.deliveredQty)+(pu?Math.max(0,pu.plan-pu.done):0);
+       const bal=invBalanceOf(r.item.deliveredQty,invPuOf(puMap,r.order.id,r.__li,r.item.productId));
        const t=invQtyOf(r.order,r.item);
        return t>0?Math.round(bal/t*100):0; }}]:[]),
     {key:'_pct',label:'交付进度',type:'number',get:r=>{const t=invQtyOf(r.order,r.item);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},   /* .97：销售/库存统一「交付进度」=已交付/数量 */
@@ -3072,11 +3114,12 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const oq=num((formKey==='order_inv'&&it.stockMax!=null&&it.stockMax!=='')?it.stockMax:it.orderQty), dq=num(it.deliveredQty);
     const undel=oq-dq;
     const pct=oq>0?Math.round(dq/oq*100):0;
-    /* 已计划未交付（2026-08-25.17 新口径，.33 行级）= Σ交付计划.planQty − Σ名下排产单入库累计，排除已取消（与 schema 计算列同口径） */
-    const pu=puMap[o.id+'|L'+(r.__li!=null?r.__li:'-')]||puMap[o.id+'|'+(it.productId||'')];
-    const plannedUndel=pu?Math.max(0,pu.plan-pu.done):0;
-    /* 2026-08-25.60：结余=已交付+已计划未交付（仅库存订单），同款三角警示——低于最小库存→红、高于最大库存→黄 */
-    const balance=num(dq)+plannedUndel;
+    /* 已计划未交付 / 结余（.139：经唯一入口取值，与 schema 计算列同口径）
+       已计划未交付 = max(0, plan−done) 恒非负；结余 = 已交付+(plan−done) 不钳制（欠产为负） */
+    const pu=invPuOf(puMap,o.id,r.__li,it.productId);
+    const plannedUndel=invPlannedUndelOf(pu);
+    /* 2026-08-25.60：结余（仅库存订单），同款三角警示——低于最小库存→红、高于最大库存→黄；负数恒红 */
+    const balance=invBalanceOf(dq,pu);
     /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，同进度列口径，可>100%） */
     const balPct=oq>0?Math.round(balance/oq*100):0;
     const today=todayStr();
@@ -4483,6 +4526,20 @@ async function ppSaveReportEdits(planId){
     alert('修改后报工累计超过本次排产数：\n'+overMsg.join('\n')+'\n\n请调整后重新保存。');
     return;
   }
+  /* .139 结余守恒守卫：改动前快照（增量清单与下文 inboundDelta 同口径——入库类工序按 productId+dlLine 归行） */
+  const gList=[];
+  for(const k in agg){
+    const it=itMap[k];
+    if(!it)continue;
+    let d=0;
+    for(const step in agg[k]){ if(step==='inbound'||step==='finInbound')d+=(num(agg[k][step])-num(oldInbound[k])); }
+    if(d)gList.push({productId:it.productId,qty:d,orderLine:ppOrderLineOf(p,it)});
+  }
+  const guardOn=gList.length>0&&invBalGuardApplies(p);
+  const guardItemsSnap=guardOn?guardSnapItems(ppItems(p)):null;
+  const guardStatusBefore=p.status;
+  const guardRows=guardOn?invBalGuardRowsOfDeltas(p,gList,buildPlannedUndelMap()):null;
+  const guardReportsSnap=guardOn?JSON.parse(JSON.stringify(updates.map(u=>productionReports[u.idx]))):null;
   /* 应用：覆盖累计 + 更新记录 */
   const inboundDelta=[];                       // 2026-08-25.16：入库累计 新−旧 → 回写订单；.40 行级化
   for(const k in agg){
@@ -4512,6 +4569,24 @@ async function ppSaveReportEdits(planId){
      事实表 productionPlans/productionReports 必然在事务内；orders 仅真有回写时伴随；products 仅投影变化时伴随。 */
   let inboundChanged=false;
   inboundDelta.forEach(r=>{ if(r.qty&&writebackInboundMutation(p.orderId,r.productId,r.qty,r.orderLine))inboundChanged=true; });
+  /* .139 结余守恒校验（用户 2026-10-07 要求）：入库前后「结余」有变化 = 错误 → 弹窗 + 整批退回 */
+  if(guardOn){
+    const bad=invBalGuardCheck(guardRows,buildPlannedUndelMap());
+    if(bad.length){
+      /* 内存回滚：报工明细（worker/qty）→ 排产单累计（steps/doneQty）→ 订单行「已交付」→ 排产单状态 */
+      updates.forEach((u,i)=>{
+        const rec=productionReports[u.idx],s=guardReportsSnap[i];
+        if(!rec||!s)return;
+        rec.worker=s.worker;
+        (rec.items||[]).forEach((x,j)=>{ if(s.items&&s.items[j])x.qty=s.items[j].qty; });
+      });
+      guardRestoreItems(guardItemsSnap,ppItems(p));
+      guardRestoreDelivered(guardRows);
+      p.status=guardStatusBefore;
+      invBalGuardAlert(bad,'编辑报工');
+      return;
+    }
+  }
   const stockChanged=recomputeStockFromInvOrders();
   const statusChanged=recomputeOrderAutoStatus();
   const ops=[{key:'productionPlans',value:productionPlans},{key:'productionReports',value:productionReports}];
@@ -4537,6 +4612,26 @@ async function ppDelReport(id){
   const p=productionPlans.find(x=>x.id===rec.planId);
   const labelParts=(rec.items||[]).map(x=>x.label+'-'+money(x.qty)).join('、');
   if(!confirm('删除该条报工（'+(rec.date||'')+' '+(rec.time||'')+' '+(rec.worker||'')+'：'+labelParts+'）？\n\n将同步回退排产单「'+rec.planId+'」的累计完成数，此操作不可撤销。'))return;
+  /* .139 结余守恒守卫：改动前快照（扣回量口径与下文 inboundDelta 完全一致：
+     dec = min(本次报工量, 当前工序累计)，按 productId 归并） */
+  const gList=[];
+  if(p&&invBalGuardApplies(p)){
+    const gd={};
+    (rec.items||[]).forEach(x=>{
+      if(x.step!=='inbound'&&x.step!=='finInbound')return;
+      const it=ppItems(p).find(z=>(z.productId||'')===(x.productId||''));
+      if(!it)return;
+      const st0=ppSteps(it);
+      const dec=Math.min(num(x.qty),num(typeof st0[x.step]==='object'?st0[x.step].done:st0[x.step]));
+      if(dec)gd[it.productId||'']=(gd[it.productId||'']||0)-dec;
+    });
+    Object.keys(gd).forEach(pid=>{ if(gd[pid])gList.push({productId:pid,qty:gd[pid],orderLine:null}); });
+  }
+  const guardOn=gList.length>0;
+  const guardItemsSnap=guardOn?guardSnapItems(ppItems(p)):null;
+  const guardStatusBefore=p?p.status:null;
+  const guardRows=guardOn?invBalGuardRowsOfDeltas(p,gList,buildPlannedUndelMap()):null;
+  const guardRecSnap=guardOn?JSON.parse(JSON.stringify(rec)):null;
   const inboundDelta={};                       // 2026-08-25.16：删除报工 → 扣回订单已交付
   if(p){
     (rec.items||[]).forEach(x=>{
@@ -4560,6 +4655,21 @@ async function ppDelReport(id){
   /* 【P1 事务化】回写订单（扣回已交付）与两个投影先在内存算完，再与事实表一次提交（§4.3/§4.4） */
   let inboundChanged=false;
   if(p)for(const pid in inboundDelta){ if(inboundDelta[pid]&&writebackInboundMutation(p.orderId,pid,inboundDelta[pid]))inboundChanged=true; }
+  /* .139 结余守恒校验（用户 2026-10-07 要求）：入库前后「结余」有变化 = 错误 → 弹窗 + 整批退回 */
+  if(guardOn){
+    const bad=invBalGuardCheck(guardRows,buildPlannedUndelMap());
+    if(bad.length){
+      /* 内存回滚：报工记录放回 → 排产单累计还原 → 订单行「已交付」还原 → 排产单状态还原 */
+      if(p){
+        productionReports.splice(idx,0,guardRecSnap);
+        guardRestoreItems(guardItemsSnap,ppItems(p));
+        p.status=guardStatusBefore;
+      }
+      guardRestoreDelivered(guardRows);
+      invBalGuardAlert(bad,'删除报工');
+      return;
+    }
+  }
   const stockChanged=recomputeStockFromInvOrders();
   const statusChanged=recomputeOrderAutoStatus();
   const ops=[];
@@ -5308,6 +5418,204 @@ function writebackInbound(orderId,productId,delta,orderLine){
   const t=inboundTargetOf(orderId,productId,orderLine);
   logOp('系统','库存打通','报工入库回写订单「'+orderId+'」'+((t&&t.it.productName)||productId)+' 已交付 '+(delta>0?'+':'')+delta);
 }
+/* ═══════ 2026-10-07.139：报工入库「结余守恒」运行时守卫（用户 2026-10-07 要求） ═══════
+   规则：入库类工序（inbound / finInbound）的报工量变更——新增报工 / 编辑报工 / 删除报工——
+       必须使对应**库存订单行**的「结余」前后不变：报工只是把「计划量」搬进「已交付」，
+       done +q 与 已交付 +q 等量，结余 = 已交付 + (plan − done) 恒等。
+   无变化 = 正确；有变化 = 错误 → 弹窗提示 + **整批退回本次操作**（不提交事务），脏数据不落盘。
+   适用性 invBalGuardApplies：
+     · 仅库存订单行（销售订单无「结余」列、回写不落已交付，不适用）；
+     · 排除「独立排产单」（ppDlIdxOf=null）——其完成量本就不计入交付计划归集，
+       入库报工合法地增加结余（生产出的实物入库），不是错误。
+   口径：按「实际回写目标行」取结余（与展示层同一个 invBalanceOf / invPuOf），
+       因此「回写落错行 / 归集落错 key」这类不一致同样会被捕获。
+   三处调用点：applyReport（新报工）/ ppSaveReportEdits（编辑报工）/ ppDelReport（删除报工）。 */
+function invBalGuardApplies(p){
+  if(!p)return false;
+  if(ppDlIdxOf(p)==null)return false;                  /* 独立单：完成量不计入归集，入库合法增加结余 */
+  const o=orders.find(x=>x.id===p.orderId);
+  return !!(o&&orderTypeOf(o)==='库存订单');
+}
+/* 由「入库增量清单」构造守卫行快照：list=[{productId,qty,orderLine}]（qty 可正可负） */
+function invBalGuardRowsOfDeltas(p,list,puMap){
+  const rows=[],seen={};
+  if(!invBalGuardApplies(p))return rows;
+  (list||[]).forEach(r=>{
+    if(!r||!r.qty)return;
+    const ol=(r.orderLine!=null?r.orderLine:null);
+    const k=String(r.productId)+'|'+(ol!=null?ol:'-');
+    if(seen[k])return;
+    seen[k]=1;
+    const t=inboundTargetOf(p.orderId,r.productId,ol);
+    if(!t){
+      /* 回写目标缺失：入库量变了而订单行「已交付」不会跟着变 → 结余必然偏移，直接判错 */
+      rows.push({orderId:p.orderId,productId:r.productId,orderLine:ol,item:null,li:null,noTarget:true,
+                 before:null,beforeDelivered:null,label:(r.productName||r.productId||'')});
+      return;
+    }
+    const li=orderItems(t.o).indexOf(t.it);
+    rows.push({orderId:t.o.id,productId:t.it.productId,orderLine:ol,item:t.it,li:(li>=0?li:null),noTarget:false,
+               before:invBalanceOf(t.it.deliveredQty,invPuOf(puMap,t.o.id,(li>=0?li:null),t.it.productId)),
+               beforeDelivered:num(t.it.deliveredQty),
+               label:(t.it.productName||t.it.productId)});
+  });
+  return rows;
+}
+/* 由报工弹窗 entries 构造（自动筛出入库类工序并解析来源订单行） */
+function invBalGuardRowsOf(p,entries,items,puMap){
+  const list=[];
+  (entries||[]).forEach(e=>{
+    if(e.qty<=0)return;
+    if(e.step!=='inbound'&&e.step!=='finInbound')return;
+    const it=items[e.li];
+    if(!it)return;
+    list.push({productId:it.productId,qty:e.qty,orderLine:ppOrderLineOf(p,it)});
+  });
+  return invBalGuardRowsOfDeltas(p,list,puMap);
+}
+/* 改动后复算比对：返回 [] = 通过；否则为失败明细数组（含前后值，供弹窗展示） */
+function invBalGuardCheck(rows,puMap){
+  const bad=[];
+  (rows||[]).forEach(g=>{
+    if(g.noTarget){
+      bad.push({label:g.label,productId:g.productId,noTarget:true,before:null,after:null,
+                reason:'本订单中找不到对应商品明细行，入库无法回写「已交付」，结余会虚减'});
+      return;
+    }
+    const after=invBalanceOf(g.item.deliveredQty,invPuOf(puMap,g.orderId,g.li,g.productId));
+    if(num(after)!==num(g.before)){
+      const d=num(after)-num(g.before);
+      bad.push({label:g.label,productId:g.productId,noTarget:false,before:num(g.before),after:num(after),diff:d,
+                reason:'结余 '+money(g.before)+' → '+money(after)+'（'+(d>0?'+':'')+money(d)+'）'});
+    }
+  });
+  return bad;
+}
+/* 守卫失败：整批退回（三处调用点共用文案） */
+function invBalGuardAlert(bad,opName){
+  alert('本次'+(opName||'报工')+'已退回：入库前后「结余」发生变化（正常应保持不变）。\n\n'
+    +bad.map(b=>'• '+b.label+'：'+b.reason).join('\n')
+    +'\n\n原因说明：报工只把「计划量」转为「已交付」，不应改变结余。'
+    +'请检查该排产单对应的订单明细行是否仍存在、商品编码是否一致；确认无误请联系管理员核对数据。');
+}
+/* 守卫回滚：items 深拷贝快照 / 还原（报工只动 steps 与 doneQty 两个字段，其余字段不碰） */
+function guardSnapItems(items){return JSON.parse(JSON.stringify(items));}
+function guardRestoreItems(snap,items){
+  (items||[]).forEach((it,i)=>{
+    const s=(snap&&snap[i])||{};
+    if(Object.prototype.hasOwnProperty.call(s,'doneQty'))it.doneQty=s.doneQty;else delete it.doneQty;
+    if(s.steps===undefined)delete it.steps;else it.steps=s.steps;
+  });
+}
+/* 守卫回滚：订单行「已交付」还原 */
+function guardRestoreDelivered(rows){
+  (rows||[]).forEach(g=>{if(g.item&&g.beforeDelivered!=null)g.item.deliveredQty=g.beforeDelivered;});
+}
+/* ═══════ 2026-10-07.139：全库不变量一键自检（用户 2026-10-07 要求；**全部只读**，不改任何数据） ═══════
+   六项（前五项为「错」，第六项为「提示」）：
+     ① 报工流水 ≡ 排产单完成量：Σ(报工记录 inbound/finInbound qty) 必须等于 Σ(排产单 ppDoneOf)
+        —— 完成量只由报工累加而来，不等 = 有报工没落到完成量（或反之）。
+     ② 排产单来源归属自洽：ppDlIdxOf 非空时，交付计划.orderId 必须等于排产单.orderId（R1 复发检测）。
+     ③ 稳定外键齐备：非独立单必须有 deliveryPlanNo（缺 = 下次删交付计划仍会漂移）。
+     ④ 完成量越界：ppDoneOf > ppPlanOf 且计划量>0（「已计划未交付」被 max(0,·) 钳为 0，与「结余」出现差值）。
+     ⑤ 入库回写可达：库存订单非取消排产单每行必须能解析到订单明细行——否则报工不会回写「已交付」，
+        结余虚减，且运行时守卫会拦住报工（须先修数据）。
+     ⑥ 结余为负的行（欠产）——仅供核对，非错误。
+   返回 {ok,checks}；runInvAudit() 负责弹窗展示。 */
+function auditInvInvariants(){
+  const checks=[];
+  const push=(name,desc,bad)=>checks.push({name:name,desc:desc,bad:bad,ok:bad.length===0});
+  /* ① 报工流水 vs 排产单完成量（key = planId|productId） */
+  const flow={},doneAgg={},keys={};
+  (productionReports||[]).forEach(r=>{
+    (r.items||[]).forEach(x=>{
+      if(x.step!=='inbound'&&x.step!=='finInbound')return;
+      const k=String(r.planId)+'|'+String(x.productId||'');
+      flow[k]=num(flow[k])+num(x.qty);keys[k]=1;
+    });
+  });
+  (productionPlans||[]).forEach(p=>{
+    ppItems(p).forEach(it=>{
+      const k=String(p.id)+'|'+String(it.productId||'');
+      doneAgg[k]=num(doneAgg[k])+ppDoneOf(it);keys[k]=1;
+    });
+  });
+  const flowBad=[];
+  Object.keys(keys).forEach(k=>{
+    const a=num(flow[k]),b=num(doneAgg[k]);
+    if(a!==b)flowBad.push(k.replace('|',' / ')+'：报工流水 '+money(a)+'，排产完成量 '+money(b));
+  });
+  flowBad.sort();
+  push('报工流水 ≡ 排产单完成量','两边必须相等——完成量只由报工累加而来',flowBad);
+  /* ② 来源归属自洽 */
+  const linkBad=[];
+  (productionPlans||[]).forEach(p=>{
+    const di=ppDlIdxOf(p);
+    if(di==null)return;
+    const d=deliveries[di];
+    if(!d){linkBad.push(p.id+'：来源索引 '+di+' 越界');return;}
+    if(String(d.orderId)!==String(p.orderId))
+      linkBad.push(p.id+'：绑到「'+d.orderId+'」的交付计划 '+((d.planNo||'（无编号）'))+'（本单属「'+p.orderId+'」）');
+  });
+  push('排产单来源归属自洽','排产单绑定的交付计划必须属于同一订单（防索引漂移复发）',linkBad);
+  /* ③ 稳定外键齐备 */
+  const noBad=[];
+  (productionPlans||[]).forEach(p=>{
+    if(ppDlIdxOf(p)==null)return;
+    if(!p.deliveryPlanNo)noBad.push(p.id+'（订单 '+p.orderId+'）');
+  });
+  push('来源交付计划编号齐备','非独立排产单必须记录来源交付计划编号（否则下次删计划仍会漂移）',noBad);
+  /* ④ 完成量越界（会导致「已计划未交付」被钳成 0） */
+  const overBad=[];
+  (productionPlans||[]).forEach(p=>{
+    if(p.status==='已取消')return;
+    ppItems(p).forEach(it=>{
+      const t=ppPlanOf(it),d=ppDoneOf(it);
+      if(t>0&&d>t)overBad.push(p.id+' '+(it.productName||it.productId)+'：完成 '+money(d)+' / 计划 '+money(t));
+    });
+  });
+  push('完成量未越界','完成量不得超过计划量（越界会使「已计划未交付」钳为 0、与「结余」出现差值）',overBad);
+  /* ⑤ 入库回写可达性（运行时守卫的前置条件） */
+  const reachBad=[];
+  (productionPlans||[]).forEach(p=>{
+    if(p.status==='已取消')return;
+    if(!invBalGuardApplies(p))return;
+    ppItems(p).forEach(it=>{
+      if(!inboundTargetOf(p.orderId,it.productId,ppOrderLineOf(p,it)))
+        reachBad.push(p.id+' '+(it.productName||it.productId)+'：订单「'+p.orderId+'」中找不到该商品明细行');
+    });
+  });
+  push('入库回写可达','库存订单排产单每行必须能在订单中找到明细行——否则报工不回写「已交付」、结余虚减',reachBad);
+  /* ⑥ 结余为负（欠产）——提示项 */
+  const negBad=[];
+  const puMap=buildPlannedUndelMap();
+  (orders||[]).forEach(o=>{
+    if(orderTypeOf(o)!=='库存订单')return;
+    orderItems(o).forEach((it,li)=>{
+      const bal=invBalanceOf(it.deliveredQty,invPuOf(puMap,o.id,li,it.productId));
+      if(bal<0)negBad.push(o.id+' '+(it.productName||it.productId)+'：结余 '+money(bal)+'（欠产）');
+    });
+  });
+  checks.push({name:'结余为负（欠产）清单',desc:'欠产以负数呈现属正常口径，此处仅供核对',bad:negBad,ok:true,info:true});
+  const ok=checks.filter(c=>!c.ok).length===0;
+  return {ok:ok,checks:checks};
+}
+/* 库存管理工具栏入口：跑自检并弹窗展示（只读，不写盘、不记日志） */
+function runInvAudit(){
+  const r=auditInvInvariants();
+  const rows=r.checks.map(c=>{
+    const badge=c.info?'<span style="color:var(--muted);font-size:12px">提示 '+c.bad.length+' 行</span>'
+      :(c.ok?'<span style="color:var(--green);font-size:12px">✅ 通过</span>':'<span style="color:var(--red);font-size:12px">❌ '+c.bad.length+' 项</span>');
+    const det=(c.ok?'':
+      '<div style="margin:6px 0 2px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px;line-height:1.8;max-height:220px;overflow:auto">'
+      +c.bad.slice(0,30).map(x=>'• '+esc(x)).join('<br>')+(c.bad.length>30?('<br>…等共 '+c.bad.length+' 项'):'')+'</div>');
+    return '<div style="padding:10px 0;border-bottom:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:baseline;justify-content:space-between"><b style="font-size:13px">'+c.name+'</b>'+badge+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+c.desc+'</div>'+det+'</div>';
+  }).join('');
+  const head=r.ok?'<div style="padding:10px 12px;background:var(--green-bg);border-radius:8px;margin-bottom:10px;font-size:13px">✅ 全部检查通过：库存订单「结余 / 已计划未交付」归集链路无异常。</div>'
+    :'<div style="padding:10px 12px;background:var(--red-bg);border-radius:8px;margin-bottom:10px;font-size:13px">❌ 发现 '+r.checks.filter(c=>!c.ok).length+' 项异常，请按下方明细核对（本页为只读自检，不会修改任何数据）。</div>';
+  showModal('库存不变量自检（只读）',head+rows,'<button class="btn btn-primary" onclick="closeModal()">关闭</button>');
+}
 /* 【P1 事务化】报工落地：写入收尾改为一次 /api/tx（§4.3/§4.5）。
    事实表 productionPlans / productionReports / orders（库存订单已交付）必然同事务；
    products 为派生投影（库存=Σ库存订单已交付），仅在真有变化时作为伴随 op 并入同一次提交。
@@ -5317,6 +5625,11 @@ async function applyReport(pi,entries,items,worker){
   if(!p)return;
   const logParts=[];
   const repItems=[];
+  /* .139：结余守恒守卫前置快照（仅入库类报工且该单适用时才做；单排产单 items 行数极少，深拷贝成本可忽略） */
+  const guardOn=entries.some(e=>e.qty>0&&(e.step==='inbound'||e.step==='finInbound'))&&invBalGuardApplies(p);
+  const guardItemsSnap=guardOn?guardSnapItems(items):null;
+  const guardStatusBefore=p.status;
+  const guardRows=guardOn?invBalGuardRowsOf(p,entries,items,buildPlannedUndelMap()):null;
   /* 2026-08-25.16：入库工序增量 → 回写订单已交付；.40 行级化——同产品多行各自记录 dlLine/orderLine，不再按 productId 合并 */
   const inboundDelta=[];
   entries.forEach(e=>{
@@ -5343,6 +5656,20 @@ async function applyReport(pi,entries,items,worker){
   /* 【P1 事务化】三表 + 投影先在内存全部改完，再一次性提交（§4.3/§4.4「投影前置重算」） */
   let inboundChanged=false;
   inboundDelta.forEach(r=>{ if(r.qty&&writebackInboundMutation(p.orderId,r.productId,r.qty,r.orderLine))inboundChanged=true; });
+  /* .139 结余守恒校验（用户 2026-10-07 要求）：入库前后「结余」有变化 = 错误 → 弹窗 + 整批退回。
+     校验通过才继续（记报工明细 / 提交事务），保证脏数据不落盘。 */
+  if(guardOn){
+    const bad=invBalGuardCheck(guardRows,buildPlannedUndelMap());
+    if(bad.length){
+      /* 内存回滚：items 还原（steps/doneQty）→ 订单行「已交付」还原 → 排产单状态还原。
+         此时尚未 push 报工明细、尚未重算投影，故无需额外复原。 */
+      guardRestoreItems(guardItemsSnap,items);
+      guardRestoreDelivered(guardRows);
+      p.status=guardStatusBefore;
+      invBalGuardAlert(bad,'报工');
+      return;
+    }
+  }
   /* 报工明细记录（build 2026-08-24.8）：一次报工=一条记录，含本次各工序；报工人为弹窗必填输入（.9）
      —— 必须在构造 ops 之前 push，确保同一次事务把新明细一起落盘 */
   if(repItems.length>0){
@@ -6495,6 +6822,8 @@ function bulkBar(m){
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryTransfersOfOrder(\''+m+'\')" title="跳转到调拨台账并筛选本订单关联的调拨单（仅限 1 张）">调拨查询</button>');
   /* 2026-08-29.76：计划查询（只读导航，写权限块外）——跳转交付计划并筛选本订单 */
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryDeliveryOfOrder(\''+m+'\')" title="跳转到交付计划并筛选本订单的交付计划（仅限 1 张）">计划查询</button>');
+  /* 2026-10-07.139：库存不变量一键自检（只读，置于写权限块外，只读账号亦可用）——全库检查，与选中行无关 */
+  if(m==='order_inv')btns.push('<button class="btn btn-sm" onclick="runInvAudit()" title="只读自检（不改数据）：报工流水≡排产完成量 / 来源归属自洽 / 来源编号齐备 / 完成量未越界 / 入库回写可达 / 欠产清单">不变量自检</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
   /* 2026-09-08.117：表单内「模板/导入」按钮全部隐藏（含此前的灰禁用占位）——数据写入只走业务动作
      （金蝶导入/交付登记/调用库存/下推生成）与「恢复」json，杜绝误导入覆盖；金蝶导入入口保留于销售订单页 */
@@ -6880,6 +7209,8 @@ async function initApp(){
   await repairOrphanTransferLineIdx();
   // 排产单「来源交付计划」索引漂移重绑（2026-10-07.138，一次性幂等：删交付计划留下的错位引用 → 判定可信才重绑 + 回填 deliveryPlanNo 外键）
   await rebindProdPlanDlIdx();
+  // 库存「已交付」虚增订正（2026-10-07.139，一次性幂等：C02.02.026 因 R2 修复前的回写残留 +200 → 结余恢复 −700）
+  await fixInvDeliveredDrift20261007();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -6963,7 +7294,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.138</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.139</div>
 </body>
 </html>
 

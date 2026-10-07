@@ -299,7 +299,10 @@ test('10) [基线零回归] 对照 .128 前基线提交（'+BASELINE_REF+'）：
   try {
     const oldInv = render(appBase, 'order_inv', '库存订单');
     const newInv = render(appNew, 'order_inv', '库存订单');
-    assert.equal(newInv, oldInv, '库存订单渲染必须与 HEAD 完全一致（新增列不应影响库存页）');
+    /* .139：工具栏会随版本新增动作按钮（本版加「不变量自检」），与本用例本意（新增**列**不应影响库存页）无关，
+       故把工具栏段剥离后逐字节比较表头列与数据行（比较强度不变）。 */
+    const stripBar = h => h.replace(/<div class="bulk-bar">[\s\S]*?<\/div>/, '<div class="bulk-bar"></div>');
+    assert.equal(stripBar(newInv), stripBar(oldInv), '库存订单渲染必须与 HEAD 完全一致（表头列 + 数据行；工具栏按钮除外）');
     const oldFrame = render(appBase, 'order_frame', '销售订单');
     const newFrame = render(appNew, 'order_frame', '销售订单');
     assert.equal(headKeys(newFrame).filter(k => k !== 'callStatus' && k !== 'deliverStatus').join(','), headKeys(oldFrame).join(','), '销售订单列序只应新增两列');
