@@ -2796,7 +2796,10 @@ function orderSection(k,formKey,title,sub,prodMap){
    .33 行级化：交付计划行带 orderLine（来源订单行索引）→ key=orderId|L{orderLine} 按明细行区分（同产品多行各自正确）；
    交付计划行无 orderLine（存量）→ 回退产品级 key（orderId|productId），行为不变。
    排产单行经 dlLine → 交付计划行 orderLine 归行级；无 dlLine/无 orderLine → 产品级。
-   已知风险（同 .24 dlLine 同款）：订单编辑增删行后订单行索引漂移，orderLine 可能错位。 */
+   已知风险（同 .24 dlLine 同款）：订单编辑增删行后订单行索引漂移，orderLine 可能错位。
+   2026-10-07.137（事故修复）：① 归属判定改走 ppDlIdxOf（稳定外键优先，抗交付计划索引漂移 R1）；
+   ② dlLine 取交付行**必须校验产品一致**（R2）——否则用错行的 orderLine 生成归集键，
+   会把别产品的完成量灌进本行（线上 C04.03.008 / C02.02.026 失真的直接成因）。 */
 function buildPlannedUndelMap(){
   const m={};
   deliveries.forEach((d,di)=>{
@@ -2806,12 +2809,16 @@ function buildPlannedUndelMap(){
       m[k].plan+=num(x.planQty);
     });
     productionPlans.forEach(pp=>{
-      if(pp.deliveryIdx!==di||pp.status==='已取消')return;
+      if(ppDlIdxOf(pp)!==di||pp.status==='已取消')return;
       ppItems(pp).forEach(y=>{
         /* 2026-08-25.54：存量排产单（无 dlLine）按 productId 反查该交付计划行（唯一匹配时取 orderLine 归行级，多行歧义保持产品级）——
            修复：交付计划行带 orderLine（.33）而存量排产单 done 归产品级，两侧 key 不匹配导致「已计划未交付」不减少 */
+        /* 2026-10-07.137：dlLine 行仅在 productId 与本排产行一致时采用；不一致视为无行 → 进下方按 productId 的回退链（防串料） */
         let dlRow=null;
-        if(y.dlLine!=null&&deliveryItems(d)[y.dlLine])dlRow=deliveryItems(d)[y.dlLine];
+        if(y.dlLine!=null){
+          const _cand=deliveryItems(d)[y.dlLine];
+          if(_cand&&String(_cand.productId)===String(y.productId))dlRow=_cand;
+        }
         if(!dlRow){
           const _rows=deliveryItems(d).filter(function(x){return String(x.productId)===String(y.productId);});
           if(_rows.length===1)dlRow=_rows[0];
@@ -4753,7 +4760,8 @@ function genProdPlan(){
   if(items.length===0){alert('该交付计划无「本批计划>0」的明细行，无法下推');return;}
   /* 2026-08-29.86：全部下推=已排产覆盖全部计划量→拦截（alert 无法下推）；部分下推=还有未排数量→直接继续（去掉分批确认框，分批为常态操作） */
   if(ppDeliveryStatus(di)==='全部下推'){alert('该交付计划已全部下推，无法再下推排产计划。');return;}
-  const np={id:ppNextId(),deliveryIdx:di,orderId:d.orderId,customer:d.customer||'',finalDate:fmtDate(d.finalDate),planDate:fmtDate(d.finalDate)||todayStr(),status:'待排产',notes:'',items:items};
+  /* 2026-10-07.137：下推即写入稳定外键 deliveryPlanNo（取自交付计划编号），此后归属不再依赖数组索引（防漂移 R1） */
+  const np={id:ppNextId(),deliveryIdx:di,deliveryPlanNo:(deliveries[di]&&deliveries[di].planNo)||'',orderId:d.orderId,customer:d.customer||'',finalDate:fmtDate(d.finalDate),planDate:fmtDate(d.finalDate)||todayStr(),status:'待排产',notes:'',items:items};
   window.__ppPending=np;
   switchTab('prodPlan');
   prodPlanModal(-1,np);
@@ -4779,12 +4787,13 @@ function prodPlanModal(idx,prefill){
   /* 明细行：总计划数=交付计划行 planQty；已排产=同交付计划同产品其他排产单之和（编辑排除自身）；
      未排产=总−已排产；本次排产数可编辑（默认：下推/复制=未排产，编辑=当前 planQty；独立单不限制显示 —） */
   let rows='';
+  const pdi=ppDlIdxOf(p);   /* 2026-10-07.137：来源交付计划索引经唯一解析入口（外键优先，抗漂移） */
   items.forEach((it,i)=>{
     const stepsDef=stepsDefOf(p,it);
     /* 2026-08-25.24：同产品多行明细时按行级 dlLine 计算总计划/已排产（存量无 dlLine 自动回退产品级） */
     const dlLine=it.dlLine!=null?it.dlLine:null;
-    const total=ppTotalOfLine(p.deliveryIdx,dlLine,it.productId);
-    const already=ppPlannedOfLine(p.deliveryIdx,dlLine,it.productId,idx>=0?idx:null);
+    const total=ppTotalOfLine(pdi,dlLine,it.productId);
+    const already=ppPlannedOfLine(pdi,dlLine,it.productId,idx>=0?idx:null);
     const remain=(total!=null)?Math.max(0,total-already):null;
     let defVal;
     if(!isNew)defVal=ppPlanOf(it);                      // 编辑已有单：当前数量
@@ -4800,7 +4809,7 @@ function prodPlanModal(idx,prefill){
       stepsDef.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+
       '<td style="font-size:12px;color:var(--muted);max-width:160px">'+esc(it.lineNotes||'')+'</td></tr>';
   });
-  const srcTxt=(p.deliveryIdx!=null)?('#'+(p.deliveryIdx+1)+' · 订单 '+esc(p.orderId)):'';
+  const srcTxt=(pdi!=null)?('#'+(pdi+1)+' · 订单 '+esc(p.orderId)):'';
   const body='<div class="form-row">'+
     '<div><label>排产单号'+(isNew?'（保存后自动生成）':'')+' *</label><input type="text" id="pp_id" value="'+(isNew?'待生成':esc(p.id))+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
     '<div><label>来源交付计划</label><input type="text" value="'+srcTxt+'" readonly style="background:#f6f8fa;color:var(--muted)"></div>'+
@@ -4831,6 +4840,7 @@ function saveProdPlan(idx){
   const p=(idx>=0)?productionPlans[idx]:(window.__ppPending||null);
   if(!p){alert('下推数据缺失，请重新操作');return;}
   const status=p.status;   /* 2026-08-25.27：状态不可手动编辑，由系统自动转变（投产/报工完工） */
+  const pdi=ppDlIdxOf(p);   /* 2026-10-07.137：来源交付计划索引经唯一解析入口（外键优先，抗漂移） */
   const srcItems=ppItems(p);
   /* 逐行读取本次排产数量：留空/0=该行本次不排；校验 ≤ 未排产、且不能低于已完成数 */
   const finalItems=[];
@@ -4843,8 +4853,8 @@ function saveProdPlan(idx){
     if(isNaN(q)||q<=0)continue;
     /* 2026-08-25.24：同产品多行明细时按行级 dlLine 校验（存量无 dlLine 自动回退产品级） */
     const dlLine=it.dlLine!=null?it.dlLine:null;
-    const total=ppTotalOfLine(p.deliveryIdx,dlLine,it.productId);
-    const already=ppPlannedOfLine(p.deliveryIdx,dlLine,it.productId,idx>=0?idx:null);
+    const total=ppTotalOfLine(pdi,dlLine,it.productId);
+    const already=ppPlannedOfLine(pdi,dlLine,it.productId,idx>=0?idx:null);
     const remain=(total!=null)?Math.max(0,total-already):null;
     if(remain!=null&&q>remain){
       alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 超过未排产 '+money(remain)+'，请调整（同一交付计划多次排产合计不能超过总计划数）。');
@@ -4878,6 +4888,8 @@ function saveProdPlan(idx){
       });
     }
     p.planDate=planDate;p.finalDate=finalDate;p.status=status;p.notes=notes;p.materialReadyDate=materialReadyDate;p.items=finalItems;
+    /* 2026-10-07.137：保存时按当前解析结果刷新稳定外键（存量无外键单首次编辑即补上；来源计划已删则清空） */
+    p.deliveryPlanNo=(pdi!=null&&deliveries[pdi]&&deliveries[pdi].planNo)?deliveries[pdi].planNo:'';
     logFieldDiffs('排产计划',HARD_FIELDS.prodPlan,old,p,p.id);
     logOp('编辑','排产计划','排产单「'+p.id+'」调整排产数量/信息');
   }else{
@@ -4890,7 +4902,7 @@ function saveProdPlan(idx){
     finalItems.forEach(it=>{
       maxSeq++;
       const np={id:'PSCD-'+today+'-'+String(maxSeq).padStart(3,'0'),
-        deliveryIdx:p.deliveryIdx,orderId:p.orderId,customer:p.customer||'',
+        deliveryIdx:p.deliveryIdx,deliveryPlanNo:p.deliveryPlanNo||'',orderId:p.orderId,customer:p.customer||'',
         finalDate:fmtDate(finalDate),planDate:fmtDate(planDate),status:status,notes:notes,
         items:[it]};
       productionPlans.push(np);
@@ -4911,6 +4923,7 @@ function copyProdPlan(i){
   c.status='待排产';
   c.notes='';
   c.deliveryIdx=null;   /* 复制单为独立排产（不占原交付计划额度，本次排产数量可自由调整） */
+  c.deliveryPlanNo='';  /* 2026-10-07.137：独立单必须清空稳定外键（否则 ppDlIdxOf 会把独立单重新绑回原交付计划） */
   c.items.forEach(it=>{
     const q=num(it.planQty);
     const def=Array.isArray(it.stepsDef)&&it.stepsDef.length?it.stepsDef:DEFAULT_TPL_STEPS;
@@ -5182,8 +5195,9 @@ async function saveReport(pi){
 /* 2026-08-25.40：排产单行 → 来源订单行索引（经 交付计划行 orderLine；.24 dlLine → .33/.34 orderLine 链路）。
    无 dlLine（存量排产单）/ 独立单（deliveryIdx=null）/ 交付计划行无 orderLine → 返回 null（回退产品级首行） */
 function ppOrderLineOf(p,it){
-  if(p.deliveryIdx==null||it.dlLine==null)return null;
-  const dl=deliveries[p.deliveryIdx];
+  const pdi=ppDlIdxOf(p);   /* 2026-10-07.137：经唯一解析入口（外键优先，抗漂移） */
+  if(pdi==null||it.dlLine==null)return null;
+  const dl=deliveries[pdi];
   if(!dl)return null;
   const drow=deliveryItems(dl)[it.dlLine];
   return (drow&&drow.orderLine!=null)?drow.orderLine:null;
@@ -5512,11 +5526,34 @@ function doSaveDelivery(d,idx){
   renderContent();
 }
 
-function delDelivery(idx){
+/* 2026-10-07.137：删除交付计划后按稳定外键重排全部排产单的 deliveryIdx（事故根因 R1 防复发）。
+   背景：原实现只做 deliveries.splice 且全工程无任何地方重排 productionPlans[].deliveryIdx
+   → 删一张交付计划，后续排产单引用集体前移一位，指向别人的交付计划（进而串料）。
+   规则：有 deliveryPlanNo 的单 → 按编号重新定位索引；目标计划已删 → deliveryIdx 置 null
+   （退化为不占额度的独立单，与其 plan/done 同时退出归集自洽）；无外键的存量单保持原样。
+   返回被修正的排产单数。 */
+function relinkProdPlanDeliveryIdx(){
+  let n=0;
+  productionPlans.forEach(p=>{
+    if(!p||!p.deliveryPlanNo)return;
+    const i=deliveries.findIndex(d=>d&&String(d.planNo||'')===String(p.deliveryPlanNo));
+    const to=i>=0?i:null;
+    if(p.deliveryIdx!==to){p.deliveryIdx=to;n++;}
+  });
+  return n;
+}
+/* 2026-10-07.137：单条删除交付计划——deliveries 与 productionPlans 由两次独立写改为**同一次 DB.tx**
+   （.125 方向：消灭「交付计划已删、排产单引用未重排」的非原子中间态）；失败 → DB.tx 已复原内存 → 不渲染成功态。 */
+async function delDelivery(idx){
   if(!confirm('确认删除该交付计划？'))return;
   logOp('删除','交付计划','删除交付计划「'+deliveries[idx].orderId+'」('+deliveries[idx].customer+')');
   deliveries.splice(idx,1);
-  save('deliveries',deliveries);
+  const rl=relinkProdPlanDeliveryIdx();
+  const ops=[{key:'deliveries',value:deliveries}];
+  if(rl)ops.push({key:'productionPlans',value:productionPlans});
+  const ok=await DB.tx(ops,false);
+  if(!ok)return;
+  if(rl)logOp('系统','交付计划','删除交付计划后按编号重排 '+rl+' 张排产单的来源引用（防索引漂移）');
   renderContent();
 }
 
@@ -6482,7 +6519,7 @@ async function bulkDelete(m){
     else pushLogEntry(makeLogEntry('删除',m,'删除记录'));
   });
   /* .125：业务表只做内存 splice（不写盘），并只把这**实际变化的那一张表**放进事务 */
-  let dataOp=null,blocked=[];
+  let dataOp=null,blocked=[],extraOps=[];
   if(m==='product'){idxs.forEach(i=>products.splice(i,1));dataOp={key:'products',value:products};}
   else if(m==='order'||m==='order_frame'||m==='order_inv'){idxs.forEach(i=>orders.splice(i,1));dataOp={key:'orders',value:orders};}
   else if(m==='prodPlan'){
@@ -6491,9 +6528,14 @@ async function bulkDelete(m){
     dataOp={key:'productionPlans',value:productionPlans};
   }
   else if(m==='processTpl'){idxs.forEach(i=>processTemplates.splice(i,1));dataOp={key:'processTemplates',value:processTemplates};}
-  else if(m==='delivery'){idxs.forEach(i=>deliveries.splice(i,1));dataOp={key:'deliveries',value:deliveries};}
+  else if(m==='delivery'){
+    idxs.forEach(i=>deliveries.splice(i,1));
+    dataOp={key:'deliveries',value:deliveries};
+    /* 2026-10-07.137：删除后按稳定外键重排排产单来源引用（防索引漂移 R1）；有变化才并入同一次事务 */
+    if(relinkProdPlanDeliveryIdx())extraOps=[{key:'productionPlans',value:productionPlans}];
+  }
   if(!dataOp)return;   /* 防御：未知表单不落库（FORM_ACTIONS 已过滤，正常不会走到） */
-  const ok=await DB.tx([dataOp,{key:'logs',value:logs}],false);
+  const ok=await DB.tx([dataOp].concat(extraOps).concat([{key:'logs',value:logs}]),false);
   if(!ok)return;   /* 失败：一字未写、内存已回灌服务器真值 → 不清勾选、不渲染成成功态 */
   if(blocked.length>0)alert('已删除待排产排产计划；跳过 '+blocked.length+' 条（非待排产，仅待排产可删除）：'+blocked.join('、'));
   clearSel(m);
@@ -6877,7 +6919,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.136</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.137</div>
 </body>
 </html>
 

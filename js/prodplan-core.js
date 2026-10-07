@@ -55,13 +55,28 @@ function ppWeekRange(d){
   date.setDate(date.getDate()+6);
   return [start,fmtDate(date)];
 }
+/* 2026-10-07.137：排产单 → 交付计划索引的**唯一解析入口**（事故根因 R1 防复发）。
+   背景：deliveries 删除只做 splice，全工程无任何地方重排 productionPlans[].deliveryIdx
+   → 删除一张交付计划后，后续排产单 deliveryIdx 集体前移，指向别人的交付计划（进而串料）。
+   口径：优先用稳定外键 deliveryPlanNo 在 deliveries 中按编号查索引（抗索引漂移）；
+   查不到（存量无外键 / 目标计划已删）→ 回退存储索引 deliveryIdx（越界返回 null）。
+   独立单（deliveryIdx=null，复制单）恒返回 null —— 不占交付计划额度，与改造前逐字一致。 */
+function ppDlIdxOf(p){
+  if(!p||p.deliveryIdx==null)return null;
+  const no=p.deliveryPlanNo;
+  if(no){
+    const i=deliveries.findIndex(function(d){return d&&String(d.planNo||'')===String(no);});
+    if(i>=0)return i;
+  }
+  return deliveries[p.deliveryIdx]?p.deliveryIdx:null;
+}
 /* 需求 2026-08-24.7：同一交付计划 + 同一产品，已下推的排产数量总和（编辑时 excludeIdx 排除自身） */
 function ppPlannedOf(deliveryIdx,productId,excludeIdx){
   if(deliveryIdx==null)return 0;
   let s=0;
   productionPlans.forEach((p,idx)=>{
     if(idx===excludeIdx)return;
-    if(p.deliveryIdx!==deliveryIdx)return;
+    if(ppDlIdxOf(p)!==deliveryIdx)return;
     if(p.status==='已取消')return;   /* 2026-08-24.16：已取消排产单不计入已排产（释放额度） */
     ppItems(p).forEach(it=>{ if((it.productId||'')===(productId||'')) s+=num(it.planQty); });
   });
@@ -90,13 +105,13 @@ function ppPlannedOfLine(deliveryIdx,dlLine,productId,excludeIdx){
   if(dlLine==null)return ppPlannedOf(deliveryIdx,productId,excludeIdx);
   /* 同单存在无 dlLine 的存量行（老格式）时无法按行区分 → 回退产品级聚合 */
   const hasLegacy=productionPlans.some((p,idx)=>{
-    if(idx===excludeIdx||p.deliveryIdx!==deliveryIdx||p.status==='已取消')return false;
+    if(idx===excludeIdx||ppDlIdxOf(p)!==deliveryIdx||p.status==='已取消')return false;
     return ppItems(p).some(it=>it.dlLine==null);
   });
   if(hasLegacy)return ppPlannedOf(deliveryIdx,productId,excludeIdx);
   let s=0;
   productionPlans.forEach((p,idx)=>{
-    if(idx===excludeIdx||p.deliveryIdx!==deliveryIdx||p.status==='已取消')return;
+    if(idx===excludeIdx||ppDlIdxOf(p)!==deliveryIdx||p.status==='已取消')return;
     ppItems(p).forEach(it=>{ if(it.dlLine===dlLine)s+=num(it.planQty); });
   });
   return s;
@@ -106,7 +121,7 @@ function ppPlannedTotal(deliveryIdx){
   if(deliveryIdx==null)return 0;
   let planned=0;
   productionPlans.forEach(p=>{
-    if(p.deliveryIdx!==deliveryIdx)return;
+    if(ppDlIdxOf(p)!==deliveryIdx)return;
     if(p.status==='已取消')return;   /* 取消=释放额度，不计入已排产 */
     ppItems(p).forEach(it=>{planned+=num(it.planQty);});
   });
