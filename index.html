@@ -5037,7 +5037,7 @@ function ppShiftCustom(type,inp){
   if(isNaN(v)||v<1||v>365){alert('请输入 1~365 的整数天数');inp.focus();return;}
   ppShiftDays(type,v);
 }
-/* 批量延后/提前：待排产/生产中可操作，已完成/已取消跳过；提前不低于今天（钳制+提示）；执行后幽灵勾选清理（.64） */
+/* 批量延后/提前：待排产/生产中可操作，已完成/已取消跳过；延后无上限、提前不设下限（.136 取消「提前不低于今天」的钳制+提示，可直接落到今天之前的过去日期）；执行后幽灵勾选清理（.64） */
 function ppShiftDays(type,days){
   if(!needAct('prodPlan.ppShift'))return;   /* .119：动作键 ppShift（默认车间） */
   const s=selSet('prodPlan');
@@ -5045,9 +5045,8 @@ function ppShiftDays(type,days){
   const idxs=[...s].map(Number);
   const dir=type==='delay'?1:-1;
   const act=type==='delay'?'延后':'提前';
-  const today=todayStr();
-  let done=0,skipped=0,clamped=0;
-  const skippedIds=[],clampedIds=[];
+  let done=0,skipped=0;
+  const skippedIds=[];
   idxs.forEach(pi=>{
     const p=productionPlans[pi];
     if(!p)return;
@@ -5056,8 +5055,7 @@ function ppShiftDays(type,days){
     if(isNaN(d.getTime())){skipped++;skippedIds.push(p.id);return;}
     const oldDate=fmtDate(p.planDate);
     d.setDate(d.getDate()+dir*days);
-    let nd=fmtDate(d);
-    if(type==='advance'&&nd<today){nd=today;clamped++;clampedIds.push(p.id);}
+    const nd=fmtDate(d);
     p.planDate=nd;
     done++;
     logOp(act,'排产计划','排产单「'+p.id+'」计划日期 '+oldDate+' → '+nd);
@@ -5069,8 +5067,7 @@ function ppShiftDays(type,days){
   idxs.forEach(pi=>{const p=productionPlans[pi];if(p&&!prodPlanRowVisibleInDom(p.id))clearHiddenProdPlanSel(pi);});
   let msg='已'+act+' '+done+' 条';
   if(skipped>0)msg+='；跳过 '+skipped+' 条（已完成/已取消）：'+skippedIds.join('、');
-  if(clamped>0)msg+='；'+clamped+' 条已'+act+'到今天（原计划日期早于今天）：'+clampedIds.join('、');
-  if(skipped>0||clamped>0)alert(msg);
+  if(skipped>0)alert(msg);
 }
 /* 2026-08-25.29：反投产——选中多条「生产中」排产计划转回「待排产」；
    已报工（有报工明细记录 或 任一行累计完成>0）无法反投产；仅生产中可反投产（待排产/已完成跳过） */
@@ -6880,7 +6877,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-06.135</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.136</div>
 </body>
 </html>
 
