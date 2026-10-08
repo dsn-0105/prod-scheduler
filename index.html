@@ -5642,7 +5642,7 @@ function guardRestoreDelivered(rows){
   (rows||[]).forEach(g=>{if(g.item&&g.beforeDelivered!=null)g.item.deliveredQty=g.beforeDelivered;});
 }
 /* ═══════ 2026-10-07.139：全库不变量一键自检（用户 2026-10-07 要求；**全部只读**，不改任何数据） ═══════
-   六项（前五项为「错」，第六项为「提示」）：
+   七项（①~⑤ 与 ⑦ 为「错」，⑥ 为「提示」——仅供核对）：
      ① 报工流水 ≡ 排产单完成量：Σ(报工记录 inbound/finInbound qty) 必须等于 Σ(排产单 ppDoneOf)
         —— 完成量只由报工累加而来，不等 = 有报工没落到完成量（或反之）。
      ② 排产单来源归属自洽：ppDlIdxOf 非空时，交付计划.orderId 必须等于排产单.orderId（R1 复发检测）。
@@ -6969,7 +6969,7 @@ function bulkBar(m){
   /* 2026-08-29.76：计划查询（只读导航，写权限块外）——跳转交付计划并筛选本订单 */
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryDeliveryOfOrder(\''+m+'\')" title="跳转到交付计划并筛选本订单的交付计划（仅限 1 张）">计划查询</button>');
   /* 2026-10-07.139：库存不变量一键自检（只读，置于写权限块外，只读账号亦可用）——全库检查，与选中行无关 */
-  if(m==='order_inv')btns.push('<button class="btn btn-sm" onclick="runInvAudit()" title="只读自检（不改数据）：报工流水≡排产完成量 / 来源归属自洽 / 来源编号齐备 / 完成量未越界 / 入库回写可达 / 欠产清单">不变量自检</button>');
+  if(m==='order_inv')btns.push('<button class="btn btn-sm" onclick="runInvAudit()" title="只读自检（不改数据）：报工流水≡排产完成量 / 来源归属自洽 / 来源编号齐备 / 完成量未越界 / 入库回写可达 / 欠产清单 / 超排核对">不变量自检</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
   /* 2026-09-08.117：表单内「模板/导入」按钮全部隐藏（含此前的灰禁用占位）——数据写入只走业务动作
      （金蝶导入/交付登记/调用库存/下推生成）与「恢复」json，杜绝误导入覆盖；金蝶导入入口保留于销售订单页 */
