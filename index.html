@@ -2775,6 +2775,77 @@ async function fixOverPush20261008(){
   logOp('系统','库存管理','系统修复：超排存量订正——撤销重复下推排产单 '+removed.length+' 张（'+(removed.join('、')||'无')+
     '）、清理报工流水 '+repRemoved.length+' 条'+(skipped.length?('；跳过：'+skipped.join('；')):''));
 }
+/* ═══════ 2026-10-08.142：超排排产单清算（用户 2026-10-08 第 3 轮拍板「把超排的单子删了」） ═══════
+   背景：.141 起「已计划未交付」不再钳制、超排以负数呈现；用户要求把超排的排产单删掉，使
+        Σ已下推排产计划 ≤ Σ交付计划本批计划（超排归零）。.140 订正后全库超排恰 2 行：
+        ① KCDD-20260821-00008 / C02.02.026：本批计划 500、Σ已下推 1400（5×200 已完成 + 280 + 120）→ 超排 900
+           用户选「删在产 2 张 + 已完成 3 张」＝1000 台（**能清掉 900 的最少已完成删除数**：超排量无法由
+           名下 {200×5,280,120} 整数分解，900 需 3 张已完成 + 2 张在产合计 1000 才够）→ 留存
+           PSCD-20260829-001/002（各 200）⇒ Σ已下推 400 ≤ 500。
+        ② KCDD-20260821-00028 / C01.05.010：本批计划 704、Σ已下推 904（6 张已完成 704 + 100 生产中 + 100 待排产）
+           → 超排 200 **恰为两张未完工单** ⇒ 直接删除（done 均为 0、零回退）。
+   语义：**逐字复用 delProdPlan**——回退该单报工入库量（done ↓q 且回写订单「已交付」↓q，**等量相抵故
+        「结余」恒不变**）→ 重算库存投影 → 清理该单自身报工流水 → splice 排产单。
+   前置校验：清单逐张核对 **订单号 + 来源交付计划编号 + Σ计划量**，任一不符 → **跳过并记日志**
+        （宁可不动也不猜；.140 教训：静默跳过既打红测试、人工也无从得知）。
+   幂等：meta.fixOverPushPlans20261008；DB.tx 原子；事务失败复位标记，下次启动重试。
+   ⚠ 判据：**删「已完成」单不改变「结余」**（恒不变），故「结余变没变」不能用来判删得对不对；
+        应看**超排量是否归零 + 恒等式 已交付+已计划未交付=结余 是否成立**。删除已完成单会让库存订单行
+        「已交付」变负（欠产加深）——这是**真实口径**（生产出的实物被撤销入库），不是错误。
+   ⚠ 与 fixOverPush20261008 的关系：两者独立、各自幂等，顺序无关（清单无交集）。 */
+async function fixOverPushPlans20261008(){
+  if(!meta||meta.fixOverPushPlans20261008)return;
+  meta.fixOverPushPlans20261008=true;
+  const DEL=[
+    /* ① KCDD-20260821-00008：先删未完工（零回退），再按最近下推删 3 张已完成 → 共 1000 台 */
+    {id:'PSCD-20261007-001',orderId:'KCDD-20260821-00008',dlNo:'JFJH-20260829-00010',qty:120},
+    {id:'PSCD-20261006-007',orderId:'KCDD-20260821-00008',dlNo:'JFJH-20260829-00010',qty:280},
+    {id:'PSCD-20260829-015',orderId:'KCDD-20260821-00008',dlNo:'JFJH-20260829-00010',qty:200},
+    {id:'PSCD-20260829-014',orderId:'KCDD-20260821-00008',dlNo:'JFJH-20260829-00010',qty:200},
+    {id:'PSCD-20260829-013',orderId:'KCDD-20260821-00008',dlNo:'JFJH-20260829-00010',qty:200},
+    /* ② KCDD-20260821-00028：超排 200 = 两张未完工单，直接删除 */
+    {id:'PSCD-20261005-002',orderId:'KCDD-20260821-00028',dlNo:'JFJH-20261005-00002',qty:100},
+    {id:'PSCD-20260930-021',orderId:'KCDD-20260821-00028',dlNo:'JFJH-20260922-00002',qty:100}
+  ];
+  const removed=[],skipped=[],repRemoved=[];
+  let ordersChanged=false;
+  /* 倒序遍历，splice 不影响未处理项 */
+  for(let i=productionPlans.length-1;i>=0;i--){
+    const p=productionPlans[i];
+    if(!p)continue;
+    const t=DEL.find(x=>x.id===String(p.id));
+    if(!t)continue;
+    const sum=ppItems(p).reduce((s,it)=>s+ppPlanOf(it),0);
+    if(String(p.orderId)!==t.orderId||String(p.deliveryPlanNo||'')!==t.dlNo||sum!==t.qty){
+      skipped.push(t.id+'（不符：订单 '+(p.orderId||'')+' / 来源计划 '+(p.deliveryPlanNo||'空')+' / Σ计划 '+sum+
+        '，清单要求 '+t.orderId+' / '+t.dlNo+' / '+t.qty+'）');
+      continue;
+    }
+    ppItems(p).forEach(it=>{
+      const d=ppDoneOf(it);
+      if(d>0&&writebackInboundMutation(p.orderId,it.productId,-d,ppOrderLineOf(p,it)))ordersChanged=true;
+    });
+    productionPlans.splice(i,1);
+    removed.push(t.id);
+    for(let j=productionReports.length-1;j>=0;j--){
+      if(String(productionReports[j].planId)===t.id){repRemoved.push(productionReports[j].id);productionReports.splice(j,1);}
+    }
+  }
+  if(!removed.length&&!repRemoved.length){
+    /* 无可撤项：通常表示已由离线脚本订正过（上传文件已含标记）。但「前置校验不符」需人工介入，必须留痕。 */
+    if(skipped.length)logOp('系统','库存管理','系统修复：超排排产单清算未执行——待撤排产单前置校验不符，已跳过：'+skipped.join('；')+'。请人工复核后处理。');
+    save('meta',meta);
+    return;
+  }
+  const stockChanged=ordersChanged?recomputeStockFromInvOrders():false;
+  const ops=[{key:'productionPlans',value:productionPlans},{key:'productionReports',value:productionReports},{key:'meta',value:meta}];
+  if(ordersChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,true);
+  if(!ok){meta.fixOverPushPlans20261008=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
+  logOp('系统','库存管理','系统修复：超排排产单清算——撤销超排排产单 '+removed.length+' 张（'+(removed.join('、')||'无')+
+    '）、清理报工流水 '+repRemoved.length+' 条'+(skipped.length?('；跳过：'+skipped.join('；')):''));
+}
 function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
   if(changed){
@@ -7366,6 +7437,7 @@ async function initApp(){
   await fixInvDeliveredDrift20261007();
   // 超排存量订正（2026-10-08.140，一次性幂等：撤销 .137 前索引漂移误导下推产生的重复排产单 + 清理孤儿报工）
   await fixOverPush20261008();
+  await fixOverPushPlans20261008();   // 超排排产单清算（2026-10-08.142，一次性幂等：用户指定的 7 张超排单，见函数头）
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -7449,7 +7521,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-08.141</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-08.142</div>
 </body>
 </html>
 
