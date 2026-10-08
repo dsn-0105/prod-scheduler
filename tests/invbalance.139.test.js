@@ -295,7 +295,7 @@ test('D-3) 前置基线校验：当前值 ≠ 预期基线（0）→ 跳过不�
 /* ================================================================
    §E 全库不变量自检
 ================================================================ */
-test('E-1) 干净库 → 五项检查全通过（欠产清单为提示项）', () => {
+test('E-1) 干净库 → 七项检查全通过（欠产清单为提示项）', () => {
   const orders = [mkInvOrder('K1', [{ pid: 'PA', qty: 1000, dv: 200 }])];
   const deliveries = [mkDel('K1', 'JFJH-1', [{ pid: 'PA', plan: 1000, ol: 0 }])];
   const plans = [mkPlan('P1', 'K1', 0, 'JFJH-1', 'PA', 1000, 400, 0)];
@@ -304,8 +304,11 @@ test('E-1) 干净库 → 五项检查全通过（欠产清单为提示项）', (
   try {
     const r = JSON.parse(app.run('JSON.stringify(auditInvInvariants())'));
     assert.equal(r.ok, true, '不该有异常：' + JSON.stringify(r.checks.filter(function (c) { return !c.ok; })));
-    assert.equal(r.checks.length, 6);
+    /* .140：自检新增第 7 项「超排核对」（用户 2026-10-08 要求），项数 6 → 7 */
+    assert.equal(r.checks.length, 7);
     assert.equal(r.checks[5].info, true, '第 6 项为提示项（欠产清单）');
+    assert.equal(r.checks[6].name, '超排核对', '第 7 项为超排核对（.140 新增）');
+    assert.equal(r.checks[6].ok, true, '干净库（已下推=本批计划）不应有超排');
   } finally { app.dispose(); }
 });
 

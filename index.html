@@ -1133,7 +1133,8 @@ function invStockLevel(v,min,max){
 /* 2026-08-30.92：订单行数量（库存订单=最大库存量 stockMax，销售订单=orderQty；历史空 stockMax 回退 orderQty） */
 function invQtyOf(o,it){return (o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?num(it.stockMax):num(it.orderQty);}
 /* ═══════════ 2026-10-07.139：「已计划未交付 / 结余」取值唯一入口（口径单源，禁止他处再算） ═══════════
-   pu 取自 buildPlannedUndelMap()：{plan:Σ交付计划计划量, done:Σ名下排产单入库累计(排除已取消)}。
+   pu 取自 buildPlannedUndelMap()：{plan:Σ交付计划本批计划, done:Σ名下排产单入库累计(排除已取消)}。
+   超排核对另取 buildPpPushedMap()（.140 新增，键口径同源），**不混入本结构**（守卫/测试依赖其形状稳定）。
    · 已计划未交付 = max(0, plan − done)：**展示列，恒非负**。报工入库量受「不超过本次排产数量」硬校验
      （saveReport），计算逻辑上不会出现负数（用户 2026-10-07 确认）。
    · 结余 = 已交付 + (plan − done)：**不钳制**，欠产以负数呈现（用户 2026-10-07 要求）。
@@ -1147,6 +1148,42 @@ function invPuOf(puMap,orderId,li,productId){
 }
 function invPlannedUndelOf(pu){return pu?Math.max(0,num(pu.plan)-num(pu.done)):0;}
 function invBalanceOf(delivered,pu){return num(delivered)+(pu?(num(pu.plan)-num(pu.done)):0);}
+/* ═══════ 2026-10-08.140：超排（Σ已下推排产计划 > Σ交付计划本批计划）核对入口（口径单源） ═══════
+   语义：同一订单行「已下推排产单的计划量合计」超过「交付计划本批计划合计」——即**重复下推**或计划被削。
+   后果：done 随之虚高 →「已计划未交付」被 max(0,·) 吃成 0（用户 2026-10-08 报障 C01.03.009 即此症），
+         且「结余」与「已计划未交付」出现差值（.139 已定：两列钳制规则不同，差额来源即超排）。
+   口径：pushed 与 done **同源同键**（ppDoneKeyOf），故本判定与展示列永不脱节。
+   放置：**独立 map**，不并入 buildPlannedUndelMap（后者结构被守卫/测试以 deepEqual 钉住，须保持形状稳定）。
+   只读：仅用于角标提示与自检，不参与任何数值计算、不改数据。 */
+function buildPpPushedMap(){
+  const m={};
+  productionPlans.forEach(pp=>{
+    if(pp.status==='已取消')return;
+    const di=ppDlIdxOf(pp);
+    if(di==null)return;
+    const d=deliveries[di];
+    if(!d)return;
+    ppItems(pp).forEach(y=>{
+      const k=ppDoneKeyOf(d,y);
+      if(!m[k])m[k]={pushed:0,list:[]};
+      m[k].pushed+=ppPlanOf(y);
+      m[k].list.push({id:pp.id,plan:ppPlanOf(y),date:pp.planDate||''});
+    });
+  });
+  return m;
+}
+/* 超排量 = Σ已下推排产计划 − Σ交付计划本批计划（>0 = 重复下推 / 计划被削）。取用一律经 invPuOf（同款回退）。 */
+function invOverPushOf(pu,ps){return (pu&&ps)?Math.max(0,num(ps.pushed)-num(pu.plan)):0;}
+/* 超排悬浮说明（多行文案）：列出名下排产单，指明处置路径。无超排返回空串（调用方据此不画图标）。 */
+function invOverPushTip(pu,ps){
+  const over=invOverPushOf(pu,ps);
+  if(over<=0)return '';
+  const lines=['超排 '+money(over)+' 台：已下推排产单合计 '+money(ps.pushed)+'，交付计划本批计划合计 '+money(pu.plan)+'。'];
+  (ps.list||[]).forEach(x=>lines.push('· '+x.id+' 计划 '+money(x.plan)+(x.date?('（排产日 '+fmtDate(x.date)+'）'):'')));
+  lines.push('「已计划未交付」按交付计划本批计划计算，超排部分不计入本列（故与「结余」存在差值）。');
+  lines.push('多为一交付计划被重复下推所致，请到排产计划页核对并删除多余排产单。');
+  return lines.join('\n');
+}
 /* 2026-08-30.90：库存订单行「一句话总结」（用户口径：已交付=当前实物库存余量，结余=未来预期库存）——
    组合覆盖 7 种状态：欠货+计划补足/欠货+计划不足/欠货+计划过量/缺货无计划/缺货有计划/正常/积压；欠货统一加「需要尽快生产」 */
 function invRowSummary(dq,balance,min,max,lvD,lvB){
@@ -2655,6 +2692,82 @@ async function fixInvDeliveredDrift20261007(){
   if(!ok){meta.fixInvDeliveredDrift20261007=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
   logOp('系统','库存管理','系统修复：「'+ORDER+'」'+PROD+' 已交付订正 '+EXPECT+' → '+(EXPECT-DRIFT)+'（10-06 报工回写残留 +200，恢复「报工不改变结余」不变量）');
 }
+/* ═══════ 2026-10-08.140：「超排」存量订正——撤销重复下推的排产单（用户 2026-10-08 决策 D1.A / D2.A / D3.B） ═══════
+   背景（取证见 _diag/c0103009-诊断报告.md、_diag/pu-basis-口径核对报告.md、_diag/fix-dryrun.txt）：
+     .137 修复前 deliveryIdx 漂移 → 下推校验取到的「已排产」恒为 0 → 弹窗显示「未排产 100」误导用户重复下推，
+     产生「同一交付计划本批计划仅 200 却挂两张各 200、且均已报工入库」的重复单（10-06 批量集中发生）。
+     重复单使 done 虚高：把「已计划未交付」吃成 0（用户预期 200），并把该量塞进「已交付」（虚增）。
+   订正动作（逐字复刻 delProdPlan 既有语义：回退订单已交付 → 重算库存投影 → 移除排产单）：
+     D1 删 PSCD-20260829-005  KCDD-20260821-00027 / C01.03.009  重复 200
+        保留 -007：两张内容逐字段全同，唯一区分点是 .138 重绑前 -005 的 deliveryIdx=31 指向**别家订单**
+        （JFJH-20260830-00002，原始绑定已废），-007 的 28 恰为本交付计划（原始绑定自洽）→ 数据侧认定 -005 为多出者。
+        效果：该行 已交付 220→20、已计划未交付 0→200、结余恒 220（= 用户 2026-10-08 给的三个预期值）。
+     D2 删 PSCD-20261006-004  KCDD-20260821-00026 / C01.02.012  重复 100
+        删 PSCD-20261006-003  KCDD-20260821-00004 / C04.04.004  重复  50
+        （两张与 -005/-006 为同批连号创建、排产日统一填 9-28、同日 16:11~16:14 集中报工 → 同一次重复下推的产物）
+     D3 清除孤儿报工 REP-20260824-001..004（planId 指向已不存在的 PSCD-20260824-001/002）；
+        同时连带删除 3 张被撤单自身的报工流水（REP-20261006-015 / -027 / -028），避免制造新的孤儿记录。
+   **不在本次范围**：KCDD-20260821-00008 / C02.02.026 超排 900 —— 系用户主动删除 1100 交付计划所致（非系统故障）。
+   前置校验（宁可不动也不猜）：每张待删单的 orderId + deliveryPlanNo 必须与清单完全一致，否则整项跳过并记日志。
+   幂等：meta.fixOverPush20261008；原子：productionPlans + productionReports + orders/products + meta 一次 DB.tx；
+       失败 → 标记复位（内存由 DB.tx 复原），下次启动幂等重试。 */
+async function fixOverPush20261008(){
+  if(!meta||meta.fixOverPush20261008)return;
+  meta.fixOverPush20261008=true;
+  const DEL=[
+    {id:'PSCD-20260829-005',orderId:'KCDD-20260821-00027',dlNo:'JFJH-20260829-00009'},
+    {id:'PSCD-20261006-004',orderId:'KCDD-20260821-00026',dlNo:'JFJH-20260829-00005'},
+    {id:'PSCD-20261006-003',orderId:'KCDD-20260821-00004',dlNo:'JFJH-20260829-00003'}
+  ];
+  const ORPHAN=['REP-20260824-001','REP-20260824-002','REP-20260824-003','REP-20260824-004'];
+  const removed=[],skipped=[],repRemoved=[];
+  let ordersChanged=false;
+  /* 倒序遍历，splice 不影响未处理项 */
+  for(let i=productionPlans.length-1;i>=0;i--){
+    const p=productionPlans[i];
+    if(!p)continue;
+    const t=DEL.find(x=>x.id===String(p.id));
+    if(!t)continue;
+    if(String(p.orderId)!==t.orderId||String(p.deliveryPlanNo||'')!==t.dlNo){
+      skipped.push(t.id+'（归属不符：订单 '+(p.orderId||'')+' / 来源计划 '+(p.deliveryPlanNo||'空')+
+        '，清单要求 '+t.orderId+' / '+t.dlNo+'）');
+      continue;
+    }
+    ppItems(p).forEach(it=>{
+      const d=ppDoneOf(it);
+      if(d>0&&writebackInboundMutation(p.orderId,it.productId,-d,ppOrderLineOf(p,it)))ordersChanged=true;
+    });
+    productionPlans.splice(i,1);
+    removed.push(t.id);
+    for(let j=productionReports.length-1;j>=0;j--){
+      if(String(productionReports[j].planId)===t.id){repRemoved.push(productionReports[j].id);productionReports.splice(j,1);}
+    }
+  }
+  /* D3：孤儿报工（白名单精确删除；仅在确无对应排产单时才删，防误删同名复用单） */
+  for(let j=productionReports.length-1;j>=0;j--){
+    const r=productionReports[j];
+    if(!r||ORPHAN.indexOf(String(r.id))<0)continue;
+    const pid=String(r.planId==null?'':r.planId);
+    const alive=productionPlans.some(x=>String(x.id)===pid)||(/^\d+$/.test(pid)&&!!productionPlans[Number(pid)]);
+    if(alive)continue;
+    repRemoved.push(r.id);productionReports.splice(j,1);
+  }
+  if(!removed.length&&!repRemoved.length){
+    /* 无可订正项：通常表示已由离线脚本订正过（上传文件已含标记）或数据本已干净。
+       但「归属校验不符」属**需要人工介入**的情形，必须留痕，不能静默跳过。 */
+    if(skipped.length)logOp('系统','库存管理','系统修复：超排存量订正未执行——待撤排产单归属校验不符，已跳过：'+skipped.join('；')+'。请人工复核后处理。');
+    save('meta',meta);
+    return;
+  }
+  const stockChanged=ordersChanged?recomputeStockFromInvOrders():false;
+  const ops=[{key:'productionPlans',value:productionPlans},{key:'productionReports',value:productionReports},{key:'meta',value:meta}];
+  if(ordersChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,true);
+  if(!ok){meta.fixOverPush20261008=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
+  logOp('系统','库存管理','系统修复：超排存量订正——撤销重复下推排产单 '+removed.length+' 张（'+(removed.join('、')||'无')+
+    '）、清理报工流水 '+repRemoved.length+' 条'+(skipped.length?('；跳过：'+skipped.join('；')):''));
+}
 function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
   if(changed){
@@ -2998,6 +3111,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
   const rows=[];
   typeOrders.forEach(({o,i})=>{orderItems(o).forEach((it,li)=>rows.push({order:o,item:it,orderIdx:i,__li:li}));});
   const puMap=buildPlannedUndelMap();          // 2026-08-25.17：新口径已计划未交付预计算
+  const pushedMap=buildPpPushedMap();          // 2026-10-08.140：已下推排产计划合计（超排角标用，只读）
   /* 2026-09-19.128：整单状态按订单预计算一次（行内零重复遍历），供「调用状态/交付状态」两列 get 共用 */
   const ordStatMap=new Map();
   typeOrders.forEach(({o})=>{if(!ordStatMap.has(o.id))ordStatMap.set(o.id,orderStatusOf(o));});
@@ -3118,6 +3232,11 @@ function renderOrderTable(formKey,typeOrders,prodMap){
        已计划未交付 = max(0, plan−done) 恒非负；结余 = 已交付+(plan−done) 不钳制（欠产为负） */
     const pu=invPuOf(puMap,o.id,r.__li,it.productId);
     const plannedUndel=invPlannedUndelOf(pu);
+    /* 2026-10-08.140（D5）：超排黄色角标——已下推排产计划合计 > 交付计划本批计划合计时，
+       「已计划未交付」会被 max(0,·) 掩盖成 0（超排看不见），故在本列加警示图标 + 悬浮说明。
+       与「已交付/结余」4 档警示同款 svg（warnTriSvg），不影响数值口径。 */
+    const _ps=invPuOf(pushedMap,o.id,r.__li,it.productId);
+    const overTri=(formKey==='order_inv'&&invOverPushOf(pu,_ps)>0)?warnTriSvg('#f59e0b',invOverPushTip(pu,_ps)):'';
     /* 2026-08-25.60：结余（仅库存订单），同款三角警示——低于最小库存→红、高于最大库存→黄；负数恒红 */
     const balance=invBalanceOf(dq,pu);
     /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，同进度列口径，可>100%） */
@@ -3187,7 +3306,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
       '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvD==='red'?warnTriSvg('#ef4444',sumTxt):(lvD==='amber'?warnTriSvg('#f59e0b',sumTxt):(lvD==='gray'?warnTriSvg('#9ca3af',sumTxt):'')))+money(dq)+'</td>'+
       (formKey!=='order_inv'?'<td data-key="calledQty" style="font-variant-numeric:tabular-nums;text-align:right">'+crossTri+(num(it.calledQty)>0?money(it.calledQty):'')+'</td>':'')+   /* 2026-09-18.127：跨料替代黄色三角置于数量左侧；数值口径不变 */
       (formKey!=='order_inv'?'<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>':'')+
-      (formKey!=='order_frame'?'<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(plannedUndel)+'</td>':'')+
+      (formKey!=='order_frame'?'<td data-key="_plannedUndel" style="font-variant-numeric:tabular-nums;text-align:right">'+overTri+money(plannedUndel)+'</td>':'')+
       (formKey==='order_inv'?'<td data-key="_balance" style="font-variant-numeric:tabular-nums;text-align:right">'+(lvB==='red'?warnTriSvg('#ef4444',sumTxt):(lvB==='amber'?warnTriSvg('#f59e0b',sumTxt):(lvB==='gray'?warnTriSvg('#9ca3af',sumTxt):'')))+money(balance)+'</td>':'')+
       /* 2026-08-25.61：结余进度（进度条+百分比，同交付进度列样式）；.63 起颜色随 4 档状态（红/黄/绿/灰） */
       (formKey==='order_inv'?'<td data-key="_balPct" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(balPct)+'%'+balBarCls+'"></div></div><span style="font-size:11px'+balTxtCls+'">'+balPct+'%</span></div></td>':'')+
@@ -4943,12 +5062,16 @@ function prodPlanModal(idx,prefill){
     if(!isNew)defVal=ppPlanOf(it);                      // 编辑已有单：当前数量
     else if(remain!=null)defVal=remain>0?remain:0;      // 下推：默认=未排产
     else defVal=ppPlanOf(it);                           // 独立单（复制）：原数量
+    /* 2026-10-08.140（D4/P1）：输入框上限。编辑已有单放宽为 max(未排产, 本行当前计划量)——
+       超排使「未排产」算成 0 时，仍可保持原量/缩小（**不许放大**），编辑弹窗不再被锁死。
+       下推（isNew）严格 ≤ 未排产；独立单（remain=null）不加 max，行为同前。 */
+    const capIn=(remain!=null)?(isNew?remain:Math.max(remain,ppPlanOf(it))):null;
     rows+='<tr>'+
       '<td>'+esc(it.productId)+'</td><td>'+esc(it.productName)+'</td><td>'+esc(it.model||'')+'</td><td>'+esc(it.spec||'')+'</td><td>'+esc(it.unit||'')+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(total!=null?money(total):'—')+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right">'+(total!=null?money(already):'—')+'</td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+(remain!=null?money(remain):'—')+'</td>'+
-      '<td style="text-align:center"><input type="number" class="pp_qty" data-li="'+i+'" min="0" '+(remain!=null?('max="'+remain+'"'):'')+' value="'+defVal+'" style="width:88px"></td>'+
+      '<td style="text-align:center"><input type="number" class="pp_qty" data-li="'+i+'" min="0" '+(capIn!=null?('max="'+capIn+'"'):'')+' value="'+defVal+'" style="width:88px"></td>'+
       '<td style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppDoneOf(it))+'</td>'+
       stepsDef.map(x=>'<td style="font-variant-numeric:tabular-nums;text-align:right;font-size:12px">'+money(ppStepDone(it,x.key))+'</td>').join('')+
       '<td style="font-size:12px;color:var(--muted);max-width:160px">'+esc(it.lineNotes||'')+'</td></tr>';
@@ -5000,8 +5123,15 @@ function saveProdPlan(idx){
     const total=ppTotalOfLine(pdi,dlLine,it.productId);
     const already=ppPlannedOfLine(pdi,dlLine,it.productId,idx>=0?idx:null);
     const remain=(total!=null)?Math.max(0,total-already):null;
-    if(remain!=null&&q>remain){
-      alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 超过未排产 '+money(remain)+'，请调整（同一交付计划多次排产合计不能超过总计划数）。');
+    /* 2026-10-08.140（D4/P1）：编辑已有单时上限放宽为 max(未排产, 本行当前计划量)。
+       背景：超排（重复下推）使「未排产」算成 0，而输入框默认回填当前 planQty → 保存必被拦，
+       该排产单被彻底锁死（连改备注都不行，线上 21 张）。
+       口径：**不许放大**（q 不得超过当前计划量），允许保持或缩小；下推（idx<0）仍严格 ≤ 未排产。 */
+    const cap=(remain!=null)?((idx>=0)?Math.max(remain,ppPlanOf(it)):remain):null;
+    if(cap!=null&&q>cap){
+      alert('产品「'+(it.productName||it.productId)+'」本次排产 '+money(q)+' 超过可用上限 '+money(cap)+
+        (idx>=0?('（未排产 '+money(remain)+'；编辑已有单最多保持当前计划量 '+money(ppPlanOf(it))+'）'):'')+
+        '，请调整（同一交付计划多次排产合计不能超过总计划数）。');
       return;
     }
     const stepsDef=stepsDefOf(p,it);
@@ -5521,6 +5651,7 @@ function guardRestoreDelivered(rows){
      ⑤ 入库回写可达：库存订单非取消排产单每行必须能解析到订单明细行——否则报工不会回写「已交付」，
         结余虚减，且运行时守卫会拦住报工（须先修数据）。
      ⑥ 结余为负的行（欠产）——仅供核对，非错误。
+     ⑦ 超排核对：Σ已下推排产计划 > Σ交付计划本批计划（.140 新增）——重复下推/计划被削，会锁死排产单编辑。
    返回 {ok,checks}；runInvAudit() 负责弹窗展示。 */
 function auditInvInvariants(){
   const checks=[];
@@ -5597,6 +5728,21 @@ function auditInvInvariants(){
     });
   });
   checks.push({name:'结余为负（欠产）清单',desc:'欠产以负数呈现属正常口径，此处仅供核对',bad:negBad,ok:true,info:true});
+  /* ⑦ 超排核对（2026-10-08.140 新增，用户 2026-10-08 要求）：
+     Σ已下推排产计划 > Σ交付计划本批计划 = 重复下推 / 计划被削。
+     后果：done 虚高 →「已计划未交付」被钳成 0、与「结余」出现差值；并会锁死该排产单的编辑（见 .140 D4）。 */
+  const overPushBad=[];
+  const pushedMap=buildPpPushedMap();
+  (orders||[]).forEach(o=>{
+    orderItems(o).forEach((it,li)=>{
+      const pu=invPuOf(puMap,o.id,li,it.productId);
+      const ps=invPuOf(pushedMap,o.id,li,it.productId);
+      const ov=invOverPushOf(pu,ps);
+      if(ov>0)overPushBad.push(o.id+' '+(it.productName||it.productId)+'：已下推 '+money(ps.pushed)+
+        ' / 本批计划 '+money(pu.plan)+'，超排 '+money(ov)+'（'+(ps.list||[]).map(x=>x.id).join('、')+'）');
+    });
+  });
+  push('超排核对','Σ已下推排产计划不得超过 Σ交付计划本批计划（超出=重复下推；会使「已计划未交付」被钳为 0、与「结余」出现差值）',overPushBad);
   const ok=checks.filter(c=>!c.ok).length===0;
   return {ok:ok,checks:checks};
 }
@@ -7211,6 +7357,8 @@ async function initApp(){
   await rebindProdPlanDlIdx();
   // 库存「已交付」虚增订正（2026-10-07.139，一次性幂等：C02.02.026 因 R2 修复前的回写残留 +200 → 结余恢复 −700）
   await fixInvDeliveredDrift20261007();
+  // 超排存量订正（2026-10-08.140，一次性幂等：撤销 .137 前索引漂移误导下推产生的重复排产单 + 清理孤儿报工）
+  await fixOverPush20261008();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -7294,7 +7442,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-07.139</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-08.140</div>
 </body>
 </html>
 

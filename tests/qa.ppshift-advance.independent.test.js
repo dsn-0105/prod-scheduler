@@ -570,7 +570,14 @@ function judgeMixedAdvance(obs) {
 }
 
 function runCoreScenario(app) {
-  app.setGlobal('productionPlans', [plan('PSCD-20261007-001', '2026-10-07', '待排产')]);
+  /* 2026-10-08.140 修复（测试自身的时间耦合缺陷，与业务代码无关）：
+     场景日期/单号原为硬编码 '2026-10-07' / 'PSCD-20261007-001'，而 judgeCoreAdvance 以
+     「今天 −1 天」为期望 → **跨日即失败**（10-08 实测报「日期应为 2026-10-07，实际 2026-10-06」：
+     场景日期 10-07 变成了「昨天」，减 1 天得 10-06，而期望始终是 today−1）。
+     改为按运行时「今天」构造，断言与实现同源 → 任何日期运行恒真。 */
+  const t = app.run('todayStr()');
+  const id = 'PSCD-' + t.replace(/-/g, '') + '-001';
+  app.setGlobal('productionPlans', [plan(id, t, '待排产')]);
   app.browser.clearMessages();
   select(app, [0]);
   return observe(app, 'advance', 1);
@@ -646,7 +653,7 @@ test('C2 【对拍】同一输入：新实现 → 过去日期且 0 alert；旧�
   assert.equal(oldObs.alerts.length, 1, '旧实现：必有 1 次 alert');
   assert.ok(/已提前到今天（原计划日期早于今天）/.test(oldObs.alerts[0]),
     '旧实现：提示应精确复现用户原话，实际：' + oldObs.alerts[0]);
-  assert.ok(oldObs.alerts[0].indexOf('PSCD-20261007-001') >= 0, '旧实现：提示应列单号');
+  assert.ok(oldObs.alerts[0].indexOf('PSCD-' + today.replace(/-/g, '') + '-001') >= 0, '旧实现：提示应列单号');
 
   /* 新旧结果必须不同（同输入不同输出 = 行为确实改变） */
   assert.notEqual(newObs.planDates[0], oldObs.planDates[0], '新旧实现结果必须不同');
@@ -817,8 +824,8 @@ test('E1 水印：index.html 恰 1 处 >build '+build.BUILD+'<，上一版本 '+
 });
 
 test('E2 harness 常量与 index.html 实际水印双向一致（防「测了个寂寞」）', function () {
-  assert.equal(build.BUILD, '2026-10-07.139', 'BUILD 必须手写为本次版本');
-  assert.equal(build.PREV, '2026-10-07.138', 'PREV 必须手写为上一版本');
+  assert.equal(build.BUILD, '2026-10-08.140', 'BUILD 必须手写为本次版本');
+  assert.equal(build.PREV, '2026-10-07.139', 'PREV 必须手写为上一版本');
   /* 正向：build.js 的 BUILD 必须能在 index.html 中命中 */
   assert.equal((INDEX_SRC.match(build.buildMarkRe(build.BUILD)) || []).length, 1, 'BUILD 必须命中且恰 1 处');
   /* 反向：用 deploy.sh 的提取式从 index.html 抽出实际水印，必须 === BUILD */
