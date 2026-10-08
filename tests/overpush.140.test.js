@@ -184,7 +184,8 @@ test('C-2) invOverPushTip：有超排 → 含超排量、单号、处置指引',
     const t = app.run('invOverPushTip(invPuOf(buildPlannedUndelMap(),"K1",0,"PA"),invPuOf(buildPpPushedMap(),"K1",0,"PA"))');
     assert.ok(t.indexOf('超排 200') >= 0, '须含超排量：' + t);
     assert.ok(t.indexOf('P-A') >= 0 && t.indexOf('P-B') >= 0, '须列名下排产单：' + t);
-    assert.ok(t.indexOf('已计划未交付') >= 0, '须说明为何与结余有差值');
+    assert.ok(t.indexOf('已计划未交付') >= 0, '须说明「已计划未交付」为何为负');
+    assert.ok(t.indexOf('负数') >= 0, '须点明该列此时为负数（.141 起不钳制，不再被掩盖成 0）');
   } finally { app.dispose(); }
 });
 

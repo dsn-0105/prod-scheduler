@@ -9,18 +9,19 @@
          错误时需要弹窗提醒并退回操作。」
      ③ 「并再加一个检查」（= 全库不变量一键自检）
    背景事故：C02.02.026 结余应 −700、实显 0。两处独立缺陷叠加——
-     缺陷 1（口径）：index.html 用 `Math.max(0, plan−done)` 钳制，本行 500−1000=−500 被钳成 0，
-        欠产时 done 再增不会让「已计划未交付」下降、而「已交付」照常上升 → 破坏「报工不影响结余」不变量；
+     缺陷 1（口径，**已于 .141 废止**）：index.html 当时用 `Math.max(0, plan−done)` 钳制「已计划未交付」，
+        本行 500−1000 = −500 被钳成 0；两列钳制规则不同 → 恒等式「已交付 + 已计划未交付 = 结余」破裂
+        （用户 2026-10-08 追问「为什么加不起来」，遂拍板 B 方案：两列同规则、均不钳制）。
      缺陷 2（数据，孤例）：该行「已交付」虚增 +200（.134~.136 R2 修复前的回写残留；重放不可复现）。
 
-   本文件钉死的口径：
-     §A invPuOf / invPlannedUndelOf / invBalanceOf：唯一取值入口——已计划未交付恒非负、
-        结余不钳制（欠产为负）。
-     §B 展示层：库存页「结余」列渲染负数、「已计划未交付」列渲染 0；负结余 → 4 档警示红。
+   本文件钉死的口径（**§A / §B 的「恒非负」部分已于 .141 按用户拍板改写为不钳制**）：
+     §A invPuOf / invPlannedUndelOf / invBalanceOf：唯一取值入口——两列**同规则不钳制**，
+        恒等式 `已交付 + 已计划未交付 = 结余` 恒成立（超排 / 计划被削时为负数）。
+     §B 展示层：库存页「结余」与「已计划未交付」列均可渲染负数；负结余 → 4 档警示红。
      §C 报工入库守恒守卫：适用范围（库存订单非独立单）+ 通过 / 失败退回（数据零变化）。
      §D fixInvDeliveredDrift20261007：一次性幂等 + 前置基线校验（不符则跳过不动手）。
-     §E auditInvInvariants：六项检查（含缺陷检出）。
-     §F 静态守卫：结余公式全工程只经唯一入口，不得残留裸 `Math.max(0, pu.plan-pu.done)`。
+     §E auditInvInvariants：七项检查（含缺陷检出）。
+     §F 静态守卫：结余/已计划未交付公式全工程只经唯一入口，不得残留裸钳制表达式。
 
    运行：node --test tests/invbalance.139.test.js（**不要用 node -e**，见 tests/README）
    ================================================================ */
@@ -110,11 +111,15 @@ test('A-1) invPuOf：行级 key 优先，产品级 key 回退，空 map/nil 安�
   } finally { app.dispose(); }
 });
 
-test('A-2) invPlannedUndelOf：「已计划未交付」恒非负（done>plan 钳为 0）', () => {
+test('A-2) invPlannedUndelOf：不钳制——超排 / 计划被削时呈负数（.141 用户拍板 B 方案）', () => {
   const app = boot();
   try {
     assert.equal(app.run('invPlannedUndelOf({plan:500,done:200})'), 300);
-    assert.equal(app.run('invPlannedUndelOf({plan:500,done:1000})'), 0, '欠产/超产不得出现负数');
+    assert.equal(app.run('invPlannedUndelOf({plan:500,done:1000})'), -500,
+      '超排时必须呈负数（.139 曾钳为 0，.141 已废止——钳制会让恒等式破裂）');
+    /* 与「结余」同规则：已交付 + 已计划未交付 = 结余 恒成立 */
+    assert.equal(app.run('invPlannedUndelOf({plan:500,done:1000})+(-200)'),
+      app.run('invBalanceOf(-200,{plan:500,done:1000})'), '两列相加必须严格等于结余');
     assert.equal(app.run('invPlannedUndelOf(null)'), 0);
   } finally { app.dispose(); }
 });
@@ -124,7 +129,8 @@ test('A-3) invBalanceOf：结余不钳制，欠产以负数呈现（C02.02.026 �
   try {
     /* 用户案例：plan=500 / done=1000 / 已交付 −200（+200 虚增订正后） */
     assert.equal(app.run('invBalanceOf(-200,{plan:500,done:1000})'), -700, '必须得到用户期望的 −700');
-    /* 同一 pu 下两列口径出现差值：已计划未交付 0、结余 −500（无订正时） */
+    /* 与「已计划未交付」（.141 起不钳制 = −500）相加 → 恒等 */
+    assert.equal(app.run('invPlannedUndelOf({plan:500,done:1000})'), -500);
     assert.equal(app.run('invBalanceOf(0,{plan:500,done:1000})'), -500);
     /* 守恒性：报工 +q（done +q 且 已交付 +q）结余不变 */
     assert.equal(app.run('invBalanceOf(300,{plan:1000,done:300})'), app.run('invBalanceOf(500,{plan:1000,done:500})'));
@@ -137,14 +143,15 @@ test('A-3) invBalanceOf：结余不钳制，欠产以负数呈现（C02.02.026 �
 /* ================================================================
    §B 展示层
 ================================================================ */
-test('B-1) 库存页取值：结余为负、已计划未交付为 0；负结余 → 4 档警示红', () => {
+test('B-1) 库存页取值：结余为负、已计划未交付同为负（.141 不钳制）；负结余 → 4 档警示红', () => {
   const orders = [mkInvOrder('K1', [{ pid: 'PA', qty: 500, dv: -200 }])];
   const deliveries = [mkDel('K1', 'JFJH-1', [{ pid: 'PA', plan: 500, ol: 0 }])];
   const plans = [mkPlan('P1', 'K1', 0, 'JFJH-1', 'PA', 500, 1000, 0)];
   const app = boot({ orders: orders, deliveries: deliveries, productionPlans: plans });
   try {
     /* 与渲染层同一函数（TBL_SCHEMAS 的 get 与行渲染都调它们） */
-    assert.equal(app.run('invPlannedUndelOf(invPuOf(buildPlannedUndelMap(),"K1",0,"PA"))'), 0, '已计划未交付：钳制为 0');
+    assert.equal(app.run('invPlannedUndelOf(invPuOf(buildPlannedUndelMap(),"K1",0,"PA"))'), -500,
+      '已计划未交付：不钳制 → −500（.141）');
     assert.equal(app.run('invBalanceOf(-200,invPuOf(buildPlannedUndelMap(),"K1",0,"PA"))'), -700, '结余：欠产为负');
     /* 负结余 → 4 档警示红；正常区间 → 绿 */
     assert.equal(app.run('invStockLevel(-700,0,500)'), 'red');
@@ -168,7 +175,7 @@ test('B-2) 库存页表格上下文真的渲染出负数结余（DOM 级）', ()
       + 'return {plan:cell("_plannedUndel"),bal:cell("_balance")};'
       + '})())'));
     assert.ok(r.bal !== null && r.bal.indexOf('-700') >= 0, '结余应显示 −700，实际：' + r.bal);
-    assert.ok(r.plan !== null && r.plan.indexOf('0') >= 0, '已计划未交付应显示 0，实际：' + r.plan);
+    assert.ok(r.plan !== null && r.plan.indexOf('-500') >= 0, '已计划未交付应显示 −500（.141 不钳制），实际：' + r.plan);
   } finally { app.dispose(); }
 });
 
@@ -377,4 +384,9 @@ test('F-1) 结余公式只经唯一入口——index.html 不得残留裸钳制�
   assert.ok(INDEX_SRC.indexOf('invBalGuardAlert(') >= 0);
   assert.ok(INDEX_SRC.indexOf('auditInvInvariants(') >= 0);
   assert.ok(INDEX_SRC.indexOf('fixInvDeliveredDrift20261007();') >= 0, '启动序须调用一次性订正');
+  /* .141：两列必须**同规则不钳制**——不得把 max(0,·) 钳制加回「已计划未交付」 */
+  assert.ok(/function invPlannedUndelOf\(pu\)\{return pu\?\(num\(pu\.plan\)-num\(pu\.done\)\):0;\}/.test(INDEX_SRC),
+    'invPlannedUndelOf 必须为不钳制形态（.141 用户拍板 B 方案：恒等式 已交付 + 已计划未交付 = 结余）');
+  assert.equal(/invPlannedUndelOf\(pu\)\{return pu\?Math\.max/.test(INDEX_SRC), false,
+    '不得把 max(0,·) 钳制加回「已计划未交付」——否则恒等式「已交付 + 已计划未交付 = 结余」立刻破裂');
 });

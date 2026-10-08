@@ -1132,26 +1132,33 @@ function invStockLevel(v,min,max){
 }
 /* 2026-08-30.92：订单行数量（库存订单=最大库存量 stockMax，销售订单=orderQty；历史空 stockMax 回退 orderQty） */
 function invQtyOf(o,it){return (o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?num(it.stockMax):num(it.orderQty);}
-/* ═══════════ 2026-10-07.139：「已计划未交付 / 结余」取值唯一入口（口径单源，禁止他处再算） ═══════════
+/* ═══════════ 2026-10-07.139 / .141：「已计划未交付 / 结余」取值唯一入口（口径单源，禁止他处再算） ═══════════
    pu 取自 buildPlannedUndelMap()：{plan:Σ交付计划本批计划, done:Σ名下排产单入库累计(排除已取消)}。
    超排核对另取 buildPpPushedMap()（.140 新增，键口径同源），**不混入本结构**（守卫/测试依赖其形状稳定）。
-   · 已计划未交付 = max(0, plan − done)：**展示列，恒非负**。报工入库量受「不超过本次排产数量」硬校验
-     （saveReport），计算逻辑上不会出现负数（用户 2026-10-07 确认）。
+   · 已计划未交付 = plan − done：**不钳制**（.141，用户 2026-10-08 拍板「B 方案」）。
    · 结余 = 已交付 + (plan − done)：**不钳制**，欠产以负数呈现（用户 2026-10-07 要求）。
-   两列仅在「计划量被削至低于完成量」（done > plan，如删减交付计划、超产报工）时出现差值：
-   此时已计划未交付=0、结余为负——这是有意的列语义差异，不是数据错误。
-   ⚠ 报工不改变结余（done↑ 与 已交付↑ 等量）；只有增删/改交付计划量才会改变结余。
+   ⇒ 两列**同源同规则**，故恒等式 **已交付 + 已计划未交付 = 结余** 在任意数据形态下严格成立
+     （含超排、计划被删减、欠产）——用户 2026-10-08 报障 C02.02.026「两列加不起来」的根治。
+   · 超排（done > plan，如重复下推后报工、删减交付计划）时「已计划未交付」显示为**负数**，
+     该列同时带超排黄色角标（.140 D5）说明来源；负数本身即「已超出本批计划量」的口径表达。
+   · .139 原「已计划未交付恒非负（`max(0,·)` 钳制）」**已废止**：钳制会把超排掩盖成 0，
+     并与「结余」产生无法解释的差值（C02.02.026 曾差 −500）。**不要再加回钳制**：
+     两列必须同规则，否则恒等式立刻破裂，且用户一眼即可发现（.139 教训）。
+   ⚠ 报工不改变**结余**（done↑ 与 已交付↑ 等量，而 已计划未交付↓q、已交付↑q，二者之和不变）；
+     只有增删/改交付计划量才会改变结余。
      该不变量由 applyReport 的运行时守卫（invBalGuard* 系列）强制，由 auditInvInvariants() 全库自检。 */
 function invPuOf(puMap,orderId,li,productId){
   if(!puMap)return null;
   return puMap[orderId+'|L'+(li!=null?li:'-')]||puMap[orderId+'|'+(productId||'')]||null;
 }
-function invPlannedUndelOf(pu){return pu?Math.max(0,num(pu.plan)-num(pu.done)):0;}
+/* 已计划未交付 = plan − done，**不钳制**（.141）——超排时为负数，与「结余」同为不钳制，二者恒等可加。 */
+function invPlannedUndelOf(pu){return pu?(num(pu.plan)-num(pu.done)):0;}
 function invBalanceOf(delivered,pu){return num(delivered)+(pu?(num(pu.plan)-num(pu.done)):0);}
 /* ═══════ 2026-10-08.140：超排（Σ已下推排产计划 > Σ交付计划本批计划）核对入口（口径单源） ═══════
    语义：同一订单行「已下推排产单的计划量合计」超过「交付计划本批计划合计」——即**重复下推**或计划被削。
-   后果：done 随之虚高 →「已计划未交付」被 max(0,·) 吃成 0（用户 2026-10-08 报障 C01.03.009 即此症），
-         且「结余」与「已计划未交付」出现差值（.139 已定：两列钳制规则不同，差额来源即超排）。
+   后果：①done 随之虚高 →「已计划未交付」转为**负数**（.141 起不钳制，负数即本列的直观表达）；
+         ②该行排产单会被锁死无法编辑（.140 D4 已解封：只能改小、不能改大）。
+         用户 2026-10-08 报障 C01.03.009（重复下推）、C02.02.026（交付计划被删减）均此症。
    口径：pushed 与 done **同源同键**（ppDoneKeyOf），故本判定与展示列永不脱节。
    放置：**独立 map**，不并入 buildPlannedUndelMap（后者结构被守卫/测试以 deepEqual 钉住，须保持形状稳定）。
    只读：仅用于角标提示与自检，不参与任何数值计算、不改数据。 */
@@ -1180,8 +1187,8 @@ function invOverPushTip(pu,ps){
   if(over<=0)return '';
   const lines=['超排 '+money(over)+' 台：已下推排产单合计 '+money(ps.pushed)+'，交付计划本批计划合计 '+money(pu.plan)+'。'];
   (ps.list||[]).forEach(x=>lines.push('· '+x.id+' 计划 '+money(x.plan)+(x.date?('（排产日 '+fmtDate(x.date)+'）'):'')));
-  lines.push('「已计划未交付」按交付计划本批计划计算，超排部分不计入本列（故与「结余」存在差值）。');
-  lines.push('多为一交付计划被重复下推所致，请到排产计划页核对并删除多余排产单。');
+  lines.push('「已计划未交付」= 本批计划 − 已入库，超排部分为负数（本行已超出本批计划 '+money(over)+' 台）。');
+  lines.push('多为一交付计划被重复下推、或交付计划量被删减所致，请到排产计划页核对并删除多余排产单。');
   return lines.join('\n');
 }
 /* 2026-08-30.90：库存订单行「一句话总结」（用户口径：已交付=当前实物库存余量，结余=未来预期库存）——
@@ -3149,7 +3156,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     ...(formKey!=='order_inv'?[{key:'calledQty',label:'已调用',type:'number',get:r=>r.item.calledQty}]:[]),   /* 2026-08-25.35：调用库存累计 */
     ...(formKey!=='order_inv'?[{key:'_undel',label:'未交付',type:'number',get:r=>invQtyOf(r.order,r.item)-num(r.item.deliveredQty)}]:[]),
     ...(formKey!=='order_frame'?[{key:'_plannedUndel',label:'已计划未交付',type:'number',get:r=>
-       /* .139：经 invPuOf/invPlannedUndelOf 唯一入口（恒非负） */
+       /* .141：经 invPuOf/invPlannedUndelOf 唯一入口（与「结余」同规则——不钳制，超排为负） */
        invPlannedUndelOf(invPuOf(puMap,r.order.id,r.__li,r.item.productId))}]:[]),
     /* 2026-08-25.60：结余=已交付+(计划−完成)（纯计算列，仅库存订单显示；销售订单共用模板不含此列）
        .139：改为**不钳制**——欠产以负数呈现（用户 2026-10-07 要求） */
@@ -3228,12 +3235,12 @@ function renderOrderTable(formKey,typeOrders,prodMap){
     const oq=num((formKey==='order_inv'&&it.stockMax!=null&&it.stockMax!=='')?it.stockMax:it.orderQty), dq=num(it.deliveredQty);
     const undel=oq-dq;
     const pct=oq>0?Math.round(dq/oq*100):0;
-    /* 已计划未交付 / 结余（.139：经唯一入口取值，与 schema 计算列同口径）
-       已计划未交付 = max(0, plan−done) 恒非负；结余 = 已交付+(plan−done) 不钳制（欠产为负） */
+    /* 已计划未交付 / 结余（.139 起经唯一入口取值，与 schema 计算列同口径）
+       .141：两列**同规则不钳制** → 已交付 + 已计划未交付 = 结余 恒等；超排时「已计划未交付」为负数。 */
     const pu=invPuOf(puMap,o.id,r.__li,it.productId);
     const plannedUndel=invPlannedUndelOf(pu);
     /* 2026-10-08.140（D5）：超排黄色角标——已下推排产计划合计 > 交付计划本批计划合计时，
-       「已计划未交付」会被 max(0,·) 掩盖成 0（超排看不见），故在本列加警示图标 + 悬浮说明。
+       本列会呈负数（.141 起不再被钳成 0），角标用于点明「负数从何而来 + 该核对哪张排产单」。
        与「已交付/结余」4 档警示同款 svg（warnTriSvg），不影响数值口径。 */
     const _ps=invPuOf(pushedMap,o.id,r.__li,it.productId);
     const overTri=(formKey==='order_inv'&&invOverPushOf(pu,_ps)>0)?warnTriSvg('#f59e0b',invOverPushTip(pu,_ps)):'';
@@ -5647,7 +5654,7 @@ function guardRestoreDelivered(rows){
         —— 完成量只由报工累加而来，不等 = 有报工没落到完成量（或反之）。
      ② 排产单来源归属自洽：ppDlIdxOf 非空时，交付计划.orderId 必须等于排产单.orderId（R1 复发检测）。
      ③ 稳定外键齐备：非独立单必须有 deliveryPlanNo（缺 = 下次删交付计划仍会漂移）。
-     ④ 完成量越界：ppDoneOf > ppPlanOf 且计划量>0（「已计划未交付」被 max(0,·) 钳为 0，与「结余」出现差值）。
+     ④ 完成量越界：ppDoneOf > ppPlanOf 且计划量>0（会使「已计划未交付」呈负数——.141 起不钳制）。
      ⑤ 入库回写可达：库存订单非取消排产单每行必须能解析到订单明细行——否则报工不会回写「已交付」，
         结余虚减，且运行时守卫会拦住报工（须先修数据）。
      ⑥ 结余为负的行（欠产）——仅供核对，非错误。
@@ -5696,7 +5703,7 @@ function auditInvInvariants(){
     if(!p.deliveryPlanNo)noBad.push(p.id+'（订单 '+p.orderId+'）');
   });
   push('来源交付计划编号齐备','非独立排产单必须记录来源交付计划编号（否则下次删计划仍会漂移）',noBad);
-  /* ④ 完成量越界（会导致「已计划未交付」被钳成 0） */
+  /* ④ 完成量越界（会使「已计划未交付」呈负数） */
   const overBad=[];
   (productionPlans||[]).forEach(p=>{
     if(p.status==='已取消')return;
@@ -5705,7 +5712,7 @@ function auditInvInvariants(){
       if(t>0&&d>t)overBad.push(p.id+' '+(it.productName||it.productId)+'：完成 '+money(d)+' / 计划 '+money(t));
     });
   });
-  push('完成量未越界','完成量不得超过计划量（越界会使「已计划未交付」钳为 0、与「结余」出现差值）',overBad);
+  push('完成量未越界','完成量不得超过计划量（越界会使「已计划未交付」呈负数）',overBad);
   /* ⑤ 入库回写可达性（运行时守卫的前置条件） */
   const reachBad=[];
   (productionPlans||[]).forEach(p=>{
@@ -5730,7 +5737,7 @@ function auditInvInvariants(){
   checks.push({name:'结余为负（欠产）清单',desc:'欠产以负数呈现属正常口径，此处仅供核对',bad:negBad,ok:true,info:true});
   /* ⑦ 超排核对（2026-10-08.140 新增，用户 2026-10-08 要求）：
      Σ已下推排产计划 > Σ交付计划本批计划 = 重复下推 / 计划被削。
-     后果：done 虚高 →「已计划未交付」被钳成 0、与「结余」出现差值；并会锁死该排产单的编辑（见 .140 D4）。 */
+     后果：「已计划未交付」转为负数（.141 起不钳制）；并会锁死该排产单的编辑（见 .140 D4）。 */
   const overPushBad=[];
   const pushedMap=buildPpPushedMap();
   (orders||[]).forEach(o=>{
@@ -5742,7 +5749,7 @@ function auditInvInvariants(){
         ' / 本批计划 '+money(pu.plan)+'，超排 '+money(ov)+'（'+(ps.list||[]).map(x=>x.id).join('、')+'）');
     });
   });
-  push('超排核对','Σ已下推排产计划不得超过 Σ交付计划本批计划（超出=重复下推；会使「已计划未交付」被钳为 0、与「结余」出现差值）',overPushBad);
+  push('超排核对','Σ已下推排产计划不得超过 Σ交付计划本批计划（超出=重复下推或计划被削；会使「已计划未交付」呈负数，并锁死该排产单编辑）',overPushBad);
   const ok=checks.filter(c=>!c.ok).length===0;
   return {ok:ok,checks:checks};
 }
@@ -7442,7 +7449,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-08.140</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-08.141</div>
 </body>
 </html>
 
