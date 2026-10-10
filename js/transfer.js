@@ -4,8 +4,10 @@
    renderContent/clearHiddenOrderSel/orderRowVisibleInDom/TBL_SCHEMAS/TBL_ROWS/applyTable/
    slicePaged/pageSizeOf/pagerHtml/filterBar/thCol/colVal/currentUser/invQtyOf/saleMaxCallable/
    saleRemainCallable
-   外部引用：onclick="csPickInv(...)/openCallStock(...)/openReturnStock(...)/reverseTransfer(...)/openInvCallStock(...)"
+   外部引用：onclick="csPickInv(...)/openCallStock(...)/openReturnStock(...)/reverseTransfer(...)/openInvCallStock(...)/openInvAdjust(...)"
    运行时调用本模块全局函数
+   2026-10-10.143：「库存调整」（盘盈/盘亏）——按明细行调整库存订单已交付；单边调拨
+     （applyTransfers 支持 out / in 恰有一侧为 null）；台账新增 remark（备注）字段与「备注」列
    2026-09-06.115：调拨方向模型（见下）
    2026-09-20.129：「退回库存」上限唯一口径 = 全局 saleMaxCallable（见 csReturnCap，严禁在本模块复制公式）
    2026-09-21.133：「调用库存」剩余可调用量唯一口径 = 全局 saleRemainCallable
@@ -15,15 +17,19 @@
    - 台账字段从「销售订单/库存订单」（订单类型语义）改为「调出订单/调入订单」（方向语义）：
      out*=调出方（货物流出）、in*=调入方（货物流入），各自携带订单类型与明细行号。
    - 类型语义：call=销售调用库存（库存→销售）/ return=退回（销售→库存，也是 call 的冲销形）/
-     conv=改装补库（库存→库存·跨料号）/ move=移库（库存→库存·同料号）；
-     冲销反向：call↔return、conv→conv_back（改装退回）、move→move_back（移库退回）
+     conv=改装补库（库存→库存·跨料号）/ move=移库（库存→库存·同料号）/
+     adjust_out=盘亏（.143 单边：仅 out，已交付减）/ adjust_in=盘盈（.143 单边：仅 in，已交付加）；
+     冲销反向：call↔return、conv→conv_back（改装退回）、move→move_back（移库退回）、
+               adjust_out↔adjust_in（盘亏↔盘盈，单边反向仍为单边）
    - 存量旧结构记录（salesOrderId/invOrderId/productId/invProductId…）经一次性数据迁移转新结构；
      trSide/trSnapOf 保留旧结构推导做防御兜底（渲染/冲销兼容未迁移记录）。
 ================================================================ */
-var TR_TYPE_LABEL={call:'调用',return:'退回',conv:'改装',move:'移库',conv_back:'改装退回',move_back:'移库退回'};
-var TR_TYPE_TAG={call:'tag-green',return:'tag-amber',conv:'tag-blue',move:'tag-gray',conv_back:'tag-blue',move_back:'tag-gray'};
-var TR_TYPE_OPTIONS=['调用','退回','改装','移库','改装退回','移库退回'];
-/* 冲销类型映射：call↔return / conv→conv_back / move→move_back（幂等反向） */
+var TR_TYPE_LABEL={call:'调用',return:'退回',conv:'改装',move:'移库',conv_back:'改装退回',move_back:'移库退回',adjust_out:'盘亏',adjust_in:'盘盈'};
+var TR_TYPE_TAG={call:'tag-green',return:'tag-amber',conv:'tag-blue',move:'tag-gray',conv_back:'tag-blue',move_back:'tag-gray',adjust_out:'tag-red',adjust_in:'tag-green'};
+var TR_TYPE_OPTIONS=['调用','退回','改装','移库','改装退回','移库退回','盘亏','盘盈'];
+/* 冲销类型映射：call↔return / conv→conv_back / move→move_back / adjust_out↔adjust_in（幂等反向）
+   2026-10-10.143：盘亏/盘盈为「单边调拨」（moves 的 out 或 in 恰有一侧为 null），
+   反向时由 trRevType 给出对侧类型（adjust_out↔adjust_in），二次冲销回到原类型。 */
 function trRevType(type){
   if(type==='call')return 'return';
   if(type==='return')return 'call';
@@ -31,6 +37,8 @@ function trRevType(type){
   if(type==='conv_back')return 'conv';
   if(type==='move')return 'move_back';
   if(type==='move_back')return 'move';
+  if(type==='adjust_out')return 'adjust_in';
+  if(type==='adjust_in')return 'adjust_out';
   return null;
 }
 /* 取记录某一侧（out=调出/in=调入）→ {orderId,orderType,lineIdx,productId}；新结构直读，旧结构按 type 推导（防御） */
@@ -360,13 +368,18 @@ async function doReturnStock(o){
 }
 /* ================================================================
    2026-09-06.115：通用调拨执行（方向模型，替代原 applyStockMove 二元模型）
-   moves: [{out:{orderId,orderType,lineIdx}, in:{orderId,orderType,lineIdx}, qty}]
-   type: call/return/conv/move/conv_back/move_back（conv_back/move_back 供冲销反向）
+   moves: [{out:{orderId,orderType,lineIdx}|null, in:{orderId,orderType,lineIdx}|null, qty}]
+   type: call/return/conv/move/conv_back/move_back/adjust_out/adjust_in
+         （conv_back/move_back 供冲销反向；adjust_out/adjust_in=盘亏/盘盈，单边调拨）
    opts.reverseOf: 冲销生成记录时指向被冲销的原记录 id
+   opts.remark: 台账备注（调整原因）；mv.remark 优先于 opts.remark
    数量规则（方向语义=货物 out 流向 in）：
      参与方为库存订单 → 明细 deliveredQty（out 减 / in 加，可负=欠货，.20 口径）
      参与方为销售订单 → 明细 calledQty（out 减 / in 加，下限 0；.97 已交付由交付/退货驱动）
-   台账快照：参与方含销售订单→取销售侧订单/行（客户/合同/商品名）；纯库存互调→调入侧库存行
+     【2026-10-10.143】单边调拨：out / in 恰有一侧为 null 时只驱动存在侧（盘亏=仅 out、盘盈=仅 in）；
+       两侧皆 null 整批返回 false。缺省侧台账字段写 '' / null，不在本函数内做任何可用量口径计算。
+   台账快照：参与方含销售订单→取销售侧订单/行（客户/合同/商品名）；纯库存互调→调入侧库存行；
+             单边调拨→取唯一存在侧
    ================================================================
    【P1 事务化】2026-09-11.124：写入收尾由「两次独立 save + 一次 DB.set」改为**一次 /api/tx**。
    事实表 orders / transfers 必然同事务；products（库存=Σ库存订单已交付）为派生投影，
@@ -375,22 +388,36 @@ async function doReturnStock(o){
    ================================================================ */
 async function applyTransfers(type,moves,opts){
   if(!moves||!moves.length)return false;
-  /* 前置校验：全部参与方订单/明细须存在，任一缺失整批放弃（不改任何数据） */
+  /* 2026-10-10.143：单边调拨支持——盘盈/盘亏只有一侧参与方（out 或 in 恰有一侧为 null），
+     数量只驱动存在侧；两侧皆 null 视为非法整批放弃（防御）。
+     台账流水仍为本函数**唯一写入器**（严禁另建第二份写入逻辑）。 */
   for(const mv of moves){
-    const oo=orders.find(function(o){return o.id===mv.out.orderId;});
-    const oi=orders.find(function(o){return o.id===mv.in.orderId;});
-    if(!oo||!oi||!Array.isArray(oo.items)||!Array.isArray(oi.items))return false;
-    if(!(oo.items||[])[mv.out.lineIdx]||!(oi.items||[])[mv.in.lineIdx])return false;
+    const outMv=mv.out||null,inMv=mv.in||null;
+    if(!outMv&&!inMv)return false;
+    if(outMv){
+      const oo=orders.find(function(o){return o.id===outMv.orderId;});
+      if(!oo||!Array.isArray(oo.items)||!(oo.items||[])[outMv.lineIdx])return false;
+    }
+    if(inMv){
+      const oi=orders.find(function(o){return o.id===inMv.orderId;});
+      if(!oi||!Array.isArray(oi.items)||!(oi.items||[])[inMv.lineIdx])return false;
+    }
   }
   moves.forEach(function(mv){
-    const oo=orders.find(function(o){return o.id===mv.out.orderId;});
-    const oi=orders.find(function(o){return o.id===mv.in.orderId;});
-    const oit=(oo.items||[])[mv.out.lineIdx],iit=(oi.items||[])[mv.in.lineIdx];
-    /* 2026-08-25.20：库存订单已交付允许负数（调用超量=欠货）；销售 calledQty 下限 0 */
-    if(mv.out.orderType==='inv')oit.deliveredQty=num(oit.deliveredQty)-mv.qty;
-    else oit.calledQty=Math.max(0,num(oit.calledQty)-mv.qty);
-    if(mv.in.orderType==='inv')iit.deliveredQty=num(iit.deliveredQty)+mv.qty;
-    else iit.calledQty=Math.max(0,num(iit.calledQty)+mv.qty);
+    const outMv=mv.out||null,inMv=mv.in||null;
+    /* 2026-08-25.20：库存订单已交付允许负数（调用超量=欠货，盘亏同理）；销售 calledQty 下限 0 */
+    if(outMv){
+      const oo=orders.find(function(o){return o.id===outMv.orderId;});
+      const oit=(oo.items||[])[outMv.lineIdx];
+      if(outMv.orderType==='inv')oit.deliveredQty=num(oit.deliveredQty)-mv.qty;
+      else oit.calledQty=Math.max(0,num(oit.calledQty)-mv.qty);
+    }
+    if(inMv){
+      const oi=orders.find(function(o){return o.id===inMv.orderId;});
+      const iit=(oi.items||[])[inMv.lineIdx];
+      if(inMv.orderType==='inv')iit.deliveredQty=num(iit.deliveredQty)+mv.qty;
+      else iit.calledQty=Math.max(0,num(iit.calledQty)+mv.qty);
+    }
   });
   /* 【P1 事务化】投影前置重算（纯函数，只改内存）：库存投影 + 订单状态投影。
      先算后写 = 与「写盘后触发」逐字节同值，且消除第二个失败点（设计 §4.4 三条理由）。 */
@@ -399,15 +426,25 @@ async function applyTransfers(type,moves,opts){
   const ts=new Date().toLocaleString('zh-CN',{hour12:false});
   const user=(currentUser&&currentUser.name)||(currentUser&&currentUser.username)||'未知';
   moves.forEach(function(mv,idx){
-    const oo=orders.find(function(o){return o.id===mv.out.orderId;});
-    const oi=orders.find(function(o){return o.id===mv.in.orderId;});
-    const oit=(oo.items||[])[mv.out.lineIdx],iit=(oi.items||[])[mv.in.lineIdx];
-    const snap=(mv.out.orderType==='sales')?{o:oo,it:oit}:{o:oi,it:iit};   /* 销售侧优先（客户/合同），否则调入侧 */
+    const outMv=mv.out||null,inMv=mv.in||null;
+    const oo=outMv?orders.find(function(o){return o.id===outMv.orderId;}):null;
+    const oi=inMv?orders.find(function(o){return o.id===inMv.orderId;}):null;
+    const oit=(oo&&outMv)?(oo.items||[])[outMv.lineIdx]:null;
+    const iit=(oi&&inMv)?(oi.items||[])[inMv.lineIdx]:null;
+    /* 快照归属：销售侧优先（客户/合同）→ 两侧皆非销售（含 conv/move）取**调入侧** → in 缺失
+       （单边盘亏）才取调出侧兜底。不得写成「out 优先」：conv/move 台账「产品/料号」列取调入侧
+       （renderTransfers），快照若取调出侧会导致同一行「商品名称」与「料号」指向两个产品。 */
+    const snap=(outMv&&outMv.orderType==='sales')?{o:oo,it:oit}
+      :(inMv?{o:oi,it:iit}:{o:oo,it:oit});
+    /* 缺省侧（单边调拨不存在的一侧）写空串/ null，使 trSide 走「新结构直读」分支并返回安全默认值
+       （trSide 判定 t[sk]!=null && t[st]!=null，空串满足非 null → lineIdx 兜底 -1、productId 兜底 ''） */
     transfers.unshift({
       id:'TR'+Date.now()+'-'+idx,type:(mv.type||type),
-      outOrderId:mv.out.orderId,outOrderType:mv.out.orderType,outLineIdx:mv.out.lineIdx,outProductId:oit?oit.productId:null,
-      inOrderId:mv.in.orderId,inOrderType:mv.in.orderType,inLineIdx:mv.in.lineIdx,inProductId:iit?iit.productId:null,
+      outOrderId:outMv?outMv.orderId:'',outOrderType:outMv?outMv.orderType:'',outLineIdx:outMv?outMv.lineIdx:null,outProductId:oit?oit.productId:'',
+      inOrderId:inMv?inMv.orderId:'',inOrderType:inMv?inMv.orderType:'',inLineIdx:inMv?inMv.lineIdx:null,inProductId:iit?iit.productId:'',
       qty:mv.qty,ts:ts,user:user,reversed:false,reverseOf:(opts&&opts.reverseOf)||null,
+      /* 2026-10-10.143：调整原因备注（盘亏/盘盈盘点差异说明；既有类型缺省空串，行为不变） */
+      remark:(mv.remark||(opts&&opts.remark)||''),
       /* 2026-08-25.49：台账快照（历史记录不随订单后续编辑变化；存量单渲染反查兜底） */
       customer:snap.o?(snap.o.customer||''):'',contractNo:snap.o?(snap.o.contractNo||''):'',
       productName:snap.it?(snap.it.productName||''):'',
@@ -439,20 +476,27 @@ async function reverseTransfer(id){
   if(t.reversed){alert('该记录已冲销');return;}
   if(!confirm('确认冲销该调拨记录？将生成一条反向记录。'))return;
   const outS=trSide(t,'out'),inS=trSide(t,'in');
-  if(!outS.orderId||!inS.orderId){alert('记录缺少调出/调入方信息，无法冲销');return;}
+  /* 2026-10-10.143：放宽为「至少一侧存在」——盘亏/盘盈为单边记录（另一侧 orderId 为空串）。
+     只校验存在侧的订单/明细；缺省侧原样保持单边形态（构造反向 moves 时传 null）。 */
+  const hasOut=!!outS.orderId,hasIn=!!inS.orderId;
+  if(!hasOut&&!hasIn){alert('记录缺少调出/调入方信息，无法冲销');return;}
   const revType=trRevType(t.type);
   if(!revType){alert('未知调拨类型，无法冲销');return;}
-  const outO=orders.find(function(x){return x.id===outS.orderId;});
-  const inO=orders.find(function(x){return x.id===inS.orderId;});
-  if(!outO||!inO){alert('关联订单已不存在，无法冲销');return;}
-  const outIt=(outO.items||[])[outS.lineIdx];
-  const inIt=(inO.items||[])[inS.lineIdx];
-  if(!outIt||!inIt){alert('关联明细已不存在，无法冲销');return;}
-  /* 反向执行：原调出方收回、原调入方退回 —— 方向对调（原 out 当 in、原 in 当 out）后数量自动反向滚回。
+  if(hasOut){
+    const outO=orders.find(function(x){return x.id===outS.orderId;});
+    if(!outO||!(outO.items||[])[outS.lineIdx]){alert('关联订单/明细已不存在，无法冲销');return;}
+  }
+  if(hasIn){
+    const inO=orders.find(function(x){return x.id===inS.orderId;});
+    if(!inO||!(inO.items||[])[inS.lineIdx]){alert('关联订单/明细已不存在，无法冲销');return;}
+  }
+  /* 反向执行：原调出方收回、原调入方退回 —— 方向对调（原 out 当 in、原 in 当 out）后数量自动反向滚回；
+     单边记录对调后仍为单边（缺省侧传 null，反向语义由 revType 表达）。
      .97 口径：销售订单已交付不随调拨变动（由交付/退货操作驱动），仅滚回库存已交付与销售 calledQty。
      .115：conv/move 冲销生成 conv_back/move_back（改装退回/移库退回）反向记录，reverseOf 指向原记录 */
-  const ok=await applyTransfers(revType,[{out:{orderId:inS.orderId,orderType:inS.orderType,lineIdx:inS.lineIdx},
-    in:{orderId:outS.orderId,orderType:outS.orderType,lineIdx:outS.lineIdx},qty:num(t.qty)}],{reverseOf:t.id});
+  const revOut=hasIn?{orderId:inS.orderId,orderType:inS.orderType,lineIdx:inS.lineIdx}:null;
+  const revIn=hasOut?{orderId:outS.orderId,orderType:outS.orderType,lineIdx:outS.lineIdx}:null;
+  const ok=await applyTransfers(revType,[{out:revOut,in:revIn,qty:num(t.qty)}],{reverseOf:t.id,remark:t.remark||''});
   if(!ok){alert('冲销失败：关联订单/明细不可用');return;}
   t.reversed=true;
   logOp('冲销','调拨台账','冲销调拨记录 '+t.id+'（'+esc(TR_TYPE_LABEL[t.type]||t.type)+' → '+esc(TR_TYPE_LABEL[revType]||revType)+'）');
@@ -474,15 +518,20 @@ function renderTransfers(){
   TBL_SCHEMAS.transfers=[
     {key:'ts',label:'时间',type:'text'},
     {key:'type',label:'类型',type:'text',select:true,options:TR_TYPE_OPTIONS,get:function(r){return TR_TYPE_LABEL[r.type]||r.type;}},
-    {key:'outOrderId',label:'调出订单',type:'text',get:function(r){return trSide(r,'out').orderId;}},
-    {key:'inOrderId',label:'调入订单',type:'text',get:function(r){return trSide(r,'in').orderId;}},
+    /* 2026-10-10.143：单边记录（盘亏/盘盈）缺省侧 orderId 为空串 → 列显示「—」 */
+    {key:'outOrderId',label:'调出订单',type:'text',get:function(r){return trSide(r,'out').orderId||'—';}},
+    {key:'inOrderId',label:'调入订单',type:'text',get:function(r){return trSide(r,'in').orderId||'—';}},
     {key:'customer',label:'客户',type:'text',get:function(r){return trSnapOf(r).customer;}},
     {key:'contractNo',label:'合同',type:'text',get:function(r){return trSnapOf(r).contractNo;}},
     {key:'productName',label:'商品名称',type:'text',get:function(r){return trSnapOf(r).productName;}},
     {key:'spec',label:'规格',type:'text',get:function(r){return trSnapOf(r).spec;}},
     {key:'model',label:'型号',type:'text',get:function(r){return trSnapOf(r).model;}},
-    {key:'productId',label:'产品/料号',type:'text',get:function(r){return trSide(r,'in').productId;}},
+    /* 单边记录调入侧为空 → 回退取调出侧料号（盘亏记录的料号来自调出侧） */
+    {key:'productId',label:'产品/料号',type:'text',get:function(r){return trSide(r,'in').productId||trSide(r,'out').productId;}},
     {key:'qty',label:'数量',type:'number'},
+    /* 2026-10-10.143：备注列（调整原因）。位置排在「数量」之后、「操作人」之前——
+       备注与数量同为本笔调拨的业务属性，紧邻业务字段；操作人属审计字段，保持置末。 */
+    {key:'remark',label:'备注',type:'text',get:function(r){return r.remark||'';}},
     {key:'user',label:'操作人',type:'text'}
   ];
   TBL_ROWS.transfers=rows;
@@ -490,7 +539,7 @@ function renderTransfers(){
   /* 2026-08-25.68：金蝶式分页（单行模型直接切行） */
   if(PAGED_FORMS.transfers&&shown.length>0)shown=slicePaged('transfers',shown,pageSizeOf('transfers')).rows;
   let html='<div class="page">';
-  html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录「调用 / 退回 / 改装 / 移库」及冲销（调出订单 → 调入订单）。记录不可修改，仅可逐条冲销。</span>'
+  html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">调拨台账：记录「调用 / 退回 / 改装 / 移库 / 盘亏 / 盘盈」及冲销（调出订单 → 调入订单；盘亏/盘盈为单边记录，缺省侧显示「—」）。记录不可修改，仅可逐条冲销。</span>'
     +(scopeId?('<span class="fchip" style="margin-left:8px">仅显示订单 '+esc(scopeId)+' 相关 <b onclick="window.transferScopeId=null;renderContent()" title="移除该限定">×</b></span>'):'')
     +pagerHtml('transfers')+'</div>';
   html+=filterBar('transfers');
@@ -498,14 +547,17 @@ function renderTransfers(){
     +TBL_SCHEMAS.transfers.map(function(c){return thCol('transfers',c);}).join('')
     +'<th style="width:80px">操作</th>'
     +'</tr></thead><tbody>';
-  if(!shown.length){html+='<tr><td colspan="13" class="empty">'+(scopeId?'该订单暂无调拨记录':'暂无调拨记录')+'</td></tr>';}
+  /* 空态列数 = 台账列数（13）+ 操作列（1）= 14；新增「备注」列后必须同步（易漏点） */
+  if(!shown.length){html+='<tr><td colspan="14" class="empty">'+(scopeId?'该订单暂无调拨记录':'暂无调拨记录')+'</td></tr>';}
   else{
     shown.forEach(function(t){
       const typeCls=TR_TYPE_TAG[t.type]||'tag-gray';
       const outS=trSide(t,'out'),inS=trSide(t,'in');
       const cross=!!(inS.productId&&outS.productId&&String(inS.productId)!==String(outS.productId));
-      /* 跨料号（改装/替代调用）：调出侧产品编码 名称 型号/规格 后补（库存订单行优先，产品主数据兜底） */
-      let prodHtml=esc(inS.productId||'');
+      /* 跨料号（改装/替代调用）：调出侧产品编码 名称 型号/规格 后补（库存订单行优先，产品主数据兜底）。
+         2026-10-10.143：单边记录（盘亏/盘盈）调入侧料号为空 → 回退显示调出侧料号；
+         cross 判定要求双侧 productId 皆存在，单边记录天然不触发跨料红字提示。 */
+      let prodHtml=esc(inS.productId||outS.productId||'');
       if(cross){
         const _oo=orders.find(function(o){return o.id===outS.orderId;});
         const _oit=_oo&&(_oo.items||[])[outS.lineIdx];
@@ -671,6 +723,103 @@ async function doInvCallStock(){
     logOp('调用库存','库存管理','库存订单 '+__ivOrder.id+' 调用库存补库'+(convs?('（改装 '+convs+' 行'+(mvs?'、移库 '+mvs+' 行':'')+'）'):(mvs?'（移库 '+mvs+' 行）':'')));
     renderContent();
     clearGhostSel(moves.map(function(mv){return mv.out.orderId;}).concat([__ivOrder.id]));
+  }else{
+    alertTransferFailed();
+  }
+  closeModal();
+}
+
+/* ================================================================
+   2026-10-10.143：库存管理「库存调整」（盘盈 / 盘亏）——按明细行调整库存订单已交付
+   - 入口：库存管理页勾选 1 张库存订单 → 「库存调整」（动作键 order_inv.invAdjust）
+   - 弹窗列出该订单**全部明细行**，每行独立选「盘亏 / 盘盈」+ 填数量（填 0 的行不动）
+   - 盘亏（adjust_out）= 该行已交付 − qty（可为负 = 欠货）；盘盈（adjust_in）= 该行已交付 + qty
+   - 可选「调整原因」→ 写入台账 remark 字段（台账新增「备注」列）
+   - 落盘：**委托 applyTransfers 单边 moves**（out 或 in 为 null）——台账流水单一写入器；
+     库存投影（Σ库存订单已交付）与订单自动状态由 applyTransfers 内既有的
+     recomputeStockFromInvOrders() + recomputeOrderAutoStatus() 联动，本模块**不重复调用**
+   - 台账记录可在调拨台账按「调出订单 / 调入订单」追溯，并支持逐条冲销（单边反向亦为单边）
+   ================================================================ */
+var __iaOrder=null,__iaLines=[];
+/* 行内提示：盘亏后预计为负 → 红字「将形成欠货」。仅本行文案，不复制任何可用量口径公式。 */
+function iaWarn(li){
+  const line=__iaLines.find(function(l){return l.i===li;});
+  const warn=document.querySelector('.ia-warn[data-li="'+li+'"]');
+  const inp=document.querySelector('.ia-qty[data-li="'+li+'"]');
+  const sel=document.querySelector('.ia-dir[data-li="'+li+'"]');
+  if(!line||!warn)return;
+  const q=inp?num(inp.value):0;
+  const dir=sel?sel.value:'out';
+  if(dir==='out'&&q>0&&(line.deliveredQty-q)<0){
+    warn.textContent='⚠ 本次盘亏后该行已交付为 '+(line.deliveredQty-q)+'，将形成欠货';
+  }else{
+    warn.textContent='';
+  }
+}
+function openInvAdjust(){
+  if(!needAct('order_inv.invAdjust'))return;   /* .143：动作键 invAdjust（默认 PMC） */
+  const s=selSet('order_inv');
+  if(s.size===0){alert('请先勾选 1 张库存订单');return;}
+  if(s.size>1){alert('「库存调整」只能选择 1 张库存订单，当前已选 '+s.size+' 张。');return;}
+  const o=orders[Number([...s][0])];
+  if(!o){alert('未找到订单');return;}
+  if(orderTypeOf(o)!=='库存订单'){alert('「库存调整」仅适用于库存订单');return;}
+  if(o.status==='已取消'||o.status==='已暂停'){alert('订单「'+o.id+'」已'+o.status+'，无法库存调整');return;}
+  /* 全部明细行可填（对齐 openInvCallStock：全部行手填）；目标量沿用全局唯一口径 invQtyOf */
+  const lines=(o.items||[]).map(function(it,i){
+    return {i:i,productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',target:invQtyOf(o,it),deliveredQty:num(it.deliveredQty)};
+  });
+  if(!lines.length){alert('该库存订单无明细行');return;}
+  __iaOrder=o;__iaLines=lines;
+  let rows='';
+  lines.forEach(function(l){
+    const pm=[l.model,l.spec].filter(Boolean).join(' / ');
+    rows+='<tr data-li="'+l.i+'"><td>'+esc(l.productName||l.productId)+'<br><span style="color:var(--muted);font-size:12px">'+esc(l.productId)+(pm?' ['+esc(pm)+']':'')+' 已交付 '+l.deliveredQty+(l.target!=null?' / 目标 '+l.target:'')+'</span></td>'
+      +'<td><select class="ia-dir" data-li="'+l.i+'" style="width:88px" onchange="iaWarn('+l.i+')"><option value="out">盘亏</option><option value="in">盘盈</option></select></td>'
+      +'<td><input type="number" class="ia-qty" data-li="'+l.i+'" min="0" value="0" style="width:90px" oninput="iaWarn('+l.i+')"></td>'
+      +'<td><div class="ia-warn" data-li="'+l.i+'" style="color:var(--red);font-size:12px"></div></td></tr>';
+  });
+  const body='<p style="color:var(--muted);font-size:13px">为「'+esc(o.id)+'」的每条明细做盘点调整：<b>盘亏</b>=减少该行已交付（可为负，形成欠货）、<b>盘盈</b>=增加该行已交付；数量填 <b>0</b> 的行不做调整。调整会写入调拨台账（盘亏 adjust_out / 盘盈 adjust_in），可在台账按本订单追溯并逐条冲销；库存数量与订单状态会自动联动。</p>'
+    +'<div class="form-row"><div><label>调整原因（选填，写入台账备注）</label><input type="text" id="iaRemark" placeholder="如：盘点差异 / 损坏报废 / 找料补录" style="width:100%"></div></div>'
+    +'<div class="table-wrap"><table><thead><tr><th>库存明细</th><th>调整方向</th><th>调整数量</th><th>提示</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  showModal('库存调整 - '+esc(o.id),body,
+    '<button class="btn btn-primary" onclick="doInvAdjust()">确认调整</button>'+
+    '<button class="btn" onclick="closeModal()">取消</button>');
+}
+/* 【P1 事务化】同上：async + await（等待 applyTransfers 一次 /api/tx 落盘后再报成功） */
+async function doInvAdjust(){
+  if(!__iaOrder){alert('调整上下文丢失，请重新操作');return;}
+  const els=document.querySelectorAll('.ia-qty');
+  if(!els.length){alert('弹窗已关闭，请重新操作');return;}
+  const rmEl=document.getElementById('iaRemark');
+  const rm=rmEl?String(rmEl.value||'').trim():'';
+  const moves=[];let any=false;let err=null;
+  els.forEach(function(inp){
+    const li=Number(inp.dataset.li);
+    const q=num(inp.value);
+    if(q<0){err='第'+(li+1)+'行调整数量不可为负';return;}
+    if(q<=0)return;   /* 填 0 的行不动 */
+    const line=__iaLines.find(function(l){return l.i===li;});
+    if(!line)return;
+    const sel=document.querySelector('.ia-dir[data-li="'+li+'"]');
+    const dir=sel?sel.value:'out';
+    /* 单边 moves：盘亏=仅 out（已交付减）、盘盈=仅 in（已交付加）；缺省侧传 null。
+       台账 qty 恒正，方向由 type 表达（adjust_out / adjust_in）。数量手填不设上限（盘点差异）。 */
+    if(dir==='in'){
+      moves.push({out:null,in:{orderId:__iaOrder.id,orderType:'inv',lineIdx:li},qty:q,type:'adjust_in',remark:rm});
+    }else{
+      moves.push({out:{orderId:__iaOrder.id,orderType:'inv',lineIdx:li},in:null,qty:q,type:'adjust_out',remark:rm});
+    }
+    any=true;
+  });
+  if(err){alert(err);return;}
+  if(!any){alert('未填写任何调整数量');return;}
+  const outs=moves.filter(function(m){return m.type==='adjust_out';}).length;
+  const ins=moves.length-outs;
+  if(await applyTransfers(null,moves)){
+    logOp('库存调整','库存管理','库存订单 '+__iaOrder.id+' 库存调整'+(outs?('（盘亏 '+outs+' 行'+(ins?'、盘盈 '+ins+' 行':'')+'）'):(ins?'（盘盈 '+ins+' 行）':'')));
+    renderContent();
+    clearGhostSel([__iaOrder.id]);
   }else{
     alertTransferFailed();
   }

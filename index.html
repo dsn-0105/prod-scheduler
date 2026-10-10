@@ -631,7 +631,7 @@ function ensureWrite(formKey){
 const FORM_ACTS={
   product:{genOrder:'生成订单（按产品批量建库存订单）'},
   order_frame:{saleDeliver:'交付登记',saleReturn:'退货',kingdeeImport:'导入金蝶订单',saleCall:'调用库存',saleReturnStock:'退回库存'},
-  order_inv:{invGenDelivery:'生成交付计划',invCall:'调用库存（改装/移库补库）'},
+  order_inv:{invGenDelivery:'生成交付计划',invCall:'调用库存（改装/移库补库）',invAdjust:'库存调整（盘盈/盘亏）'},   /* .143：invAdjust=库存调整（盘盈/盘亏），默认归 PMC */
   delivery:{delPushPlan:'下推排产计划'},
   prodPlan:{ppEdit:'编辑排产/物料齐套',ppLaunch:'投产/反投产',ppShift:'延后/提前计划日期',ppReport:'报工',ppReportEdit:'编辑/删除报工明细',ppDel:'删除排产'}
 };
@@ -7019,6 +7019,7 @@ function bulkBar(m){
     if(m==='order_frame')btns.push(saleOpsBtnHtml());   /* 2026-08-30.97/.98：销售订单交付（+下拉退货）｜.119：交付/退货动作键 gate 见函数内 */
     if(m==='order_inv'&&canAct('order_inv.invGenDelivery'))btns.push('<button class="btn btn-sm btn-primary" onclick="genDeliveryPlan(\''+m+'\')" title="为选中的库存订单生成交付计划（仅限 1 条）">生成交付计划</button>');   /* 2026-08-30.95：交付计划仅库存订单可生成（销售订单按钮隐藏）｜.119：动作键 invGenDelivery（PMC） */
     if(m==='order_inv'&&canAct('order_inv.invCall'))btns.push('<button class="btn btn-sm" onclick="openInvCallStock()" title="为选中的库存订单调用库存/改装补库（仅限 1 张）：从其他产品库存订单调入，跨料号=改装、同料号=移库，写入调拨台账">调用库存</button>');   /* 2026-09-06.115：库存订单调用库存（改装/移库补库）｜.119：动作键 invCall */
+    if(m==='order_inv'&&canAct('order_inv.invAdjust'))btns.push('<button class="btn btn-sm" onclick="openInvAdjust()" title="为选中的库存订单做盘点调整（仅限 1 张）：盘亏减少已交付、盘盈增加已交付，写入调拨台账">库存调整</button>');   /* 2026-10-10.143：库存调整（盘盈/盘亏），动作键 invAdjust（默认 PMC） */
     if(m==='delivery'&&canAct('delivery.delPushPlan'))btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');   /* .119：动作键 delPushPlan（PMC） */
     /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
        下拉等宽于按钮组、下拉项与主按钮同款 btn-primary。
@@ -7521,7 +7522,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-08.142</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-10.143</div>
 </body>
 </html>
 
