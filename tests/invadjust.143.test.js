@@ -41,6 +41,9 @@ const path = require('node:path');
 
 const { createApp, ROOT } = require('./harness/sandbox');
 const { createFetchStub } = require('./harness/dom-stub');
+/* 2026-10-12.144：版本锚点改为引用单一来源（原 J6 硬编码 `.143` 是**第 4 处**版本锚点，每次推进都要
+   手工同步、漏改即 FAIL）。改引用后断言强度不变——比对 guide.js 的真实标注 vs 权威 BUILD。 */
+const { BUILD } = require('./harness/build');
 
 const SRC_TRANSFER = fs.readFileSync(path.join(ROOT, 'js', 'transfer.js'), 'utf8');
 const SRC_INDEX = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -1169,8 +1172,10 @@ test('J5 applyTransfers：单边支持语义在位（双侧 null 拒绝 / 缺省
   assert.match(body, /remark:\(mv\.remark\|\|\(opts&&opts\.remark\)\|\|''\)/, 'remark 优先级 mv > opts > 空串');
 });
 
-test('J6 guide.js：版本标注 .143 + 库存管理小节条目 + 业务规则要点表新增行', () => {
-  assert.match(SRC_GUIDE, /更新：2026-10-10（build \.143）/, '版本标注推进到 .143');
+test('J6 guide.js：版本标注与权威水印一致 + 库存管理小节条目 + 业务规则要点表新增行', () => {
+  const [bDate, bNum] = BUILD.split('.');
+  assert.match(SRC_GUIDE, new RegExp('更新：' + bDate + '（build \\.' + bNum + '）'),
+    '说明页版本标注必须与 tests/harness/build.js 的权威 BUILD 一致（.144 起改为引用单一来源，不再硬编码）');
   assert.match(SRC_GUIDE, /库存调整（\.143 新增）/, '库存管理小节有「库存调整」条目');
   assert.match(SRC_GUIDE, /\| 库存调整（\.143） \|/, '业务规则要点表有库存调整行');
   assert.match(SRC_GUIDE, /adjust_out`?（盘亏·红）/, '规则行说明盘亏 adjust_out·红标');
