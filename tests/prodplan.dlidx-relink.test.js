@@ -261,15 +261,19 @@ test('§E-1 prodplan-core.js：归属比较一律经 ppDlIdxOf（无直读 deliv
     'ppDlIdxOf 必须保留「独立单恒 null」的前置判定');
 });
 
-test('§E-2 index.html：外键写入 4 处（创建/继承/刷新/复制清空）+ 迁移与重排的写/清各 1 处', () => {
+test('§E-2 index.html：外键写入 9 处（创建/继承/刷新/复制清空/重绑写/悬空清空 + .144 订正 3 处）+ 迁移与重排的写/清各 1 处', () => {
   /* 口径单源：新增任何 deliveryPlanNo 写入点都必须同步更新本断言 */
   const writes = INDEX_SRC.match(/deliveryPlanNo\s*[:=]/g) || [];
-  assert.equal(writes.length, 6, '应恰 6 处 deliveryPlanNo 写入/清空（下推、拆单、编辑刷新、复制清空、重绑迁移写、悬空清空），实际 ' + writes.length);
+  assert.equal(writes.length, 9, '应恰 9 处 deliveryPlanNo 写入/清空（下推、拆单、编辑刷新、复制清空、重绑迁移写、悬空清空、' +
+    '.144 订正改绑 1 处 + 复原快照常量 2 处），实际 ' + writes.length);
   assert.match(INDEX_SRC, /deliveryPlanNo:\(deliveries\[di\]&&deliveries\[di\]\.planNo\)\|\|''/, '下推应写入外键（取自交付计划编号）');
   assert.match(INDEX_SRC, /deliveryPlanNo:p\.deliveryPlanNo\|\|''/, '拆单应继承外键');
   assert.match(INDEX_SRC, /c\.deliveryPlanNo=''/, '复制单（独立排产）必须清空外键');
   assert.match(INDEX_SRC, /p\.deliveryPlanNo=no;/, '重绑迁移应写入外键');
   assert.match(INDEX_SRC, /if\(i<0&&p\.deliveryPlanNo\)\{p\.deliveryPlanNo=null;ch=true;\}/, '目标已删 → 悬空外键一并清空（且必须计数，否则内存改了不落盘）');
+  /* 2026-10-12.144：存量订正脚本改绑时**索引与外键必须一并写**（缺外键则解析不到，缺索引则回退路径取错目标） */
+  assert.match(INDEX_SRC, /p\.deliveryIdx=to;p\.deliveryPlanNo=cfg\[2\];/, '.144 订正改绑必须索引 + 外键一并写');
+  assert.match(INDEX_SRC, /meta\.fixMisboundProdPlans20261012/, '.144 订正必须有幂等标记');
   /* 单条删除：splice 后必须重排，且与 deliveries 同事务 */
   assert.match(INDEX_SRC, /deliveries\.splice\(idx,1\);\s*\n\s*const rl=relinkProdPlanDeliveryIdx\(\);/,
     'delDelivery 删除后必须立即按外键重排');

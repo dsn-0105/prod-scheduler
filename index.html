@@ -2846,6 +2846,118 @@ async function fixOverPushPlans20261008(){
   logOp('系统','库存管理','系统修复：超排排产单清算——撤销超排排产单 '+removed.length+' 张（'+(removed.join('、')||'无')+
     '）、清理报工流水 '+repRemoved.length+' 条'+(skipped.length?('；跳过：'+skipped.join('；')):''));
 }
+/* ═══════ 2026-10-12.144：排产单「错绑上游交付计划」存量订正（E1 + E2 + E3-路径①） ═══════
+   签核：用户 2026-10-12 批准《方案 B》，逐字段清单 _diag/方案B-订正签核清单-20261012.md；
+        dry-run 11/11 断言通过（_diag/dryrun-fixB-20261012.js）；数据基线 md5 8b61100c。
+   根因（两段式，与产品无关，凡「删交付计划 + 漂移区间有同订单同产品量足够的相邻计划」即触发）：
+     ① .137 前「删除交付计划」无人重排排产单 deliveryIdx → 其后索引整体前移，错位形成；
+     ② .138 把「当前索引自洽」当作 keep 的**充分条件**（索引恰恰是漂移后不可信的值）→ 错绑被回填
+        deliveryPlanNo 永久固化；
+     ③ .142 再按「超排量能否被整单量凑出」选删除对象 → 误删两张唯一正主单（本批 E3 的直接来源）。
+   本批三处：
+     E1 PSCD-20261006-021：绑错 JFJH-20260929-00008（致其超排 1000）→ 改回 JFJH-20260929-00007
+     E2 PSCD-20260930-004：绑错 JFJH-20261005-00001（超排 100）→ 改回 JFJH-20260930-00011
+        （该单 09-30 创建却绑在 10-05 才创建的交付计划上，系全库唯一「排产单早于上游计划」悖论）
+     E3 PSCD-20261006-006：系 .137 前「已排产恒显示 0」错误视图误导下的重复下推 → 删除；
+        并按 data-140 快照（.142 执行前）**逐字复原**被误删的 PSCD-20260930-021 / PSCD-20261005-002，
+        把 006 的报工 REP-20261006-030（2026-10-06 16:14 入库 200 台）拆为 100 + 100 分别归属两张复原单
+        → 实物产出归位，「已交付」净变化 0（−200 与 +100×2 相抵）。
+   前置校验：逐项核对 订单号 / Σ计划量 / 订单行可定位 / 复原目标计划存在 / 报工单可拆；**任一不符 → 整体跳过 E3**
+        （宁可不动也不猜；删 006 却不复原会凭空少 100 台已完成量）。
+   幂等：meta.fixMisboundProdPlans20261012；DB.tx 原子；事务失败复位标记，下次启动幂等重试。 */
+async function fixMisboundProdPlans20261012(){
+  if(!meta||meta.fixMisboundProdPlans20261012)return;
+  meta.fixMisboundProdPlans20261012=true;
+  const ORDER='KCDD-20260821-00028',PID='C01.05.010',DONE=100;
+  /* 索引一律由交付计划编号现查（抗漂移），**不硬编码**索引值 */
+  const idxByNo=function(no){for(let i=0;i<deliveries.length;i++)if(String(deliveries[i].planNo||'')===no)return i;return -1;};
+  const skipped=[],did=[];let ordersChanged=false;
+  /* ① E1 / E2：改绑（外键 + 索引一并写，缺一解析不到） */
+  [['PSCD-20261006-021','KCDD-20260823-00005','JFJH-20260929-00007'],
+   ['PSCD-20260930-004','KCDD-20260823-00001','JFJH-20260930-00011']].forEach(function(cfg){
+    const p=productionPlans.find(function(x){return String(x.id)===cfg[0];});
+    if(!p)return;
+    if(String(p.orderId)!==cfg[1]){skipped.push(cfg[0]+'（订单不符：'+(p.orderId||'空')+'，应为 '+cfg[1]+'）');return;}
+    if(String(p.deliveryPlanNo||'')===cfg[2])return;                 /* 已订正：幂等跳过 */
+    const to=idxByNo(cfg[2]);
+    if(to<0){skipped.push(cfg[0]+'（目标交付计划 '+cfg[2]+' 不存在）');return;}
+    const from=String(p.deliveryPlanNo||'空');
+    p.deliveryIdx=to;p.deliveryPlanNo=cfg[2];
+    did.push(cfg[0]+'：来源计划 '+from+' → '+cfg[2]+'（deliveryIdx '+to+'）');
+  });
+  /* ② E3：删 006 + 复原两张被误删单 + 报工流水拆分（四项前置全过才执行） */
+  const p6=productionPlans.find(function(x){return String(x.id)==='PSCD-20261006-006';});
+  if(p6){
+    const o=orders.find(function(x){return String(x.id)===ORDER;});
+    const li=o?orderItems(o).findIndex(function(x){return String(x.productId)===PID;}):-1;
+    const sum6=ppItems(p6).reduce(function(s,it){return s+ppPlanOf(it);},0);
+    const r30=productionReports.find(function(x){return String(x.id)==='REP-20261006-030';});
+    /* 复原记录逐字取自 data-140-fixed.json：仅 doneQty / steps.inbound.done 0→100、status→已完成，其余原样 */
+    const RESTORE=[
+      {id:'PSCD-20260930-021',deliveryIdx:39,orderId:'KCDD-20260821-00028',customer:'库存',finalDate:'',planDate:'2026-10-09',status:'已完成',notes:'',
+       items:[{productId:'C01.05.010',productName:'重合闸',spec:'反供电',model:'CWM6L-630/3N',unit:'台',planQty:100,doneQty:100,lineNotes:'',dlLine:0,
+         stepsDef:[{key:'assembly',label:'装配',plan:true,mandatory:true},{key:'instant',label:'瞬时',plan:true,mandatory:false},
+           {key:'delay',label:'延时',plan:true,mandatory:false},{key:'innerPack',label:'内包',plan:true,mandatory:false},
+           {key:'aging',label:'老化',plan:true,mandatory:true},{key:'inbound',label:'入库',plan:true,mandatory:true}],
+         steps:{assembly:{plan:100,done:0},instant:{plan:100,done:0},delay:{plan:100,done:0},innerPack:{plan:100,done:0},
+           aging:{plan:100,done:0},inbound:{plan:100,done:100}}}],
+       deliveryPlanNo:'JFJH-20260922-00002'},
+      {id:'PSCD-20261005-002',deliveryIdx:60,orderId:'KCDD-20260821-00028',customer:'库存',finalDate:'',planDate:'2026-10-06',status:'已完成',notes:'',
+       items:[{productId:'C01.05.010',productName:'重合闸',spec:'反供电',model:'CWM6L-630/3N',unit:'台',planQty:100,doneQty:100,lineNotes:'',dlLine:0,
+         stepsDef:[{key:'assembly',label:'装配',plan:true,mandatory:true},{key:'instant',label:'瞬时',plan:true,mandatory:false},
+           {key:'delay',label:'延时',plan:true,mandatory:false},{key:'innerPack',label:'内包',plan:true,mandatory:false},
+           {key:'aging',label:'老化',plan:true,mandatory:true},{key:'inbound',label:'入库',plan:true,mandatory:true}],
+         steps:{assembly:{plan:100,done:0},instant:{plan:100,done:0},delay:{plan:100,done:0},innerPack:{plan:100,done:0},
+           aging:{plan:100,done:0},inbound:{plan:100,done:100}}}],
+       materialReadyDate:'',deliveryPlanNo:'JFJH-20261005-00002'}
+    ];
+    const need=RESTORE.filter(function(r){return !productionPlans.some(function(x){return String(x.id)===r.id;});});
+    const bad=[];
+    if(String(p6.orderId)!==ORDER)bad.push('订单 '+(p6.orderId||'空')+'≠'+ORDER);
+    if(sum6!==200)bad.push('Σ计划 '+sum6+'≠200');
+    if(li<0)bad.push('订单行「'+PID+'」定位失败');
+    need.forEach(function(r){if(idxByNo(r.deliveryPlanNo)<0)bad.push('目标计划 '+r.deliveryPlanNo+' 不存在');});
+    if(!r30||String(r30.planId)!=='PSCD-20261006-006')bad.push('报工 REP-20261006-030 缺失或已改挂');
+    if(String(p6.deliveryPlanNo||'')!=='JFJH-20260829-00007')logOp('系统','库存管理','系统修复提示：PSCD-20261006-006 来源计划现为「'+
+      (p6.deliveryPlanNo||'空')+'」（清单记载 JFJH-20260829-00007），仍按签核目标「删 006 + 复原两单」执行。');
+    if(bad.length){
+      skipped.push('PSCD-20261006-006 订正跳过（'+bad.join('；')+'）');
+    }else{
+      need.forEach(function(r){
+        const cp=JSON.parse(JSON.stringify(r));
+        cp.deliveryIdx=idxByNo(r.deliveryPlanNo);
+        productionPlans.push(cp);
+        did.push('复原 '+cp.id+' → '+cp.deliveryPlanNo+'（deliveryIdx '+cp.deliveryIdx+'，doneQty 0→'+DONE+'、status 待排产/生产中→已完成）');
+      });
+      if(writebackInboundMutation(ORDER,PID,-200,li))ordersChanged=true;   /* 回退 006 入库 200 */
+      productionPlans.splice(productionPlans.indexOf(p6),1);
+      did.push('删除 PSCD-20261006-006（Σ计划 200 / done 200，.137 前错误视图误导下的重复下推）');
+      writebackInboundMutation(ORDER,PID,DONE,li);                          /* 复原单 021 入库 +100 */
+      writebackInboundMutation(ORDER,PID,DONE,li);                          /* 复原单 002 入库 +100 */
+      r30.planId='PSCD-20260930-021';r30.items.forEach(function(x){x.qty=DONE;});
+      let mx=0;productionReports.forEach(function(r){const m=String(r.id||'').match(/^REP-20261006-(\d+)$/);if(m)mx=Math.max(mx,parseInt(m[1],10));});
+      const nr=JSON.parse(JSON.stringify(r30));
+      nr.id='REP-20261006-'+String(mx+1).padStart(3,'0');
+      nr.planId='PSCD-20261005-002';
+      productionReports.push(nr);
+      did.push('报工 REP-20261006-030 改挂 PSCD-20260930-021（qty 200→100）；新增 '+nr.id+' 挂 PSCD-20261005-002（qty 100）');
+    }
+  }
+  if(!did.length){
+    /* 无可撤项：通常表示已由离线脚本订正过。但「前置校验不符」需人工介入，必须留痕。 */
+    if(skipped.length)logOp('系统','库存管理','系统修复：排产单错绑订正未执行——前置校验不符，已跳过：'+skipped.join('；')+'。请人工复核后处理。');
+    save('meta',meta);
+    return;
+  }
+  const stockChanged=ordersChanged?recomputeStockFromInvOrders():false;
+  const ops=[{key:'productionPlans',value:productionPlans},{key:'productionReports',value:productionReports},{key:'meta',value:meta}];
+  if(ordersChanged)ops.push({key:'orders',value:orders});
+  if(stockChanged)ops.push({key:'products',value:products});
+  const ok=await DB.tx(ops,true);
+  if(!ok){meta.fixMisboundProdPlans20261012=false;return;}   /* 事务失败：标记复位，下次启动幂等重试 */
+  logOp('系统','库存管理','系统修复：排产单错绑上游交付计划订正——'+did.join('；')+
+    (skipped.length?('；跳过：'+skipped.join('；')):''));
+}
 function migrateOrderStatusData(){  let changed=false;
   orders.forEach(o=>{ if(o.status==='待排产'){o.status='执行中';changed=true;} });
   if(changed){
@@ -7439,6 +7551,8 @@ async function initApp(){
   // 超排存量订正（2026-10-08.140，一次性幂等：撤销 .137 前索引漂移误导下推产生的重复排产单 + 清理孤儿报工）
   await fixOverPush20261008();
   await fixOverPushPlans20261008();   // 超排排产单清算（2026-10-08.142，一次性幂等：用户指定的 7 张超排单，见函数头）
+  // 排产单错绑上游交付计划订正（2026-10-12.144，一次性幂等：E1/E2 改绑 + E3 删重复下推单并复原被 .142 误删的两张，见函数头）
+  await fixMisboundProdPlans20261012();
   // 工序模板：确保默认模板存在（幂等），并迁移产品主数据工序模板字段/默认指派
   ensureDefaultTpl();
   migrateProductProcessTpl();
@@ -7522,7 +7636,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-10.143</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-12.144</div>
 </body>
 </html>
 
