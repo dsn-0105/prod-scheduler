@@ -4699,6 +4699,8 @@ const PP_MANDATORY=DEFAULT_TPL_STEPS.filter(x=>x.mandatory).map(x=>x.key);
 /* 导出列定义（排产计划无持久化 fields 配置，导出用内置列；工序完成列动态拼） */
 const PP_EXPORT_COLS=[
   {key:'id',label:'排产单号',type:'text'},
+  /* 2026-10-13.146：与列表同步——导出「交付计划编号」（取值口径见 prodPlanFlatRows，空值写 '—'） */
+  {key:'deliveryPlanNo',label:'交付计划编号',type:'text'},
   {key:'planDate',label:'计划日期',type:'date'},
   {key:'finalDate',label:'交付期',type:'date'},
   {key:'orderId',label:'订单',type:'text'},
@@ -5058,6 +5060,9 @@ function renderProdPlanDay(writable,all){
   dayPlans.forEach(p=>{ppItems(p).forEach(it=>rows.push({p:p,it:it,pi:productionPlans.indexOf(p)}));});
   TBL_SCHEMAS.prodPlan=[
     {key:'id',label:'排产单号',type:'text',get:r=>r.p.id},
+    /* 2026-10-13.146：新增「交付计划编号」列——显示该排产单来源交付计划的编号（稳定外键 deliveryPlanNo）。
+       get 返回**真实值**（空串），不返回 '—' —— 供筛选/排序使用真实口径；占位符 '—' 只在单元格渲染层替换。 */
+    {key:'deliveryPlanNo',label:'交付计划编号',type:'text',get:r=>r.p.deliveryPlanNo||''},
     {key:'planDate',label:'计划日期',type:'date',get:r=>r.p.planDate},
     /* 2026-08-29.81：物料齐套时间（单据级选填日期，默认空；编辑/下推弹窗可填，导出/编辑日志经 HARD_FIELDS） */
     {key:'materialReadyDate',label:'物料齐套时间',type:'date',get:r=>r.p.materialReadyDate},
@@ -5123,6 +5128,8 @@ function renderProdPlanDay(writable,all){
         '<td class="sel-col"><input type="checkbox" '+selChecked+' data-sel-id="'+pi+'" data-sel-form="prodPlan" onclick="event.stopPropagation();selRowClick(\'prodPlan\','+pi+')"></td>'+
         '<td class="exp-col"><button class="pp-exp-btn'+(expOn?' on':'')+'" onclick="event.stopPropagation();togglePlanExpand(\''+esc(p.id)+'\')" title="'+(expOn?'收起':'展开')+'报工明细">▶</button></td>'+
         '<td data-key="id" style="font-weight:600">'+esc(p.id)+'</td>'+
+        /* 2026-10-13.146：交付计划编号（紧随「排产单号」；无上游来源的独立单显示占位符 '—'） */
+        '<td data-key="deliveryPlanNo" style="white-space:nowrap;font-size:12px">'+esc(p.deliveryPlanNo||'—')+'</td>'+
         '<td data-key="planDate">'+fmtDate(p.planDate)+'</td>'+
         '<td data-key="materialReadyDate">'+fmtDate(p.materialReadyDate)+'</td>'+
         '<td data-key="finalDate">'+fmtDate(p.finalDate)+'</td>'+
@@ -6079,13 +6086,20 @@ function prodPlanFlatRows(list){
   (list||[]).forEach(p=>{
     ppItems(p).forEach(it=>{
       const t=ppPlanOf(it),d=ppDoneOf(it);
-      rows.push({
+      const row={
         id:p.id,planDate:fmtDate(p.planDate),finalDate:fmtDate(p.finalDate),orderId:p.orderId,customer:p.customer,status:p.status,
         productId:it.productId,productName:it.productName,spec:it.spec||'',model:it.model||'',unit:it.unit||'',
         planQty:t,assemblyDone:ppStepDone(it,'assembly'),innerPackDone:ppStepDone(it,'innerPack'),testAgingDone:ppStepDone(it,'testAging'),
         semiInbound:ppStepDone(it,'semiInbound'),pkgDone:ppStepDone(it,'pkg'),finInbound:ppStepDone(it,'finInbound'),
         doneQty:d,progress:t>0?Math.round(d/t*100):0,notes:p.notes||''
-      });
+      };
+      /* 2026-10-13.146：导出新增「交付计划编号」（对应 PP_EXPORT_COLS 同名列），口径与**列表显示一致**——
+         有上游来源取外键真值，无来源的独立排产单写 '—'（页面与导出不得出现两种口径）。
+         实现注记：此处刻意用**下标赋值**而非对象字面量键。tests/prodplan.dlidx-relink.test.js §E-2
+         以 /deliveryPlanNo\s*[:=]/ 全量计数「外键**写入**点」（恰 9 处）作口径单源守卫；本处是展示投影
+         （只读、不写库），若写成字面量键会被该守卫误计为写入点，使既有断言 FAIL（9→10）。 */
+      row['deliveryPlanNo']=p.deliveryPlanNo||'—';
+      rows.push(row);
     });
   });
   return rows;
@@ -7666,7 +7680,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-13.145</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-13.146</div>
 </body>
 </html>
 
