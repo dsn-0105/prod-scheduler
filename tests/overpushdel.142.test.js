@@ -278,7 +278,7 @@ test('D-1) 幂等：标记已置 → 二次运行零变化', async () => {
   } finally { app.dispose(); }
 });
 
-test('D-2) 两行合并订正：超排全库归零 + 自检 7 项全通过 + 恒等式逐行成立', async () => {
+test('D-2) 两行合并订正：超排全库归零 + 自检 9 项全通过 + 恒等式逐行成立', async () => {
   /* 把 00008 与 00028 放进同一份数据，一次订正全部处理 */
   const a = seed00008(), b = seed00028();
   const seed08 = j(a, '(function(){return {orders:orders,products:products,deliveries:deliveries,productionPlans:productionPlans,productionReports:productionReports};})()');
@@ -311,9 +311,9 @@ test('D-2) 两行合并订正：超排全库归零 + 自检 7 项全通过 + 恒
       assert.equal(r.sum, 0, r.id + ' 恒等式 已交付+已计划未交付=结余 必须成立');
     });
 
-    /* 全库自检 7 项全通过 */
+    /* 全库自检 9 项全通过 */
     const audit = j(app, 'auditInvInvariants()');
-    assert.equal(audit.checks.length, 7);
+    assert.equal(audit.checks.length, 9, '.145：自检项数 7 → 9（新增 ⑧ 交付计划行级超排 / ⑨ 来源计划创建时序）');
     assert.equal(audit.checks[6].name, '超排核对');
     assert.equal(audit.checks[6].ok, true, '超排核对应通过：' + JSON.stringify(audit.checks[6].bad));
     assert.equal(audit.checks[1].ok, true, '② 来源归属自洽应通过（删除后不得留下孤儿引用）');

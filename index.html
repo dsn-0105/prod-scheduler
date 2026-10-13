@@ -5832,7 +5832,7 @@ function guardRestoreDelivered(rows){
   (rows||[]).forEach(g=>{if(g.item&&g.beforeDelivered!=null)g.item.deliveredQty=g.beforeDelivered;});
 }
 /* ═══════ 2026-10-07.139：全库不变量一键自检（用户 2026-10-07 要求；**全部只读**，不改任何数据） ═══════
-   七项（①~⑤ 与 ⑦ 为「错」，⑥ 为「提示」——仅供核对）：
+   九项（①~⑤ 与 ⑦~⑨ 为「错」，⑥ 为「提示」——仅供核对）：
      ① 报工流水 ≡ 排产单完成量：Σ(报工记录 inbound/finInbound qty) 必须等于 Σ(排产单 ppDoneOf)
         —— 完成量只由报工累加而来，不等 = 有报工没落到完成量（或反之）。
      ② 排产单来源归属自洽：ppDlIdxOf 非空时，交付计划.orderId 必须等于排产单.orderId（R1 复发检测）。
@@ -5842,6 +5842,10 @@ function guardRestoreDelivered(rows){
         结余虚减，且运行时守卫会拦住报工（须先修数据）。
      ⑥ 结余为负的行（欠产）——仅供核对，非错误。
      ⑦ 超排核对：Σ已下推排产计划 > Σ交付计划本批计划（.140 新增）——重复下推/计划被削，会锁死排产单编辑。
+     ⑧ 交付计划行级超排（.145 新增）：按**交付计划行**比 ppPlannedOfLine(di,li,productId) 与 num(planQty)
+        —— ⑦ 是订单行级聚合（同一订单多张计划摊平后看不出超排），本项专补该盲区。
+     ⑨ 来源计划创建时序（.145 新增）：排产单 id 内日期 > 所属交付计划 createdAt 日期 = 时间悖论
+        —— 排产单晚于它所属的交付计划才创建，逻辑上不可能，是**强错绑信号**。
    返回 {ok,checks}；runInvAudit() 负责弹窗展示。 */
 function auditInvInvariants(){
   const checks=[];
@@ -5933,6 +5937,32 @@ function auditInvInvariants(){
     });
   });
   push('超排核对','Σ已下推排产计划不得超过 Σ交付计划本批计划（超出=重复下推或计划被削；会使「已计划未交付」呈负数，并锁死该排产单编辑）',overPushBad);
+  /* ⑧ 交付计划行级超排（2026-10-13.145 新增）：
+     ⑦ 是**订单行级**聚合——同一订单的多张计划摊平后同订单行内看不出超排（.144 那 3 行全被判通过）。
+     本项按**交付计划行**逐一比：该行已排产 > 该行本批计划 → 超排（专补「单张计划被重复下推」的盲区）。 */
+  const dlRowBad=[];
+  (deliveries||[]).forEach((d,di)=>{
+    deliveryItems(d).forEach((it,li)=>{
+      const pl=num(ppPlannedOfLine(di,li,it.productId)),pq=num(it.planQty);
+      if(pl>pq)dlRowBad.push((d.planNo||('#'+di))+' / '+(it.productName||it.productId)+
+        '：已排产 '+money(pl)+'，本批计划 '+money(pq)+'（超 '+money(pl-pq)+'）');
+    });
+  });
+  dlRowBad.sort();
+  push('交付计划行级超排','交付计划每一行的「已排产」不得超过该行「本批计划」（按行比；补 ⑦ 订单行级聚合的盲区）',dlRowBad);
+  /* ⑨ 来源计划创建时序（2026-10-13.145 新增）：
+     排产单**晚于**它所属的交付计划才创建 —— 逻辑上不可能，是**强错绑信号**。
+     排产单 id 形如 PSCD-YYYYMMDD-NNN（取日期段）；交付计划 createdAt 取非数字字符剥离后的日期段。 */
+  const chroBad=[];
+  (productionPlans||[]).forEach(p=>{
+    const di=ppDlIdxOf(p);if(di==null)return;
+    const d=deliveries[di];if(!d)return;
+    const pd=String(p.id||'').replace(/^PSCD-/,'').slice(0,8);
+    const cd=String(d.createdAt||'').replace(/[^0-9]/g,'').slice(0,8);
+    if(pd&&cd&&cd>pd)chroBad.push(p.id+'（'+pd+'）→ '+(d.planNo||('#'+di))+'（'+cd+'）');
+  });
+  chroBad.sort();
+  push('来源计划创建时序','排产单创建日期不得晚于其来源交付计划的创建日期（时间悖论=强错绑信号）',chroBad);
   const ok=checks.filter(c=>!c.ok).length===0;
   return {ok:ok,checks:checks};
 }
@@ -7160,7 +7190,7 @@ function bulkBar(m){
   /* 2026-08-29.76：计划查询（只读导航，写权限块外）——跳转交付计划并筛选本订单 */
   if(m==='order_frame'||m==='order_inv')btns.push('<button class="btn btn-sm" onclick="queryDeliveryOfOrder(\''+m+'\')" title="跳转到交付计划并筛选本订单的交付计划（仅限 1 张）">计划查询</button>');
   /* 2026-10-07.139：库存不变量一键自检（只读，置于写权限块外，只读账号亦可用）——全库检查，与选中行无关 */
-  if(m==='order_inv')btns.push('<button class="btn btn-sm" onclick="runInvAudit()" title="只读自检（不改数据）：报工流水≡排产完成量 / 来源归属自洽 / 来源编号齐备 / 完成量未越界 / 入库回写可达 / 欠产清单 / 超排核对">不变量自检</button>');
+  if(m==='order_inv')btns.push('<button class="btn btn-sm" onclick="runInvAudit()" title="只读自检（不改数据）：报工流水≡排产完成量 / 来源归属自洽 / 来源编号齐备 / 完成量未越界 / 入库回写可达 / 欠产清单 / 超排核对 / 交付计划行级超排 / 来源计划创建时序">不变量自检</button>');
   btns.push('<button class="btn btn-sm" onclick="bulkExport(\''+m+'\')">导出选中</button>');
   /* 2026-09-08.117：表单内「模板/导入」按钮全部隐藏（含此前的灰禁用占位）——数据写入只走业务动作
      （金蝶导入/交付登记/调用库存/下推生成）与「恢复」json，杜绝误导入覆盖；金蝶导入入口保留于销售订单页 */
@@ -7636,7 +7666,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-12.144</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-13.145</div>
 </body>
 </html>
 

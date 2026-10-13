@@ -197,7 +197,7 @@ test('D-1) 自检第 7 项：超排场景被检出（ok=false 且项名与条目
   try {
     const r = j(app, 'auditInvInvariants()');
     const c = r.checks[6];
-    assert.equal(r.checks.length, 7);
+    assert.equal(r.checks.length, 9, '.145：自检项数 7 → 9（新增 ⑧ 交付计划行级超排 / ⑨ 来源计划创建时序）');
     assert.equal(c.name, '超排核对');
     assert.equal(c.ok, false, '下推 400 > 本批计划 200 必须判负');
     assert.equal(c.bad.length, 1);

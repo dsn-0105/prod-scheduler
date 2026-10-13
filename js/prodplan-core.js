@@ -102,8 +102,21 @@ function ppDoneKeyOf(d,y){
      act='set'    需改写索引（外键目标已删→置 null / 唯一候选 / 归集等价的多候选 / 行号线索）
      act='manual' 无法唯一确定（零候选 / 多候选且归集口径不等价且无线索）——保持原样并记日志
    候选口径：同订单 + 每个排产行都能在候选计划内解析到**产品一致**的交付行 + 该行计划量 ≥ 本排产行计划量
-             + 候选计划创建时间不晚于本排产单（时序硬约束）。
-   等价口径：各候选导出的归集 key 序列完全相同 → 绑定结果对「已计划未交付 / 结余」无差别，取最小位移。 */
+             + 候选计划创建时间不晚于本排产单（时序硬约束）
+             + **本单放入该候选行后不得超排**（2026-10-13.145）——否则本单会从一张满的计划
+               被搬到另一张同样满的计划上。
+   自洽口径（2026-10-13.145 加严）：同订单 + 每行可解析到产品一致的交付行 + **本单在该行并非多余**。
+             判据按「交付计划行」算：其他单在该行的占用 = 该行已排量 − 本单在该行的量；
+             其他单已把该行额度占满（≥ 行计划量）⇒ 本单是多余的那张，**不予认可**（转 ③ 候选搜索）。
+             口径选择理由：用「其他单是否占满」而非「总量是否超」，前者**顺序无关**且只揪出多余的那张；
+             后者会让同计划上的两张单**都被判有问题**，结果随判定顺序变化。
+   等价口径：各候选导出的归集 key 序列完全相同 → 绑定结果对「已计划未交付 / 结余」无差别，取最小位移。
+   调用约束（2026-10-13.145，QA 实证的构造陷阱）：本函数是**纯函数**，只依据「当前态」判定，**不含跨单额度预留**。
+     调用方必须**逐张判定即落库**（每判一张就把 to 写回 deliveryIdx，再判下一张）；**不得**对多张单基于
+     同一初始状态统一判定、最后统一落点——否则同批多张「多余单」会全部挤向同一候选，致该候选超排
+     （反例：D0 额度 1000 上挤两张各 1000 + 空 D1 ⇒ 各自独立判定下两张都 set→D1，D1 占 2000 超排）。
+     生产唯一调用点 rebindProdPlanDlIdx 已按此语义实现（forEach 内判定即写 p.deliveryIdx=to，第二张判定时
+     第一张落点已生效）——改调用方时务必保持该顺序语义。 */
 function ppDlLinkDecide(p){
   if(!p)return {act:'skip'};
   /* ① 外键优先：编号是稳定主键，抗索引漂移 */
@@ -120,9 +133,39 @@ function ppDlLinkDecide(p){
       return !!r && num(r.planQty)>=ppPlanOf(y);
     });
   };
-  /* ② 当前索引自洽（同订单 + 每行都能解析到产品一致的交付行）→ 认可 */
+  /* 行级额度核对（2026-10-13.145）：把排产行 y 解析到交付计划 d 内的**产品一致行**及其行索引。
+     解析不到 → null（与 fits 同口径：该计划本就不合格）。 */
+  const lineOf=function(d,y){
+    const r=ppDlRowOf(d,y);
+    if(!r)return null;
+    return {row:r,li:deliveryItems(d).indexOf(r)};
+  };
+  /* ② 认可前判据：本单在 d 的某行是否**多余**（其他单已把该行额度占满）。
+     顺序无关：只看「别的单占了多少」，不看「总量超没超」。 */
+  const redundantAt=function(d,di){
+    return items.some(function(y){
+      const lit=lineOf(d,y);
+      if(!lit)return false;                     /* 行解析不到 → 判据不成立（fits 已先拦下，此处不触发） */
+      const cap=num(lit.row.planQty);
+      const others=ppPlannedOfLine(di,lit.li,y.productId)-ppPlanOf(y);   /* 已排量（含本单）− 本单量 */
+      return others>=cap;
+    });
+  };
+  /* ③ 候选判据：本单放入候选 dk 后是否**超排**（立即可检出「搬到另一张同样满的计划」）。 */
+  const overAt=function(dk){
+    const d=deliveries[dk];
+    return items.some(function(y){
+      const lit=lineOf(d,y);
+      if(!lit)return true;                      /* 行解析不到 → 候选不合格 */
+      const cap=num(lit.row.planQty);
+      const ownAt=(ppDlIdxOf(p)===dk)?ppPlanOf(y):0;                     /* 本单当前是否已落在 dk 该行 */
+      const others=ppPlannedOfLine(dk,lit.li,y.productId)-ownAt;
+      return others+ppPlanOf(y)>cap;
+    });
+  };
+  /* ② 当前索引自洽（同订单 + 每行都能解析到产品一致的交付行 + 本单非多余）→ 认可 */
   const cur=deliveries[p.deliveryIdx];
-  if(cur&&String(cur.orderId||'')===String(p.orderId||'')&&fits(cur))
+  if(cur&&String(cur.orderId||'')===String(p.orderId||'')&&fits(cur)&&!redundantAt(cur,p.deliveryIdx))
     return {act:'keep',from:p.deliveryIdx,to:p.deliveryIdx,level:'当前索引自洽',cands:[p.deliveryIdx]};
   /* ③ 全库找候选 */
   const cands=[];
@@ -132,6 +175,7 @@ function ppDlLinkDecide(p){
     if(!fits(d))return;
     const c=String(d.createdAt||'').replace(/[^0-9]/g,'').slice(0,8);
     if(c&&pd&&c>pd)return;                       /* 交付计划创建晚于排产单 → 逻辑上不可能 */
+    if(overAt(di))return;                        /* 2026-10-13.145：放入后超排 → 不合格 */
     cands.push(di);
   });
   if(!cands.length)return {act:'manual',from:p.deliveryIdx,to:null,level:'无候选',cands:[]};

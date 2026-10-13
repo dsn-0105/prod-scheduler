@@ -20,6 +20,11 @@
      §E 静态守卫：外键写入/清空点 + 删除后重排接线 + 行解析口径单源（不得在 index.html 二次实现）。
      §F （.138）ppDlRowOf / ppDoneKeyOf：行解析与归集 key 的**唯一口径**。
      §G （.138）ppDlLinkDecide：外键 / 自洽 / 唯一候选 / 归集等价多候选 / 无线索 → 保持原样。
+     §G-9/G-10 （.145）ppDlLinkDecide 额度核对：某行已被其他单占满 → 本单「多余」不许多余认可（G-9）；
+        候选放入后必超排 → 排除（G-10，防「从一张满的计划搬到另一张同样满的计划」）。
+        G-9 另含两点：① 纯函数幂等（重复判定一致，**非**顺序无关证据）；② 顺序无关性
+        （apply-then-rejudge，复刻 rebind 逐张落库语义，两种判定顺序最终落点一致）——
+        ② 在「总量 > 额度」替代判据下会 FAIL，故对判据选型有真实判别力。
      §H （.138）rebindProdPlanDlIdx：一次性幂等迁移（写集、标记、失败复位、留人工不动、独立单不参与、
         重绑后「已计划未交付」按本订单归集）。
 
@@ -455,6 +460,84 @@ test('§G-8 独立单（deliveryIdx=null）→ skip（不参与绑定，恒不�
   const r = decide(app, 0);
   app.dispose();
   assert.equal(r.act, 'skip');
+});
+
+test('§G-9 额度用满 → 许可不许 keep（.144 金样例：两张单挤同一交付计划）', () => {
+  /* .144 真实场景：JFJH-...-00007（计划 1000，空）、JFJH-...-00008（计划 1100），
+     两张排产单都错绑在 00008 上（001=1100 是对的、021=1000 是错的）。 */
+  const D = [
+    mkDel('O-A', 'JFJH-20260929-00007', [{ pid: 'PA', plan: 1000 }]),
+    mkDel('O-A', 'JFJH-20260929-00008', [{ pid: 'PA', plan: 1100 }]),
+  ];
+  const P = [
+    mkPlan('PSCD-20261006-001', 'O-A', 1, '', 'PA', 1100, 0),
+    mkPlan('PSCD-20261006-021', 'O-A', 1, '', 'PA', 1000, 0),
+  ];
+  const app = boot(D, P);
+  const a = decide(app, 0);
+  const b = decide(app, 1);
+  /* 纯函数幂等：同 app、两次调用之间**不做任何变更**下再判一次 → 结果必须逐字相同。
+     注意：这里只验「无状态/幂等」，**不构成顺序无关性证据**（换任何判据都会过）；
+     真正的顺序无关性由下面 ② 的 apply-then-rejudge 断言负责。 */
+  const b2 = decide(app, 1);
+  const a2 = decide(app, 0);
+  app.dispose();
+
+  assert.deepEqual(plain(a2), plain(a), '纯函数重复判定一致（幂等）：a 两次结果相同');
+  assert.deepEqual(plain(b2), plain(b), '纯函数重复判定一致（幂等）：b 两次结果相同');
+  assert.equal(a.act, 'keep', '001（1100）：其他单占 2100−1100=1000 < 1100 未占满 → 认可');
+  assert.equal(a.to, 1, '留在 00008');
+  assert.equal(b.act, 'set', '021（1000）：其他单占 2100−1000=1100 ≥ 1100 已占满 → 本单多余 → 不许 keep');
+  assert.equal(b.to, 0, '唯一候选 = 空的 00007（放入后 1000 ≤ 1000）');
+
+  /* ② 顺序无关性（apply-then-rejudge）——**本判据选型的核心证据**。
+     复刻生产路径 rebindProdPlanDlIdx 的「逐张判定即把落点写回 deliveryIdx」语义：
+     分别按 [A,B] 与 [B,A] 两种顺序判定，每判一张就把结果落回内存再判下一张，
+     两种顺序的**最终落点必须一致**。
+     判别力（必须保持）：把 ② 的判据换成被否掉的「该行**总量** > 额度」写法时，本断言会 FAIL——
+     [A,B] 顺序下 A 会先被判「多余」而失去合法归属（→ manual），[B,A] 下却仍 keep ⇒ 结果随顺序变化。
+     这正是当初否掉「总量判据」、采用「其他单是否占满」判据的理由。 */
+  function settle(order) {
+    /* ⚠ seed 必须**深拷贝**：createApp 按引用注入 seed，且本函数会写回 deliveryIdx，
+       共享同一份 D/P 会反向污染宿主夹具（铁律 4）→ 第二次 settle 起于已被改写的状态 → 假阴性。 */
+    const ap = boot(plain(D), plain(P));
+    const out = {};
+    order.forEach(function (i) {
+      const r = decide(ap, i);
+      const id = JSON.parse(ap.run('JSON.stringify(productionPlans[' + i + '].id)'));
+      out[id] = { act: r.act, to: r.to };
+      if (r.to != null) ap.run('productionPlans[' + i + '].deliveryIdx=' + r.to + ';');
+    });
+    ap.dispose();
+    return out;
+  }
+  const seqAB = settle([0, 1]);
+  const seqBA = settle([1, 0]);
+  assert.deepEqual(plain(seqAB), plain(seqBA),
+    '顺序无关（apply-then-rejudge）：[A,B] 与 [B,A] 两种判定顺序的最终落点必须一致');
+  assert.deepEqual(plain(seqAB), {
+    'PSCD-20261006-001': { act: 'keep', to: 1 },
+    'PSCD-20261006-021': { act: 'set', to: 0 },
+  }, '最终落点：001 留 00008、021 移 00007');
+});
+
+test('§G-10 候选放入后超排 → 排除（不得搬到另一张同样满的计划上）', () => {
+  const D = [
+    mkDel('O-B', 'JFJH-9', [{ pid: 'PB', plan: 50 }]),
+    mkDel('O-A', 'JFJH-1', [{ pid: 'PA', plan: 1000 }]),
+    mkDel('O-A', 'JFJH-2', [{ pid: 'PA', plan: 1000 }]),
+  ];
+  const P = [
+    mkPlan('PSCD-20260825-001', 'O-A', 0, '', 'PA', 1000, 0),   /* 本单：索引错位指向 O-B */
+    mkPlan('PSCD-20260825-002', 'O-A', 1, '', 'PA', 1000, 0),   /* 把 D1 占满 */
+    mkPlan('PSCD-20260825-003', 'O-A', 2, '', 'PA', 1000, 0),   /* 把 D2 占满 */
+  ];
+  const app = boot(D, P);
+  const r = decide(app, 0);
+  app.dispose();
+  assert.equal(r.act, 'manual', '两张候选都已被别的单占满（放入后 2000 > 1000）→ 零候选，交人工');
+  assert.equal(r.level, '无候选');
+  assert.equal(r.to, null, '不得被搬到同样满的计划上');
 });
 
 /* ================================================================

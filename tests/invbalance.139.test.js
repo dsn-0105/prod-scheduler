@@ -20,7 +20,8 @@
      §B 展示层：库存页「结余」与「已计划未交付」列均可渲染负数；负结余 → 4 档警示红。
      §C 报工入库守恒守卫：适用范围（库存订单非独立单）+ 通过 / 失败退回（数据零变化）。
      §D fixInvDeliveredDrift20261007：一次性幂等 + 前置基线校验（不符则跳过不动手）。
-     §E auditInvInvariants：七项检查（含缺陷检出）。
+     §E auditInvInvariants：九项检查（含缺陷检出）；E-5 采用「盲区形状」夹具
+        （同订单行两张交付计划 ⇒ 订单行级看不出）实证 ⑧ 补的正是 ⑦ 的盲区。
      §F 静态守卫：结余/已计划未交付公式全工程只经唯一入口，不得残留裸钳制表达式。
 
    运行：node --test tests/invbalance.139.test.js（**不要用 node -e**，见 tests/README）
@@ -302,7 +303,7 @@ test('D-3) 前置基线校验：当前值 ≠ 预期基线（0）→ 跳过不�
 /* ================================================================
    §E 全库不变量自检
 ================================================================ */
-test('E-1) 干净库 → 七项检查全通过（欠产清单为提示项）', () => {
+test('E-1) 干净库 → 九项检查全通过（欠产清单为提示项）', () => {
   const orders = [mkInvOrder('K1', [{ pid: 'PA', qty: 1000, dv: 200 }])];
   const deliveries = [mkDel('K1', 'JFJH-1', [{ pid: 'PA', plan: 1000, ol: 0 }])];
   const plans = [mkPlan('P1', 'K1', 0, 'JFJH-1', 'PA', 1000, 400, 0)];
@@ -312,10 +313,15 @@ test('E-1) 干净库 → 七项检查全通过（欠产清单为提示项）', (
     const r = JSON.parse(app.run('JSON.stringify(auditInvInvariants())'));
     assert.equal(r.ok, true, '不该有异常：' + JSON.stringify(r.checks.filter(function (c) { return !c.ok; })));
     /* .140：自检新增第 7 项「超排核对」（用户 2026-10-08 要求），项数 6 → 7 */
-    assert.equal(r.checks.length, 7);
+    /* .145：自检新增第 8 项「交付计划行级超排」+ 第 9 项「来源计划创建时序」，项数 7 → 9 */
+    assert.equal(r.checks.length, 9);
     assert.equal(r.checks[5].info, true, '第 6 项为提示项（欠产清单）');
     assert.equal(r.checks[6].name, '超排核对', '第 7 项为超排核对（.140 新增）');
     assert.equal(r.checks[6].ok, true, '干净库（已下推=本批计划）不应有超排');
+    assert.equal(r.checks[7].name, '交付计划行级超排', '第 8 项为交付计划行级超排（.145 新增）');
+    assert.equal(r.checks[7].ok, true, '干净库（行级已排产=该行本批计划）不应有行级超排');
+    assert.equal(r.checks[8].name, '来源计划创建时序', '第 9 项为来源计划创建时序（.145 新增）');
+    assert.equal(r.checks[8].ok, true, '干净库不应有创建时序悖论');
   } finally { app.dispose(); }
 });
 
@@ -367,6 +373,76 @@ test('E-4) 归属错位（R1 复发）被检出②', () => {
     const c = r.checks[1];
     assert.equal(c.ok, false, '② 应检出归属错位');
     assert.ok(c.bad[0].indexOf('K2') >= 0);
+  } finally { app.dispose(); }
+});
+
+/* 注：清单原文把下面两条记作「E-4 / E-5」，但本文件 E-4 已被「归属错位（R1 复发）被检出②」占用，
+   故顺延为 E-5 / E-6（用例内容与清单一致）。 */
+test('E-5) ⑧ 交付计划行级超排：同一交付计划行被重复下推 → 检出（⑦ 订单行级看不出，⑧ 专补该盲区）', () => {
+  /* 忠实复刻 .144 真实形状（JFJH-20260829-00007 / C01.05.010 重合闸，取 100/100/100/200 四张）：
+     同一订单行挂**两张**交付计划（JFJH-1 与 JFJH-2 各 300，合计 600），把 4 张排产单
+     （100+100+100+200=500，外键齐备、归属自洽、完成量不越界）全压在 JFJH-1 上：
+       · JFJH-1 已排 500 > 本批 300（超 200）→ ⑧ 按「交付计划行」揪出；
+       · 而**订单行级** Σ已下推 500 ≤ Σ本批计划 600 → ⑦ 超排核对**看不出**。
+     这正是 ⑧ 存在的理由：⑦ 是订单行级聚合，同一订单行多张计划摊平后掩盖了单张计划被重复下推。
+     （注：早先版本用「单张计划 300 挂两张各 200」的夹具，但那种形状 ⑦ 同样会检出，
+       无法隔离 ⑧ 的独立价值，故改为上面的盲区形状。） */
+  const orders = [mkInvOrder('K1', [{ pid: 'PA', qty: 600, dv: 0 }])];
+  const deliveries = [
+    mkDel('K1', 'JFJH-1', [{ pid: 'PA', plan: 300, ol: 0 }]),
+    mkDel('K1', 'JFJH-2', [{ pid: 'PA', plan: 300, ol: 0 }]),
+  ];
+  const plans = [
+    mkPlan('PSCD-20261005-001', 'K1', 0, 'JFJH-1', 'PA', 100, 0, 0),
+    mkPlan('PSCD-20261005-002', 'K1', 0, 'JFJH-1', 'PA', 100, 0, 0),
+    mkPlan('PSCD-20261005-003', 'K1', 0, 'JFJH-1', 'PA', 100, 0, 0),
+    mkPlan('PSCD-20261005-004', 'K1', 0, 'JFJH-1', 'PA', 200, 0, 0),
+  ];
+  const app = boot({ orders: orders, deliveries: deliveries, productionPlans: plans, productionReports: [] });
+  try {
+    const r = JSON.parse(app.run('JSON.stringify(auditInvInvariants())'));
+    const byName = {};
+    r.checks.forEach(function (c) { byName[c.name] = c; });
+    const c = byName['交付计划行级超排'];
+    assert.equal(r.checks.length, 9);
+    assert.equal(c.ok, false, 'JFJH-1 已排 500 > 本批计划 300 必须判负');
+    assert.equal(c.bad.length, 1, '只有 JFJH-1 超排；JFJH-2（已排 0）不该被点名');
+    assert.ok(c.bad[0].indexOf('JFJH-1') >= 0, '条目须点名该交付计划：' + c.bad[0]);
+    assert.ok(c.bad[0].indexOf('500') >= 0 && c.bad[0].indexOf('300') >= 0 && c.bad[0].indexOf('超 200') >= 0,
+      '条目须含已排 500 / 本批 300 / 超 200：' + c.bad[0]);
+    assert.equal(byName['超排核对'].ok, true,
+      '订单行级聚合（500 ≤ 600）看不出 → ⑦ 必须通过，实证 ⑧ 补的正是 ⑦ 的盲区');
+    assert.equal(byName['来源计划创建时序'].ok, true, '本场景不涉时序悖论');
+    assert.equal(r.ok, false, '有行级超排 → 总体必须判负');
+  } finally { app.dispose(); }
+});
+
+test('E-6) ⑨ 来源计划创建时序：排产单(09-30)早于所属计划(10-05) → 检出（.144 PSCD-20260930-004 形态）', () => {
+  const orders = [mkInvOrder('K1', [{ pid: 'PA', qty: 1000, dv: 0 }])];
+  /* mkDel 固定 createdAt=2026-08-20，本用例需要「晚于排产单」的创建时间，故直接构造 */
+  const deliveries = [{
+    orderId: 'K1', customer: '库存', createdAt: '2026-10-05', planNo: 'JFJH-LATE',
+    items: [{
+      productId: 'PA', productName: 'PA', spec: '', model: '',
+      orderQty: 1000, deliveredQty: 0, planQty: 1000, orderLine: 0,
+    }],
+  }];
+  const plans = [mkPlan('PSCD-20260930-004', 'K1', 0, 'JFJH-LATE', 'PA', 1000, 0, 0)];
+  const app = boot({ orders: orders, deliveries: deliveries, productionPlans: plans, productionReports: [] });
+  try {
+    const r = JSON.parse(app.run('JSON.stringify(auditInvInvariants())'));
+    const byName = {};
+    r.checks.forEach(function (c) { byName[c.name] = c; });
+    const c = byName['来源计划创建时序'];
+    assert.equal(r.checks.length, 9);
+    assert.equal(c.ok, false, '排产单 09-30 早于所属计划 10-05 → 时间悖论必须判负');
+    assert.equal(c.bad.length, 1);
+    assert.ok(c.bad[0].indexOf('PSCD-20260930-004') >= 0 && c.bad[0].indexOf('20260930') >= 0,
+      '条目须点名该排产单与其日期：' + c.bad[0]);
+    assert.ok(c.bad[0].indexOf('JFJH-LATE') >= 0 && c.bad[0].indexOf('20261005') >= 0,
+      '条目须点名所属计划与其创建日期：' + c.bad[0]);
+    assert.equal(byName['交付计划行级超排'].ok, true, '本场景不涉行级超排（1000=1000）');
+    assert.equal(r.ok, false, '有时间悖论 → 总体必须判负');
   } finally { app.dispose(); }
 });
 
