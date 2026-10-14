@@ -877,8 +877,11 @@ test('V9-4【第3轮·反虚设】口径守卫：真公式副本必命中 / 仅�
 
 /** 线上 data.json 在 **.134 部署前**的 tblLayout.delivery.order 真实值（不含 planNo）；
     .135 起线上该列序已改（用户手动把 planNo 拖到首位、orderId 移至末位）——本常量固化的是历史快照 */
+/* .150：移除 orderQty / deliveredQty / _undel 三列（明细行两字段已删）——16 列 → 13 列。
+   本常量模拟「用户已存在的列布局快照」，仅服务于 applyTableLayout 的「过滤已失效列 + 把新增列
+   追加到末尾」机制验证；列数随 schema 同步维护即可，机制本身未变。 */
 const PROD_ORDER = ['createdAt', 'orderId', 'customer', 'productName', 'ppStatus', 'productId', 'spec',
-  'model', 'lineNotes', '_planQty', '_ppPlanned', 'orderQty', 'deliveredQty', '_undel', 'firstDate', 'finalDate'];
+  'model', 'lineNotes', '_planQty', '_ppPlanned', 'firstDate', 'finalDate'];
 
 /** 把渲染出的表格 HTML 解析成「假节点行」（只支持 applyTableLayout 需要的读/移动） */
 function parseTableRows(tableHtml) {
@@ -1034,11 +1037,11 @@ test('V10-2 applyTableLayout 追加机制：已存 order 不含新键时 planNo 
   assert.equal(headKeys.indexOf('planNo'), headKeys.length - 1, '机制行为：表头 planNo 落到最末列');
   assert.equal(bodyKeys.indexOf('planNo'), bodyKeys.length - 1, '机制行为：数据行 planNo 落到最末列');
   assert.notEqual(headKeys.indexOf('planNo'), 0, '机制行为：planNo 不是第 1 数据列');
-  /* 已存列序整体保留（除 planNo 外，order 中 16 列按原顺序在前；首格 null = 选择列表头） */
+  /* 已存列序整体保留（除 planNo 外，order 中 13 列按原顺序在前；首格 null = 选择列表头） */
   const headKeysNoSel = headKeys.filter(function (k) { return k !== null; });
-  assert.deepEqual(headKeysNoSel.slice(0, 16), PROD_ORDER, '已存 16 列顺序必须完整保留');
-  assert.equal(headKeysNoSel.length, 17, '16 已存列 + 1 新增列');
-  assert.equal(headKeys.length, 18, '含选择列表头共 18 格');
+  assert.deepEqual(headKeysNoSel.slice(0, 13), PROD_ORDER, '已存 13 列顺序必须完整保留');
+  assert.equal(headKeysNoSel.length, 14, '13 已存列 + 1 新增列');
+  assert.equal(headKeys.length, 15, '含选择列表头共 15 格');
   app.dispose();
 });
 

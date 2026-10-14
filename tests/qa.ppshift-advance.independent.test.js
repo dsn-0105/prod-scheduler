@@ -824,8 +824,8 @@ test('E1 水印：index.html 恰 1 处 >build '+build.BUILD+'<，上一版本 '+
 });
 
 test('E2 harness 常量与 index.html 实际水印双向一致（防「测了个寂寞」）', function () {
-  assert.equal(build.BUILD, '2026-10-14.149', 'BUILD 必须手写为本次版本');
-  assert.equal(build.PREV, '2026-10-14.148', 'PREV 必须手写为上一版本');
+  assert.equal(build.BUILD, '2026-10-14.150', 'BUILD 必须手写为本次版本');
+  assert.equal(build.PREV, '2026-10-14.149', 'PREV 必须手写为上一版本');
   /* 正向：build.js 的 BUILD 必须能在 index.html 中命中 */
   assert.equal((INDEX_SRC.match(build.buildMarkRe(build.BUILD)) || []).length, 1, 'BUILD 必须命中且恰 1 处');
   /* 反向：用 deploy.sh 的提取式从 index.html 抽出实际水印，必须 === BUILD */

@@ -2975,6 +2975,33 @@ function migrateDeliveryDropHeadTotals(){
     logOp('系统','交付计划','系统迁移：字段配置移除「订单总量/已交付/未交付」三项（单据头冗余汇总已废弃，改由明细行实时展示）');
   }
 }
+/* 一次性存量订正（2026-10-14.150）：清除交付计划明细行已删除的两个字段（orderQty / deliveredQty）。
+   背景：明细行「订单数量 / 已交付」两列已从字段、界面、导出移除，用户 2026-10-14 决定**存量值一并清掉**。
+   安全性：该两字段无任何业务下游依赖（全量调用面核对见代码内 12:52 与 .150 注释）——
+          排产下推 / 已计划未交付 / 超排核对只读 planQty；结余与库存投影读**订单**的 deliveredQty。
+          ⚠ 本订正**不可逆**（历史快照永久丢失，且信息不再有界面入口）。
+   幂等：meta.fixDeliveryItemDropQty20261014 一次性标记。无字段可清时只置标记（不产生日志噪音）。
+   原子：deliveries + meta 一次 DB.tx 提交；失败 → 内存由 DB.tx 的 pullAll 复原（含标记复位）→ 下次启动幂等重试。
+   执行顺序（订正铁律「数据先到位」）：离线 _apply_150_dropqty.js 先生成并上传 data.json → 重启 prod-server
+          → 再部署本前端。故线上正常路径下本函数**见标记即空转**，保留仅为兜底与口径同源。 */
+async function fixDeliveryItemDropQty20261014(){
+  if(!meta||meta.fixDeliveryItemDropQty20261014)return 0;
+  let n=0,rows=0;
+  deliveries.forEach(d=>{
+    (Array.isArray(d.items)?d.items:[]).forEach(it=>{
+      if(!it||typeof it!=='object')return;
+      rows++;
+      if(Object.prototype.hasOwnProperty.call(it,'orderQty')){delete it.orderQty;n++;}
+      if(Object.prototype.hasOwnProperty.call(it,'deliveredQty')){delete it.deliveredQty;n++;}
+    });
+  });
+  meta.fixDeliveryItemDropQty20261014=true;
+  if(!n){save('meta',meta);return 0;}                    /* 已是干净数据：仅置标记，不写日志 */
+  const ok=await DB.tx([{key:'deliveries',value:deliveries},{key:'meta',value:meta}],false);
+  if(!ok)return 0;                                       /* 失败：内存已复原，下次启动重试 */
+  logOp('系统','交付计划','系统订正：清除交付计划明细行已删除的「订单数量/已交付数量」存量值（'+rows+' 行，共 '+n+' 个字段值）');
+  return n;
+}
 /* 迁移（2026-10-06.134）：存量交付计划回填「交付计划编号」planNo（幂等，initApp 中在 migrateDeliveryCreatedAt 之后调用）。
    口径（用户拍板）：按 createdAt 分组，组内按 deliveries 数组顺序（创建先后）从 00001 递增；
                      createdAt 缺失兜底 '2026-08-23'。
@@ -4516,9 +4543,10 @@ function renderDelivery(){
       {key:'productName',label:'产品名称',type:'text',get:r=>r.it.productName||r.it.productId},
       {key:'spec',label:'规格',type:'text',get:r=>r.it.spec},
       {key:'model',label:'型号',type:'text',get:r=>r.it.model},
-      {key:'orderQty',label:'订单数量',type:'number',get:r=>r.it.orderQty},
-      {key:'deliveredQty',label:'已交付',type:'number',get:r=>r.it.deliveredQty},
-      {key:'_undel',label:'未交付',type:'number',get:r=>num(r.it.orderQty)-num(r.it.deliveredQty)},
+      /* 2026-10-14.150：移除「订单数量 / 已交付 / 未交付」三列（明细行 orderQty/deliveredQty 一并停用）。
+         依据：三项只在交付计划本页被显示/排序/筛选/超量提醒使用；排产下推、已计划未交付、超排核对、
+         库存、结余、订单状态一律只读 planQty（详见 12:52 全量调用面核对）。行级列 10 → 7。
+         存量字段值已由 fixDeliveryItemDropQty20261014() 清除（不可逆，用户 2026-10-14 明确同意）。 */
       {key:'_planQty',label:'本批计划',type:'number',get:r=>r.it.planQty},
       {key:'_ppPlanned',label:'已排产',type:'number',get:r=>ppPlannedOfLine(r.di,r.li!=null?r.li:null,r.it.productId)},
       {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.it.lineNotes}
@@ -4576,15 +4604,11 @@ function renderDelivery(){
       }else{
         headCells=headHtml;
       }
-      const undel=num(it.orderQty)-num(it.deliveredQty);
       html+='<tr onclick="selRowClick(\'delivery\','+di+')">'+selCell+headCells+
         '<td data-key="productId">'+esc(it.productId)+'</td>'+
         '<td data-key="productName">'+esc(it.productName||it.productId)+'</td>'+
         '<td data-key="spec">'+esc(it.spec||'')+'</td>'+
         '<td data-key="model">'+esc(it.model||'')+'</td>'+
-        '<td data-key="orderQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(it.orderQty)+'</td>'+
-        '<td data-key="deliveredQty" style="font-variant-numeric:tabular-nums;text-align:right">'+money(it.deliveredQty)+'</td>'+
-        '<td data-key="_undel" style="font-variant-numeric:tabular-nums;text-align:right">'+money(undel)+'</td>'+
         '<td data-key="_planQty" style="font-variant-numeric:tabular-nums;text-align:right">'+(it.planQty!=null?money(it.planQty):'')+'</td>'+
         '<td data-key="_ppPlanned" style="font-variant-numeric:tabular-nums;text-align:right;font-weight:600">'+money(ppPlannedOfLine(di,li,it.productId))+'</td>'+
         '<td data-key="lineNotes">'+esc(it.lineNotes||'')+'</td></tr>';
@@ -6062,13 +6086,14 @@ function prodPlanFlatRows(list){
 }
 
 /* 交付计划明细行：新结构 items[]（含规格/型号/商品行备注）；旧数据（单产品平铺）自动构造单行 */
-/* 2026-10-14.149：单据头 orderTotal/delivered 已停止持久化，但**本兜底刻意保留**——
-   仅对「没有 items[] 的存量旧记录」生效（新保存的单一定有 items，不会走到这里）；
-   存量旧记录里的这两个键仍留在 JSON 中，故读取照旧可用。此处是这三字段**唯一的业务性读点**，
-   删除会导致旧记录的「订单数量/已交付」归零（并连带交付计划列表三列显示 0），故不可移除。 */
+/* 2026-10-14.149：单据头 orderTotal/delivered 已停止持久化。
+   2026-10-14.150：明细行 orderQty/deliveredQty 亦已删除（存量值由 fixDeliveryItemDropQty20261014 清除），
+   本兜底**保留但已与这两个字段解耦** —— 仅对「没有 items[] 的存量旧记录」生效，产出只含
+   产品编码/名称/规格/型号/行备注（planQty 留空 → 列表按「全为 0 兜底显示全部行」分支展示）。
+   线上该类记录为 0（66 条交付计划全部带 items[]），故该分支实际不可达，保留纯为向后兼容。 */
 function deliveryItems(d){
   if(Array.isArray(d.items)&&d.items.length)return d.items;
-  return [{productId:d.productId||'',productName:d.productName||'',spec:d.spec||'',model:d.model||'',orderQty:num(d.orderTotal),deliveredQty:num(d.delivered),lineNotes:(d.lineNotes!=null?d.lineNotes:(d.notes||''))}];
+  return [{productId:d.productId||'',productName:d.productName||'',spec:d.spec||'',model:d.model||'',lineNotes:(d.lineNotes!=null?d.lineNotes:(d.notes||''))}];
 }
 /* 交付明细行渲染：产品/规格/型号/订单数量/已交付数量由订单带出（只读），本批计划可编辑（留空=本批不交付），商品行备注可编辑 */
 function deliveryItemRow(it){
@@ -6077,8 +6102,6 @@ function deliveryItemRow(it){
     '<td><input type="text" class="di_field" data-key="productId" value="'+esc(it.productId||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+    '<td><input type="text" class="di_field" data-key="productName" value="'+esc(it.productName||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="text" class="di_field" data-key="spec" value="'+esc(it.spec||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="text" class="di_field" data-key="model" value="'+esc(it.model||'')+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
-    '<td><input type="number" class="di_field" data-key="orderQty" value="'+num(it.orderQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
-    '<td><input type="number" class="di_field" data-key="deliveredQty" value="'+num(it.deliveredQty)+'" readonly style="width:100%;background:#f6f8fa;color:var(--muted)"></td>'+
     '<td><input type="number" class="di_field" data-key="planQty" value="'+(it.planQty!=null&&it.planQty!==''?num(it.planQty):'')+'" min="0" oninput="recalcDeliveryTotals()" placeholder="0" style="width:100%"></td>'+
     '<td><input type="text" class="di_field" data-key="lineNotes" value="'+esc(it.lineNotes||'')+'" style="width:100%"></td>'+
     '<td style="text-align:center"><button class="btn btn-sm btn-danger" onclick="removeDeliveryItemRow(this)" title="删除此行">✕</button></td></tr>';
@@ -6110,8 +6133,6 @@ function deliveryOrderChange(){
           productName:it.productName||(p?p.name:'')||'',
           spec:it.spec||(p?p.spec:'')||'',
           model:it.model||(p?p.model:'')||'',
-          orderQty:(o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?it.stockMax:it.orderQty,   /* 2026-08-30.92：库存订单数量=最大库存量 */
-          deliveredQty:it.deliveredQty,
           lineNotes:(it.lineNotes!=null?it.lineNotes:(it.notes||'')),
           orderLine:li   /* 2026-08-25.33：来源订单行索引（订单管理「已计划未交付」按行区分） */
         }));
@@ -6156,7 +6177,7 @@ function deliveryModal(idx,prefill){
   /* 表体区：交付明细（由订单带出，本批计划逐行填写） */
   body+='<div style="display:flex;align-items:center;gap:12px;margin:18px 0 8px;flex-wrap:wrap"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">选择订单后自动带出产品规格 / 型号 / 商品行备注，本批计划逐行填写（留空 = 本批不交付）</span>'+
     '<span style="margin-left:auto;font-size:12px;color:var(--muted)">本批合计: <b id="dl_sumPlan">0</b></span></div>'+
-    '<div class="table-wrap"><table id="dlItemsTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>订单数量</th><th>已交付数量</th><th>本批计划</th><th>商品行备注</th><th style="width:56px">操作</th></tr></thead><tbody>';
+    '<div class="table-wrap"><table id="dlItemsTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>本批计划</th><th>商品行备注</th><th style="width:56px">操作</th></tr></thead><tbody>';
   items.forEach(it=>body+=deliveryItemRow(it));
   body+='</tbody></table></div>';
   showModal(idx!=null?'编辑交付计划':'新增交付计划',body,
@@ -6178,36 +6199,27 @@ function saveDelivery(idx){
     items:[]
   };
   let plan=0;
-  const overRows=[];
   document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
     const it={};
     tr.querySelectorAll('.di_field').forEach(el=>{it[el.dataset.key]=el.value||'';});
-    it.orderQty=num(it.orderQty);it.deliveredQty=num(it.deliveredQty);it.planQty=num(it.planQty);
+    it.planQty=num(it.planQty);
     plan+=it.planQty;
-    if(it.planQty>it.orderQty-it.deliveredQty){
-      overRows.push('「'+(it.productName||it.productId||'未知产品')+'」本批 '+it.planQty+' > 该行未交付 '+(it.orderQty-it.deliveredQty));
-    }
     d.items.push(it);
   });
-  /* 2026-10-14.149：**不再写**单据头三项冗余汇总（.149 前原文为
-     `d.orderTotal=total;d.delivered=delivered;d.undelivered=total-delivered;`）。
-     移除依据：三项除「导出列 / 编辑日志 / deliveryItems() 老数据兜底」外无任何读点；
-     排产下推读 items[].planQty、已计划未交付读 planQty+done、结余与库存投影读订单 items.deliveredQty。
-     ⚠ 行级超量校验（overRows）不依赖这三个变量——它直接用 it.orderQty/it.deliveredQty，故拦截行为不变。 */
+  /* 汇总写入说明（.149 / .150 两次减法）：
+     .149 移除单据头 orderTotal/delivered/undelivered（三项冗余汇总，无业务读点）；
+     .150 移除明细行 orderQty/deliveredQty（连同其上的行级超量弹窗）。
+     保留至今的汇总写入只有 d.planQty（表头本批计划 = Σ行 planQty）——
+     它是被排产下推 / 已计划未交付 / 超排核对真正使用的那个数。 */
   d.planQty=plan; /* 表头本批计划 = 各行汇总（自动计算） */
   if(!d.orderId){alert('请选择订单');return;}
   if(d.items.length===0){alert('请选择订单以带出交付明细');return;}
   if(plan<=0){alert('请至少填写一行的本批计划数量');return;}
-  /* 行级超量校验：某行本批计划 > 该行未交付数量 → 确认浮层：取消退回表单，确认保存继续 */
-  if(overRows.length>0){
-    showConfirmOverlay(
-      '以下明细本批计划大于该行未交付数量：<br><b>'+overRows.join('<br>')+'</b><br><br>是否确认保存？',
-      null,
-      function(){doSaveDelivery(d,idx);},
-      '取消','确认保存'
-    );
-    return;
-  }
+  /* 2026-10-14.150：行级超量确认浮层（overRows + showConfirmOverlay）已按用户决策移除。
+     判据 `it.planQty > it.orderQty - it.deliveredQty` 所依赖的明细行两字段已于本轮删除。
+     ⚠ 移除后全工程不再有「本批计划 ≤ 订单剩余量」这道**业务合理性提示**；
+       真正的数量硬约束仍在排产下推端（本次排产 ≤ 本批计划 − 已排产，判据不依赖被删字段）。
+     `showConfirmOverlay` 函数定义保留、不再调用（.148 下线口径：保留函数不调用）。 */
   doSaveDelivery(d,idx);
 }
 function doSaveDelivery(d,idx){
@@ -7533,6 +7545,8 @@ async function initApp(){
   migrateDeliveryPlanNoField();
   // 交付计划：字段配置移除已废弃的单据头三项汇总（2026-10-14.149，持久化 fields 老库仍带这三列 → 导出/模板出现多余空列）
   migrateDeliveryDropHeadTotals();
+  // 交付计划：清除明细行已删除的两个字段存量值（2026-10-14.150，一次性幂等；离线脚本已先行，线上正常路径见标记即空转）
+  await fixDeliveryItemDropQty20261014();
   // 存量交付计划回填「交付计划编号」planNo（2026-10-06.134，须在 migrateDeliveryCreatedAt 之后：依赖 createdAt 已兜底回填）
   migrateDeliveryPlanNo();
   // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突
@@ -7642,7 +7656,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.149</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.150</div>
 </body>
 </html>
 

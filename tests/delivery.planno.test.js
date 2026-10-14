@@ -616,23 +616,24 @@ test('G3 headHtml 前 7 个 <td> 的 data-key 与 schema 前 7 项逐一对应�
   const g1item = groups.find(function (g) { return g.planNo === 'JFJH-20260824-00001'; });
   assert.ok(g2items && g1item, '两组编号必须各自正确渲染（planNo 值）');
 
-  /* 组 A（2 个明细行）：7 个单据格 rowspan=2 + 行级 10 格 + 选择格 1 = 18 */
+  /* 组 A（2 个明细行）：7 个单据格 rowspan=2 + 行级 7 格 + 选择格 1 = 15
+     （.150：行级列 10 → 7 —— 移除「订单数量 / 已交付 / 未交付」三列） */
   const a0 = g2items.rows[0];
   assert.equal(g2items.rows.length, 2, 'rowspan=2 的组应有 2 行');
-  assert.equal(TDS(a0), 18, '组首行 td 总数 = 1(选择) + 7(单据) + 10(行级)');
+  assert.equal(TDS(a0), 15, '组首行 td 总数 = 1(选择) + 7(单据) + 7(行级)');
   HEAD7.forEach(function (k) {
     assert.match(a0, new RegExp('<td data-key="' + k + '" rowspan="2"'), '单据级列 ' + k + ' 必须 rowspan=2');
   });
   assert.equal(KEY(a0, 'planNo'), 'JFJH-20260823-00001', '首列值 = 交付计划编号');
-  /* 续行：单据格与选择格均已 rowspan 合并 → 只剩行级 10 格 */
+  /* 续行：单据格与选择格均已 rowspan 合并 → 只剩行级 7 格 */
   const a1 = g2items.rows[1];
-  assert.equal(TDS(a1), 10, '续行 td 总数 = 0(选择,已合并) + 0(单据,已合并) + 10(行级)');
+  assert.equal(TDS(a1), 7, '续行 td 总数 = 0(选择,已合并) + 0(单据,已合并) + 7(行级)');
   HEAD7.forEach(function (k) { assert.equal(KEY(a1, k), null, '续行不得重复输出单据格 ' + k); });
 
   /* 组 B（1 个明细行）：rowspan=1 */
   const b0 = g1item.rows[0];
   assert.equal(g1item.rows.length, 1);
-  assert.equal(TDS(b0), 18, '单明细行组的 td 总数');
+  assert.equal(TDS(b0), 15, '单明细行组的 td 总数');
   HEAD7.forEach(function (k) {
     assert.match(b0, new RegExp('<td data-key="' + k + '" rowspan="1"'), '单据级列 ' + k + ' 必须 rowspan=1');
   });
