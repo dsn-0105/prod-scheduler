@@ -29,7 +29,7 @@ invariants:
     file: 'index.html:3494-3505'
     enforcement_type: 全量对齐（非增量）
     status: enforced
-    violation_consequence: '库存与实际不符；看板/订单/交付/排产全部读到错误的库存基数'
+    violation_consequence: '库存与实际不符；订单/交付/排产全部读到错误的库存基数'
     consumers: [renderProducts, renderOrderTable, renderDeliveryTable, applyTransfers(库存候选/上下限警示), kdDoImport]
     note: |
       幂等：可安全重复执行（每次全量重算）。
@@ -158,7 +158,7 @@ invariants:
     guaranteed_by: syncOrderAutoStatus
     file: 'index.html:2266-2278'
     status: enforced
-    violation_consequence: '状态与实际交付不符，看板与筛选结果失真'
+    violation_consequence: '状态与实际交付不符，筛选结果失真'
     note: 'orderUndelTotal 对每行取 max(0, 数量 - deliveredQty)，因此库存订单的欠货（负 deliveredQty）会算进未交付。'
 
   - id: INV-012
