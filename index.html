@@ -28,7 +28,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .nav-item.nav-dragging{opacity:.55;background:var(--primary-light);box-shadow:0 4px 12px rgba(0,0,0,.15)}
 .nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 .nav-item svg{width:18px;height:18px;flex-shrink:0}
-.nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600}
 /* 侧边栏折叠按钮与折叠态（仅桌面端生效） */
 .sidebar-collapse{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border:none;background:var(--card);border-top:1px solid var(--border);color:var(--muted);font-size:13px;width:100%;transition:all .15s}
 .sidebar-collapse:hover{color:var(--primary);background:var(--primary-light)}
@@ -38,7 +37,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .sidebar.collapsed .sidebar-header h1{justify-content:center}
 .sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:none}
 .sidebar.collapsed .nav-item{justify-content:center;padding:10px 0}
-.sidebar.collapsed .nav-item span,.sidebar.collapsed .nav-badge{display:none}
+.sidebar.collapsed .nav-item span{display:none}
 .sidebar.collapsed .sidebar-collapse{justify-content:center;padding:12px 0}
 .sidebar.collapsed .sidebar-collapse span{display:none}
 .sidebar.collapsed .sidebar-collapse svg{transform:rotate(180deg)}
@@ -309,11 +308,11 @@ body.col-dragging{cursor:grabbing;user-select:none}
   <div class="main">
     <div class="mobile-header">
       <div class="hamburger" onclick="toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg></div>
-      <h1 id="mobileTitle">看板</h1>
+      <h1 id="mobileTitle">订单管理</h1>
       <div style="width:36px"></div>
     </div>
     <div class="topbar">
-      <div class="topbar-left"><h2 id="pageTitle">看板</h2></div>
+      <div class="topbar-left"><h2 id="pageTitle">订单管理</h2></div>
       <div class="topbar-actions">
         <button class="btn btn-sm" onclick="resetTableLayout()" title="恢复所有表格的默认列顺序和列宽"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>重置列布局</button>
         <button class="btn btn-sm" onclick="exportXLSX()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>全量导出</button>
@@ -871,7 +870,6 @@ const FORM_META={
    导航
 ================================================================ */
 const NAV=[
-  {id:'dashboard',label:'看板',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>'},
   {id:'product',label:'产品主数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
   {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
   /* 2026-08-25.65：库存订单从订单管理独立为「库存管理」页签（完整承载 order_inv 模块） */
@@ -894,7 +892,7 @@ let products=[],orders=[],deliveries=[],productionPlans=[],productionReports=[],
 let transfers=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
 let meta={seq:0};
-let activeTab='dashboard';
+let activeTab='order';   /* 2026-10-14.148：默认首屏由已下线的仪表盘页改为「订单管理」 */
 /* 字段设置审核状态：audited=已审核(锁定) / draft=草稿(可编辑未生效) */
 let fieldsAudit='audited';
 let fieldsDraft=null;
@@ -1642,14 +1640,7 @@ function renderNav(){
       }
     }
   }catch(e){}
-  nav.innerHTML=items.map(n=>{
-    let badge='';
-    if(n.id==='dashboard'){
-      const alerts=countAlerts();
-      if(alerts>0)badge='<span class="nav-badge">'+alerts+'</span>';
-    }
-    return '<div class="nav-item'+(activeTab===n.id?' active':'')+'" data-id="'+n.id+'" onclick="switchTab(\''+n.id+'\')">'+n.icon+'<span>'+n.label+'</span>'+badge+'</div>';
-  }).join('');
+  nav.innerHTML=items.map(n=>'<div class="nav-item'+(activeTab===n.id?' active':'')+'" data-id="'+n.id+'" onclick="switchTab(\''+n.id+'\')">'+n.icon+'<span>'+n.label+'</span></div>').join('');
 }
 
 function switchTab(id){
@@ -1742,7 +1733,6 @@ function renderContent(){
     });
   }
   switch(activeTab){
-    case 'dashboard':c.innerHTML=renderDashboard();break;
     case 'product':c.innerHTML=renderProducts();break;
     case 'order':c.innerHTML=renderOrders();break;
     case 'inv':c.innerHTML=renderInvOrders();break;   /* 2026-08-25.65：库存管理独立页签 */
@@ -1939,83 +1929,6 @@ function showBackupWarn(){
 function renderAll(){
   renderNav();
   renderContent();
-}
-
-/* ================================================================
-   看板
-================================================================ */
-function countAlerts(){
-  let n=0;
-  // 产品缺货（库存为 0 或空）
-  products.forEach(p=>{ if(p.stock!=null && num(p.stock)<=0) n++; });
-  // 订单逾期
-  orders.forEach(o=>{if(o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr())n++;});
-  return n;
-}
-
-function renderDashboard(){
-  const lowStock=products.filter(p=>p.stock!=null && num(p.stock)<=0);
-  const overdueOrders=orders.filter(o=>o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<todayStr());
-  const activeOrders=orders.filter(o=>o.status==='执行中');
-  const totalOrderQty=activeOrders.reduce((s,o)=>s+orderQtyOf(o),0);
-  const totalDelivered=activeOrders.reduce((s,o)=>s+orderDeliveredOf(o),0);
-  const deliveryRate=totalOrderQty>0?Math.round(totalDelivered/totalOrderQty*100):0;
-
-  let html='<div class="stats">'+
-    statCard(activeOrders.length,'执行中订单','blue')+
-    statCard(money(totalDelivered)+'/'+money(totalOrderQty),'已交付/总量','green')+
-    statCard(deliveryRate+'%','综合交付率','blue')+
-    statCard(lowStock.length,'库存预警','red')+
-    '</div>';
-
-  // 今日待处理
-  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--primary)"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>今日待处理</div>';
-
-  if(lowStock.length===0&&overdueOrders.length===0){
-    html+='<div class="alert alert-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>暂无紧急事项，一切正常。</div>';
-  }
-
-  lowStock.forEach(p=>{
-    html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg><div><b>'+esc(p.name)+'</b>（'+esc(p.id)+'）库存为 <b>'+num(p.stock)+'</b>，需及时补货。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'product\')">去产品</button></div></div>';
-  });
-
-  overdueOrders.forEach(o=>{
-    html+='<div class="alert alert-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div>订单 <b>'+esc(o.id)+'</b>（'+esc(o.customer)+'）截止日期 '+fmtDate(o.deadline)+' 已逾期，未交付 '+money(orderQtyOf(o)-orderDeliveredOf(o))+' 台。 <button class="btn btn-sm btn-primary" style="margin-left:8px" onclick="switchTab(\'delivery\')">查看交付</button></div></div>';
-  });
-
-  html+='</div>';
-
-  // 产品库存快照（库存现记入产品主数据）
-  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品库存</div>';
-  if(products.length===0){
-    html+='<div class="empty">暂无产品数据</div>';
-  }else{
-    html+='<div class="table-wrap"><table><thead><tr><th>产品编码</th><th>产品名称</th><th>日产能</th><th>库存</th><th>状态</th></tr></thead><tbody>';
-    products.forEach(p=>{
-      const s=num(p.stock);
-      const st=p.stock==null?null:(s<=0?STOCK_STATUS.low:STOCK_STATUS.normal);
-      html+='<tr><td>'+esc(p.id)+'</td><td>'+esc(p.name)+'</td><td>'+num(p.dailyCap)+'</td><td style="font-weight:600">'+s+'</td><td>'+(st?('<span class="tag '+st.cls+'">'+st.label+'</span>'):'<span class="tag tag-gray">未录入</span>')+'</td></tr>';
-    });
-    html+='</tbody></table></div>';
-  }
-  html+='</div>';
-
-  // 订单交付进度
-  html+='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>订单交付进度</div>';
-  if(activeOrders.length===0){
-    html+='<div class="empty">暂无执行中订单</div>';
-  }else{
-    html+='<div class="table-wrap"><table><thead><tr><th>订单号</th><th>客户</th><th>产品</th><th>总量</th><th>已交付</th><th>未交付</th><th>进度</th><th>截止</th></tr></thead><tbody>';
-    activeOrders.forEach(o=>{
-      const oq=orderQtyOf(o),dq=orderDeliveredOf(o);
-      const pct=oq>0?Math.round(dq/oq*100):0;
-      html+='<tr><td>'+esc(o.id)+'</td><td>'+esc(o.customer)+'</td><td style="font-size:12px">'+esc(orderProductNames(o))+'</td><td>'+money(oq)+'</td><td>'+money(dq)+'</td><td>'+(oq-dq)+'</td><td style="min-width:100px"><div style="display:flex;align-items:center;gap:6px"><div class="progress-wrap" style="flex:1"><div class="progress-bar" style="width:'+pct+'%"></div></div><span style="font-size:12px;font-weight:600">'+pct+'%</span></div></td><td>'+fmtDate(o.deadline)+'</td></tr>';
-    });
-    html+='</tbody></table></div>';
-  }
-  html+='</div>';
-
-  return html;
 }
 
 function statCard(v,l,cls){
@@ -7701,7 +7614,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.147</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.148</div>
 </body>
 </html>
 

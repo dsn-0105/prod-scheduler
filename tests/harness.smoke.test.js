@@ -41,7 +41,7 @@ test('沙箱：能装载 js/*.js 与 index.html 主内联脚本，且 bootstrap(
   assert.equal(typeof app.getGlobal('bootstrap'), 'function');
   /* 关键证据：bootDone 仍为 false → 说明自动执行点真的被剥掉了（否则 initApp 全链会跑） */
   assert.equal(app.getGlobal('bootDone'), false);
-  assert.equal(app.getGlobal('activeTab'), 'dashboard');
+  assert.equal(app.getGlobal('activeTab'), 'order');
   /* 装载清单：5 个模块脚本 + 1 个主内联脚本 */
   assert.equal(app.loaded.length, 6);
 });

@@ -15,15 +15,18 @@
      · BUILD 前移为新版本号；
      · PREV  记为上一个版本号（供「旧形态应 0 处」断言引用）；
      · 二者**必须手写**，严禁从 index.html 反推 —— 否则断言退化为恒真、失去守卫意义。
-     · ⚠ **另有 1 处硬编码字面量副本必须同步**：`tests/qa.ppshift-advance.independent.test.js` §E2
-       （两处 assert 直接写死 BUILD/PREV 字符串，用于反向防「测了个寂寞」）。
-       **漏改此处 → 回归 FAIL**（2026-10-12.144 复核确认；本条曾长期误记为「只改本文件」）。
+     · ⚠ **另有 2 处硬编码字面量副本必须同步**（.148 复核订正：原文为「1 处」，`.147` 新增
+       `qa.prodplan-query` 后未同步计数，导致 `.148` 推进时该文件 §E2/§E4 会假失败）：
+       ① `tests/qa.ppshift-advance.independent.test.js` §E2（两处 assert 直接写死 BUILD/PREV 字符串）；
+       ② `tests/qa.prodplan-query.independent.test.js` —— §E2（同款 BUILD/PREV 字面量）
+          **且** §E4（`js/guide.js` 文首「更新：YYYY-MM-DD（build .NNN）」行字面量）。
+       三者均用于反向防「测了个寂寞」。**漏改任一处 → 回归 FAIL**（.144、.148 各复核确认一次）。
    与 deploy.sh 的一致性：deploy.sh 用 `build [0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+<`
    从 index.html 提取版本，本文件的 BUILD 即该提取结果，二者必须相等（有测试锚点钉住）。
    ================================================================ */
 
-const BUILD = '2026-10-14.147';
-const PREV = '2026-10-13.146';
+const BUILD = '2026-10-14.148';
+const PREV = '2026-10-14.147';
 
 /* 生成「权威水印」正则：`>build <版本><`；`<` 是 deploy.sh 精确匹配的组成（防注释里同名文本误命中） */
 function buildMarkRe(ver) {
