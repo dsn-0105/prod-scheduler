@@ -162,7 +162,7 @@ entities:
     registered: [DEFAULT_DATA, BIZ_KEYS]
     id_field: null（以 orderId + 数组索引 idx 为逻辑主键）
     key_fields: [orderId, customer, finalDate, firstDate, createdAt, items, planQty]  # .149：移除 orderTotal/delivered/undelivered（单据头冗余汇总已废弃，不再持久化）
-    item_key_fields: [productId, productName, orderQty, deliveredQty, planQty, orderLine, dlLine]
+    item_key_fields: [productId, productName, spec, model, planQty, lineNotes, orderLine, dlLine]  # .150：移除 orderQty/deliveredQty（订单带出快照，无业务下游依赖）
     writers: [doSaveDelivery, delDelivery, restoreBackup, confirmClear]
     readers: [renderDeliveryTable, buildPlannedUndelMap, ppTotalOfLine, saveProdPlan, renderProdPlan]
     permission_form: delivery

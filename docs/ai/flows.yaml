@@ -289,7 +289,7 @@ flows:
       - '订单已选（d.orderId 非空）'
       - '明细非空（d.items.length > 0）'
       - '本批计划合计 > 0'
-      - '行级超量：it.planQty > it.orderQty - it.deliveredQty → showConfirmOverlay（软提示，可放行）'
+      - '（.150 已移除）行级超量：it.planQty > it.orderQty - it.deliveredQty → showConfirmOverlay（软提示，可放行）—— 明细行两字段已删除，判据不复存在'
     write_set:
       - { order: 1, step: '组装 d', detail: 'd = {orderId, customer, finalDate, firstDate, notes, createdAt, items, planQty}；planQty = Σ各行 planQty（表头自动汇总）。**2026-10-14.149 起不再写 orderTotal/delivered/undelivered**（单据头冗余汇总已废弃，仅保留 deliveryItems() 对旧记录的兜底读取）', file: 'index.html:4767-4784' }
       - { order: 2, step: '写内存', detail: 'idx>=0 → deliveries[idx] = d（整体替换，logFieldDiffs 记字段差异）；idx<0 → deliveries.push(d)', file: 'index.html:4806-4807' }
@@ -301,7 +301,7 @@ flows:
     rollback: '无自动回滚；编辑场景可重新保存覆盖'
     known_defects:
       - 'deliveries 无稳定主键（逻辑主键=数组索引），delDelivery 的 splice 会破坏 productionPlans[].deliveryIdx（INV-023）'
-      - '行级超量仅软提示（INV-014）'
+      - '（.150 已废止）原「行级超量仅软提示（INV-014）」—— 提示本身已随明细行 orderQty/deliveredQty 一并移除；现状是全工程不再有「本批计划 ≤ 订单剩余量」提示'
       - 'createdAt 在编辑时保留原值，老数据缺失时兜底回填 2026-08-23（常量硬编码在代码里）'
     note: '本命令是全系统「写集最干净」的命令，可作为改造范式参考（单表单写）'
 
