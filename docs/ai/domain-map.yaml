@@ -161,7 +161,7 @@ entities:
     container: array
     registered: [DEFAULT_DATA, BIZ_KEYS]
     id_field: null（以 orderId + 数组索引 idx 为逻辑主键）
-    key_fields: [orderId, customer, finalDate, firstDate, createdAt, items, orderTotal, delivered, undelivered, planQty]
+    key_fields: [orderId, customer, finalDate, firstDate, createdAt, items, planQty]  # .149：移除 orderTotal/delivered/undelivered（单据头冗余汇总已废弃，不再持久化）
     item_key_fields: [productId, productName, orderQty, deliveredQty, planQty, orderLine, dlLine]
     writers: [doSaveDelivery, delDelivery, restoreBackup, confirmClear]
     readers: [renderDeliveryTable, buildPlannedUndelMap, ppTotalOfLine, saveProdPlan, renderProdPlan]

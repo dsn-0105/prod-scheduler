@@ -291,7 +291,7 @@ flows:
       - '本批计划合计 > 0'
       - '行级超量：it.planQty > it.orderQty - it.deliveredQty → showConfirmOverlay（软提示，可放行）'
     write_set:
-      - { order: 1, step: '组装 d', detail: 'd = {orderId, customer, finalDate, firstDate, notes, createdAt, items, orderTotal, delivered, undelivered, planQty}；planQty = Σ各行 planQty（表头自动汇总）', file: 'index.html:4767-4784' }
+      - { order: 1, step: '组装 d', detail: 'd = {orderId, customer, finalDate, firstDate, notes, createdAt, items, planQty}；planQty = Σ各行 planQty（表头自动汇总）。**2026-10-14.149 起不再写 orderTotal/delivered/undelivered**（单据头冗余汇总已废弃，仅保留 deliveryItems() 对旧记录的兜底读取）', file: 'index.html:4767-4784' }
       - { order: 2, step: '写内存', detail: 'idx>=0 → deliveries[idx] = d（整体替换，logFieldDiffs 记字段差异）；idx<0 → deliveries.push(d)', file: 'index.html:4806-4807' }
       - { order: 3, step: "save('deliveries')", detail: '【独立网络写，唯一】', file: 'index.html:4808' }
       - { order: 4, step: 'logOp', detail: '新增时 logOp(''新增'',...)；编辑时 logFieldDiffs（内部 logOp）', file: 'index.html:4806-4807' }
