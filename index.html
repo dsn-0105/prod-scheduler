@@ -762,8 +762,11 @@ function refKeyTrigger(el){
 const HARD_FIELDS={
   delivery:[
     {key:'orderId',label:'订单编号'},{key:'customer',label:'客户'},{key:'productId',label:'产品编码'},
-    {key:'productName',label:'产品名称'},{key:'orderTotal',label:'订单总量'},{key:'delivered',label:'已交付'},
-    {key:'undelivered',label:'未交付'},{key:'planQty',label:'本批计划'},{key:'finalDate',label:'最终交付期'},
+    /* 2026-10-14.149：移除「订单总量/已交付/未交付」（orderTotal/delivered/undelivered）——
+       三项为单据头**冗余汇总**（保存时由明细行加总），除导出列/编辑日志/老数据兜底外无任何读点，
+       已停止持久化 ⇒ 单据头不再存在这三项可比对的字段，故从字段级日志清单一并移除。
+       明细行的「订单数量/已交付/未交付」不受影响（那是 items[].orderQty/deliveredQty，界面与超量校验照旧）。 */
+    {key:'productName',label:'产品名称'},{key:'planQty',label:'本批计划'},{key:'finalDate',label:'最终交付期'},
     {key:'firstDate',label:'首次交付日'},{key:'notes',label:'备注'},
     /* 2026-10-06.134：单据头新增「交付计划编号」planNo（系统生成、必填、全局唯一、不可修改）——
        纳入字段级日志对比以保日志完整；编辑态该值由 doSaveDelivery 原样保留，故不产生噪音日志。 */
@@ -850,9 +853,14 @@ const defaultFields={
     {key:'customer',label:'客户名称',type:'text',required:true,locked:true},
     {key:'productId',label:'产品编码',type:'text',required:true,locked:true},
     {key:'productName',label:'产品名称',type:'text',required:true,locked:true},
-    {key:'orderTotal',label:'订单总量',type:'number',required:true,locked:true},
-    {key:'delivered',label:'已交付',type:'number',required:true,locked:true},
-    {key:'undelivered',label:'未交付',type:'number',required:true,locked:true},
+    /* 2026-10-14.149：删除「订单总量 / 已交付 / 未交付」（orderTotal/delivered/undelivered）。
+       定制依据：三项**不参与任何业务计算**（排产下推读 items[].planQty、已计划未交付读 planQty+done、
+       结余与库存投影读订单 items.deliveredQty、订单状态机读订单 items），全工程读点仅 3 处
+       —— 导出列（fields.delivery）/ 编辑日志（HARD_FIELDS.delivery）/ deliveryItems() 老数据兜底。
+       故移除字段定义 + 停止持久化；幂等迁移 migrateDeliveryDropHeadTotals() 同步清理已落库的
+       fields.delivery（老库持久化配置不清理的话，导出/模板仍会带这三列）。
+       ⚠ deliveryItems() 的兜底**读取**刻意保留（旧记录缺 items[] 时仍可还原单行），
+         只是不再有新数据写入，故该函数仍引用这两个键（不可误删）。 */
     {key:'planQty',label:'本批计划',type:'number',required:true,locked:false},
     {key:'finalDate',label:'最终交付期',type:'date',required:false,locked:true},
     {key:'firstDate',label:'首次交付日',type:'date',required:false,locked:false},
@@ -2951,6 +2959,21 @@ function migrateDeliveryPlanNoField(){
     if(i!==0){fields.delivery.splice(i,1);fields.delivery.unshift(f);changed=true;}   /* 列序对齐：编号恒为首列 */
   }
   if(changed){save('fields',fields);logOp('系统','交付计划','系统迁移：字段配置补齐「交付计划编号」');}
+}
+/* 迁移（2026-10-14.149）：交付计划**字段配置**移除已废弃的单据头三项冗余汇总。
+   背景：与 .134 的 planNo 事故**同型**——fields 是**持久化**的。只改 defaultFields 而不清理线上
+         已落库的 fields.delivery，导出 / 导入模板仍会带「订单总量 / 已交付 / 未交付」三列
+         （写值处已停写 → 导出为空列），与「字段定义已删」的代码形态不一致。
+   逻辑：过滤掉 fields.delivery 中的 orderTotal / delivered / undelivered；有变化才落盘。幂等。 */
+function migrateDeliveryDropHeadTotals(){
+  if(!fields||!Array.isArray(fields.delivery))return;
+  const DROP=['orderTotal','delivered','undelivered'];
+  const keep=fields.delivery.filter(f=>f&&DROP.indexOf(f.key)<0);
+  if(keep.length!==fields.delivery.length){
+    fields.delivery=keep;
+    save('fields',fields);
+    logOp('系统','交付计划','系统迁移：字段配置移除「订单总量/已交付/未交付」三项（单据头冗余汇总已废弃，改由明细行实时展示）');
+  }
 }
 /* 迁移（2026-10-06.134）：存量交付计划回填「交付计划编号」planNo（幂等，initApp 中在 migrateDeliveryCreatedAt 之后调用）。
    口径（用户拍板）：按 createdAt 分组，组内按 deliveries 数组顺序（创建先后）从 00001 递增；
@@ -6039,6 +6062,10 @@ function prodPlanFlatRows(list){
 }
 
 /* 交付计划明细行：新结构 items[]（含规格/型号/商品行备注）；旧数据（单产品平铺）自动构造单行 */
+/* 2026-10-14.149：单据头 orderTotal/delivered 已停止持久化，但**本兜底刻意保留**——
+   仅对「没有 items[] 的存量旧记录」生效（新保存的单一定有 items，不会走到这里）；
+   存量旧记录里的这两个键仍留在 JSON 中，故读取照旧可用。此处是这三字段**唯一的业务性读点**，
+   删除会导致旧记录的「订单数量/已交付」归零（并连带交付计划列表三列显示 0），故不可移除。 */
 function deliveryItems(d){
   if(Array.isArray(d.items)&&d.items.length)return d.items;
   return [{productId:d.productId||'',productName:d.productName||'',spec:d.spec||'',model:d.model||'',orderQty:num(d.orderTotal),deliveredQty:num(d.delivered),lineNotes:(d.lineNotes!=null?d.lineNotes:(d.notes||''))}];
@@ -6093,20 +6120,15 @@ function deliveryOrderChange(){
   }
   recalcDeliveryTotals();
 }
-/* 明细汇总：订单总量 / 已交付 / 未交付 / 本批合计 实时计算 */
+/* 明细汇总：本批合计 实时计算
+   2026-10-14.149：移除「订单总量 / 已交付 / 未交付」三项（单据头已停止持久化这三项，
+   且明细行「订单数量 / 已交付数量」两列已同屏只读展示，此处为重复信息）。 */
 function recalcDeliveryTotals(){
-  let total=0,delivered=0,plan=0;
+  let plan=0;
   document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
-    const q=tr.querySelector('[data-key="orderQty"]');
-    const dd=tr.querySelector('[data-key="deliveredQty"]');
     const pq=tr.querySelector('[data-key="planQty"]');
-    total+=num(q?q.value:0);
-    delivered+=num(dd?dd.value:0);
     plan+=num(pq?pq.value:0);
   });
-  const st=document.getElementById('dl_sumTotal');if(st)st.textContent=total;
-  const sd=document.getElementById('dl_sumDelivered');if(sd)sd.textContent=delivered;
-  const su=document.getElementById('dl_sumUndel');if(su)su.textContent=total-delivered;
   const sp=document.getElementById('dl_sumPlan');if(sp)sp.textContent=plan;
 }
 
@@ -6133,7 +6155,7 @@ function deliveryModal(idx,prefill){
     '</div>';
   /* 表体区：交付明细（由订单带出，本批计划逐行填写） */
   body+='<div style="display:flex;align-items:center;gap:12px;margin:18px 0 8px;flex-wrap:wrap"><b style="font-size:14px">交付明细</b><span style="font-size:12px;color:var(--muted)">选择订单后自动带出产品规格 / 型号 / 商品行备注，本批计划逐行填写（留空 = 本批不交付）</span>'+
-    '<span style="margin-left:auto;font-size:12px;color:var(--muted)">订单总量: <b id="dl_sumTotal">0</b>　已交付: <b id="dl_sumDelivered">0</b>　未交付: <b id="dl_sumUndel">0</b>　本批合计: <b id="dl_sumPlan">0</b></span></div>'+
+    '<span style="margin-left:auto;font-size:12px;color:var(--muted)">本批合计: <b id="dl_sumPlan">0</b></span></div>'+
     '<div class="table-wrap"><table id="dlItemsTbl"><thead><tr><th>产品编码</th><th>产品名称</th><th>规格</th><th>型号</th><th>订单数量</th><th>已交付数量</th><th>本批计划</th><th>商品行备注</th><th style="width:56px">操作</th></tr></thead><tbody>';
   items.forEach(it=>body+=deliveryItemRow(it));
   body+='</tbody></table></div>';
@@ -6155,19 +6177,23 @@ function saveDelivery(idx){
     createdAt:(idx>=0)?(deliveries[idx].createdAt||'2026-08-23'):todayStr(),   /* 单据时间：新增=当天，编辑保留原值（老数据缺失兜底回填值） */
     items:[]
   };
-  let total=0,delivered=0,plan=0;
+  let plan=0;
   const overRows=[];
   document.querySelectorAll('#dlItemsTbl tbody tr').forEach(tr=>{
     const it={};
     tr.querySelectorAll('.di_field').forEach(el=>{it[el.dataset.key]=el.value||'';});
     it.orderQty=num(it.orderQty);it.deliveredQty=num(it.deliveredQty);it.planQty=num(it.planQty);
-    total+=it.orderQty;delivered+=it.deliveredQty;plan+=it.planQty;
+    plan+=it.planQty;
     if(it.planQty>it.orderQty-it.deliveredQty){
       overRows.push('「'+(it.productName||it.productId||'未知产品')+'」本批 '+it.planQty+' > 该行未交付 '+(it.orderQty-it.deliveredQty));
     }
     d.items.push(it);
   });
-  d.orderTotal=total;d.delivered=delivered;d.undelivered=total-delivered;
+  /* 2026-10-14.149：**不再写**单据头三项冗余汇总（.149 前原文为
+     `d.orderTotal=total;d.delivered=delivered;d.undelivered=total-delivered;`）。
+     移除依据：三项除「导出列 / 编辑日志 / deliveryItems() 老数据兜底」外无任何读点；
+     排产下推读 items[].planQty、已计划未交付读 planQty+done、结余与库存投影读订单 items.deliveredQty。
+     ⚠ 行级超量校验（overRows）不依赖这三个变量——它直接用 it.orderQty/it.deliveredQty，故拦截行为不变。 */
   d.planQty=plan; /* 表头本批计划 = 各行汇总（自动计算） */
   if(!d.orderId){alert('请选择订单');return;}
   if(d.items.length===0){alert('请选择订单以带出交付明细');return;}
@@ -7505,6 +7531,8 @@ async function initApp(){
   migrateDeliveryOrderLine();
   // 交付计划：字段配置补齐「交付计划编号」planNo（2026-10-06.134，持久化 fields 老库缺键 → 导出/模板不带该列）
   migrateDeliveryPlanNoField();
+  // 交付计划：字段配置移除已废弃的单据头三项汇总（2026-10-14.149，持久化 fields 老库仍带这三列 → 导出/模板出现多余空列）
+  migrateDeliveryDropHeadTotals();
   // 存量交付计划回填「交付计划编号」planNo（2026-10-06.134，须在 migrateDeliveryCreatedAt 之后：依赖 createdAt 已兜底回填）
   migrateDeliveryPlanNo();
   // 订单管理：存量库存订单单号前缀 XSDD- → KCDD-，避免与销售订单单号冲突
@@ -7614,7 +7642,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.148</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.149</div>
 </body>
 </html>
 
