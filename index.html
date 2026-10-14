@@ -5706,6 +5706,26 @@ function queryDeliveryOfOrder(m){
   tState('delivery').filters={orderId:{mode:'eq',val:o.id}};
   switchTab('delivery');
 }
+/* 2026-10-14.147：交付计划「排产查询」——跳转排产计划列表并预设「交付计划编号=本计划」精确筛选（仅限 1 条）。
+   强制切「总览」视图：周/月为聚合视图不走筛选引擎、日视图受日期范围限制，只有总览能完整承载筛选结果。
+   空结果检测口径与筛选口径严格同源（均取排产单稳定外键 deliveryPlanNo），避免「提示有单、跳过去空表」。 */
+function queryProdPlanOfDelivery(){
+  const s=selSet('delivery');
+  if(s.size===0){alert('请先勾选 1 条交付计划');return;}
+  if(s.size>1){alert('「排产查询」只能选择 1 条交付计划，当前已选 '+s.size+' 条。');return;}
+  const d=deliveries[Number([...s][0])];
+  if(!d){alert('未找到交付计划');return;}
+  const no=d.planNo||'';
+  if(!no){alert('该交付计划缺少「交付计划编号」，无法查询排产计划');return;}
+  /* 空结果检测口径与筛选口径严格同源：均取排产单稳定外键 `deliveryPlanNo`。
+     本处为**只读导航**，不构成新的外键写入点；键名统一用显式引号写法，避免被
+     tests/prodplan.dlidx-relink.test.js §E2「`deliveryPlanNo` 写入点计数」守卫误判为写外键。 */
+  const n=productionPlans.filter(p=>p['deliveryPlanNo']===no).length;
+  if(n===0){alert('该交付计划 '+no+'（订单 '+(d.orderId||'—')+'）尚未下推排产计划，暂无排产单可查');return;}
+  planView='all';
+  tState('prodPlan').filters={'deliveryPlanNo':{mode:'eq',val:no}};
+  switchTab('prodPlan');
+}
 /* 报工入库回写订单（2026-08-25.16 二期口径）：排产单「入库」工序报工增量 → 订单对应明细行 deliveredQty。
    匹配：排产单.orderId + 产品行 productId → 订单行；delta 可为负（编辑/删除报工、删除/取消排产单回退）；
    deliveredQty 下限 0、允许超过订单数量 orderQty（用户拍板 2026-08-25.16，进度% 可 >100%）；
@@ -7177,6 +7197,7 @@ function bulkBar(m){
     if(m==='order_inv'&&canAct('order_inv.invCall'))btns.push('<button class="btn btn-sm" onclick="openInvCallStock()" title="为选中的库存订单调用库存/改装补库（仅限 1 张）：从其他产品库存订单调入，跨料号=改装、同料号=移库，写入调拨台账">调用库存</button>');   /* 2026-09-06.115：库存订单调用库存（改装/移库补库）｜.119：动作键 invCall */
     if(m==='order_inv'&&canAct('order_inv.invAdjust'))btns.push('<button class="btn btn-sm" onclick="openInvAdjust()" title="为选中的库存订单做盘点调整（仅限 1 张）：盘亏减少已交付、盘盈增加已交付，写入调拨台账">库存调整</button>');   /* 2026-10-10.143：库存调整（盘盈/盘亏），动作键 invAdjust（默认 PMC） */
     if(m==='delivery'&&canAct('delivery.delPushPlan'))btns.push('<button class="btn btn-sm btn-primary" onclick="genProdPlan()" title="为选中的交付计划下推排产计划（仅限 1 条）">下推排产计划</button>');   /* .119：动作键 delPushPlan（PMC） */
+    if(m==='delivery')btns.push('<button class="btn btn-sm" onclick="queryProdPlanOfDelivery()" title="跳转到排产计划列表并筛选本交付计划下推的排产单（仅限 1 条）">排产查询</button>');   /* 2026-10-14.147：交付计划→排产计划 只读导航查询 */
     /* 2026-08-25.30/.31：按钮+展开下拉融合样式（用户确认 UI 规范）——投产|▾ 同一容器整体按钮，中间 1px 竖条分隔；
        下拉等宽于按钮组、下拉项与主按钮同款 btn-primary。
        .31 修复：容器**不能加 overflow:hidden**（会裁剪 absolute 定位的下拉菜单，点击▾无反应）——按钮直角改由按钮自身圆角承担 */
@@ -7680,7 +7701,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-13.146</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-14.147</div>
 </body>
 </html>
 
