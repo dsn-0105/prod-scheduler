@@ -7,7 +7,7 @@
       · 服务端探针直接注入桩，覆盖工程师报告里**未提**的边界
         （expectedRev 错误值仍 200 / 空分片 {} 合法 / 旧客户端整表覆盖后 u 的去向）
       · 迁移幂等改为**子进程真实启动**探针（落盘与否用「紧凑 vs 缩进」字节判别）
-      · 反潮汐改为与 `git show HEAD:index.html` 取源**逐字**比对（非正则形态断言）
+      · 反潮汐改为与「.152 改前基线」（git 取源，**禁 HEAD 防对消**）**逐字**比对（非正则形态断言）
       · 端到端改为**真实子进程 + 重启读回**（非进程内自建 server）
       · 另加「前端先行 / 旧后端」真实探针（用 git 取 HEAD 的 server.js 起真服务）
    运行：node --test tests/layout.scoped.independent.test.js
@@ -72,9 +72,34 @@ function extractFn(src, name) {
   for (; q < src.length; q++) { if (src[q] === '{') d2++; else if (src[q] === '}') { d2--; if (!d2) break; } }
   return src.slice(m.index, q + 1);
 }
-/** 取 HEAD 版本文件文本（反潮汐比对的「改前」基线，来自 git 而非注释） */
-function gitShow(rel) {
-  return execFileSync('git', ['show', 'HEAD:' + rel], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' });
+/** 取指定修订的文件文本 */
+function gitShowAt(rev, rel) {
+  return execFileSync('git', ['show', rev + ':' + rel], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' });
+}
+/** 从 HEAD 往回找**最近一个不含 marker 的提交**（自维护，避免硬编码 hash 随 rebase 失效）。
+    用途：反潮汐/旧后端探针需要「.152 之前」的基线。
+    ⚠ 绝不能用 HEAD 作基线：本文件已随 .152 一并提交，用 HEAD 会与自身对比而**对消**、
+     守卫退化为恒真。tests/order.status.test.js:103-108 已记录过同一踩坑。 */
+function findPreChangeRev(rel, marker) {
+  const revs = execFileSync('git', ['log', '--format=%H', '-40', '--', rel], { cwd: ROOT, encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+  for (const r of revs) {
+    try { if (gitShowAt(r, rel).indexOf(marker) < 0) return r; } catch (e) { /* 该修订无此文件，继续 */ }
+  }
+  return null;
+}
+/** 解析「改前基线」并执行**防对消守卫**：基线必须真实不含 marker，当前版本必须真实含有。
+    @returns {{rev:string, text:string}} */
+function resolveBaseline(rel, marker, what) {
+  const rev = process.env.BASELINE_REF || findPreChangeRev(rel, marker);
+  assert.ok(rev, '无法定位「' + what + '」之前的基线提交；请显式设置 BASELINE_REF');
+  const text = gitShowAt(rev, rel);
+  assert.strictEqual(text.indexOf(marker), -1,
+    '防对消守卫：基线 ' + rev + ':' + rel + ' 仍含「' + marker + '」→ 说明基线选错（等于当前版本），守卫会退化为恒真');
+  const now = rel === 'index.html' ? INDEX_SRC : fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  assert.ok(now.indexOf(marker) >= 0,
+    '防对消守卫：当前 ' + rel + ' 必须含「' + marker + '」→ 否则两侧是同一修订，比对无意义');
+  return { rev: rev, text: text };
 }
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -603,20 +628,39 @@ test('B5 同一账号多标签页：后写覆盖自己（无 409、无合并）�
 /* ============================================================
    Part C · 静态守卫（自己提取源码，不抄工程师断言）
    ============================================================ */
-test('C1 反潮汐：6 个既有函数体与 git HEAD 版本**逐字**相同（不是形态正则）', () => {
-  const headHtml = gitShow('index.html');
+test('C1 反潮汐：6 个既有函数体与 .152 **改前基线**逐字相同（不是形态正则）', () => {
+  const base = resolveBaseline('index.html', 'build 2026-10-15.152', '.152 列布局改造');
+  const headHtml = base.text;
+  assert.notStrictEqual(base.rev, '', '基线修订必须解析成功');
   const names = ['layoutOf', 'applyTableLayout', 'startColDrag', 'startColResize', 'syncHeadBody', 'thCol'];
   names.forEach(n => {
     const a = extractFn(INDEX_SRC, n);
     const b = extractFn(headHtml, n);
     assert.ok(a && a.length > 60, n + ' 在当前 index.html 中未抽出（守卫会退化为恒真，必须修）');
-    assert.ok(b && b.length > 60, n + ' 在 HEAD 中未抽出');
-    assert.strictEqual(a, b, n + ' 函数体必须与 HEAD 逐字一致（反潮汐硬约束）');
+    assert.ok(b && b.length > 60, n + ' 在基线中未抽出（守卫会退化为恒真，必须修）');
+    assert.strictEqual(a, b, n + ' 函数体必须与 .152 改前基线（' + base.rev.slice(0, 7) + '）逐字一致（反潮汐硬约束）');
   });
+  /* 基线确实来自更早的修订（防对消的第二重证据：基线内联脚本长度与当前不同） */
+  assert.notStrictEqual(headHtml.length, INDEX_SRC.length, '基线与当前必须是不同修订');
   /* J9 的两行合并策略正则必须原样存在（invadjust.143 J9 依赖） */
   const atl = extractFn(INDEX_SRC, 'applyTableLayout');
   assert.ok(atl.indexOf('var order=(lo.order||[]).filter(function(k){return curKeys.indexOf(k)>=0;});') >= 0, 'J9 第 1 行');
   assert.ok(atl.indexOf('curKeys.forEach(function(k){if(order.indexOf(k)<0)order.push(k);});') >= 0, 'J9 第 2 行');
+});
+
+test('C1b 防对消守卫自检：基线与 HEAD 必须是不同修订，且守卫能拦住「拿 HEAD 当基线」', () => {
+  const marker = 'build 2026-10-15.152';
+  const headRev = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const headIdx = gitShowAt('HEAD', 'index.html');
+  assert.ok(headIdx.indexOf(marker) >= 0, '前提：HEAD 已含 .152 标记（.152 已提交，故 HEAD 不可作基线）');
+
+  const base = resolveBaseline('index.html', marker, '.152 列布局改造');
+  assert.strictEqual(base.text.indexOf(marker), -1, '解析出的基线必须不含 .152 标记');
+  assert.notStrictEqual(base.rev, headRev, '基线修订必须 ≠ HEAD（若相等 → 与自身对比，守卫失效）');
+
+  /* 反向自检：把「含标记的文本」套用守卫条件，必须判为「不可作基线」 */
+  assert.strictEqual(headIdx.indexOf(marker) < 0, false,
+    '守卫条件套在 HEAD 文本上必须得出「含标记 → 不可作基线」；若为 true 则守卫逻辑本身有问题');
 });
 
 test('C2 服务器模式路径不再整表落库：DB.set(\'tblLayout\' 全仓 0 处', () => {
@@ -668,9 +712,10 @@ test('C4 顶栏按钮：重置=全员可见；重置所有人=admin-only；apply
     const body = extractFn(INDEX_SRC, fn);
     assert.ok(body.indexOf("querySelectorAll('[data-admin-only]')") >= 0, fn + ' 必须仍用通配选择器');
   });
-  /* 且这两个函数体与 HEAD 逐字一致（.152 未改动顶栏权限机制） */
-  const headHtml = gitShow('index.html');
-  assert.strictEqual(extractFn(INDEX_SRC, 'applyTopbarPerm'), extractFn(headHtml, 'applyTopbarPerm'), 'applyTopbarPerm 逐字不变');
+  /* 且这两个函数体与 .152 改前基线逐字一致（.152 未改动顶栏权限机制） */
+  const base = resolveBaseline('index.html', 'build 2026-10-15.152', '.152 列布局改造');
+  assert.strictEqual(extractFn(INDEX_SRC, 'applyTopbarPerm'), extractFn(base.text, 'applyTopbarPerm'),
+    'applyTopbarPerm 相对改前基线（' + base.rev.slice(0, 7) + '）逐字不变');
 });
 
 test('C5 水印 7 锚点齐全；.152 权威水印恰 1 处、.151 水印 0 处（逐条解释 .151 残留）', () => {
@@ -902,9 +947,12 @@ test('D6 零回归：/api/save {key:tblLayout} 仍 200；随后 /api/data 为 v2
 
 /* --- D7：部署顺序风险 —— 前端先行（旧后端）真实探针 --- */
 test('D7 前端先行（旧后端）真实探针：/api/layout 不存在 → staff 403 / admin 404；业务数据不丢不改', async () => {
+  /* 「旧后端」= .152 之前的真实 server.js（由 git 取源，非自造桩）；禁对消守卫见 resolveBaseline */
+  const oldBase = resolveBaseline('server/server.js', '/api/layout', '.152 列布局改造');
   const oldJs = path.join(TMP, 'old-server.js');
-  fs.writeFileSync(oldJs, gitShow('server/server.js'));
-  assert.strictEqual(fs.readFileSync(oldJs, 'utf8').indexOf('/api/layout'), -1, '前提：HEAD 后端确无 /api/layout 路由');
+  fs.writeFileSync(oldJs, oldBase.text);
+  assert.strictEqual(fs.readFileSync(oldJs, 'utf8').indexOf('/api/layout'), -1,
+    '前提：改前基线后端（' + oldBase.rev.slice(0, 7) + '）确无 /api/layout 路由');
 
   const oldData = path.join(TMP, 'old-data.json');
   const oldUsers = path.join(TMP, 'old-users.json');
@@ -982,4 +1030,200 @@ test('E4 临时目录与夹具自清理确认', () => {
   /* 仓库根不得出现本文件新建的临时目录 */
   const leaked = fs.readdirSync(ROOT).filter(n => n.indexOf('qa152-indep-') === 0);
   assert.deepStrictEqual(leaked, [], '仓库根不得残留 qa152-indep-* 临时目录');
+});
+
+/* ============================================================
+   Part F · 追加必查项（前后端归一口径 / 可达攻击面 / 加固必要性）
+   ============================================================ */
+
+/* ---------- F1：前后端归一口径一致性矩阵 ----------
+   本轮最大结构性风险：`normLayoutServer`（前端）与 `normalizeLayout`+`isLayoutMap`（后端）
+   是**两个运行时各写一份同口径函数**。这里对同一批输入逐项对拍，产出必须逐字段相同。 */
+test('F1 前后端归一口径一致性矩阵：15 类输入前后端产出必须一致且形状恒合法', () => {
+  const cases = [
+    ['① 空数组 []', []],
+    ['② 空对象 {}', {}],
+    ['③ 字符串 "x"', 'x'],
+    ['④ 数字 0', 0],
+    ['⑤ null', null],
+    ['⑥ undefined', undefined],
+    ['⑦ 合法 v2 {v:2,def:{},u:{}}', { v: 2, def: {}, u: {} }],
+    ['⑧ 合法 v1 扁平 {order_frame:{order:[],widths:{}}}', { order_frame: { order: [], widths: {} } }],
+    ['⑨ 半成品 v2 {v:2}', { v: 2 }],
+    ['⑩ 半成品 v2 {v:2,def:[]}', { v: 2, def: [] }],
+    ['⑪ 半成品 v2 {v:2,u:[]}', { v: 2, u: [] }],
+    ["⑫ v 是别的东西 {v:3}", { v: 3, def: {}, u: {} }],
+    ["⑬ v 是别的东西 {v:'2'}", { v: '2', def: {}, u: {} }],
+    ["⑭ 分片非法 {v:2,def:{},u:{pmc:'x'}}", { v: 2, def: {}, u: { pmc: 'x' } }],
+    ['⑮ 分片非法 {v:2,def:{},u:{pmc:[]}}', { v: 2, def: {}, u: { pmc: [] } }],
+  ];
+
+  const app = mkApp();
+  app.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+
+  cases.forEach(c => {
+    const label = c[0], x = c[1];
+    /* 后端：normalizeLayout(x)；前端：normLayoutServer(x)（两者都含就地改动，故各喂全新字面量） */
+    const back = host(normalizeLayout(x === undefined ? undefined : host(x)));
+    const front = host(JSON.parse(app.run('JSON.stringify(normLayoutServer(' + JSON.stringify(x) + '))')));
+
+    assert.deepStrictEqual(front, back,
+      '【口径失配】' + label + '\n  前端=' + JSON.stringify(front) + '\n  后端=' + JSON.stringify(back));
+    [['后端', back], ['前端', front]].forEach(p => {
+      assert.strictEqual(p[1].v, 2, label + ' ' + p[0] + ' v 恒为 2');
+      assert.strictEqual(Array.isArray(p[1].def), false, label + ' ' + p[0] + ' def 不得为数组');
+      assert.strictEqual(Array.isArray(p[1].u), false, label + ' ' + p[0] + ' u 不得为数组');
+      assert.ok(p[1].def && typeof p[1].def === 'object', label + ' ' + p[0] + ' def 必须是对象');
+      assert.ok(p[1].u && typeof p[1].u === 'object', label + ' ' + p[0] + ' u 必须是对象');
+    });
+
+    /* 关键：把归一结果交给 applyServerLayout 后，内存态必须**恒为合法布局映射**
+       （数组/字符串/数字/null 都不允许 —— 否则 layoutOf 会在非对象上挂属性） */
+    app.run('applyServerLayout(' + JSON.stringify(back) + ')');
+    assert.strictEqual(app.run('Array.isArray(tblLayout)'), false, label + ' 内存态不得为数组');
+    assert.strictEqual(app.run("typeof tblLayout==='object'&&tblLayout!==null"), true,
+      label + ' 内存态必须是对象（实际 typeof=' + app.run('typeof tblLayout') + '）');
+    assert.strictEqual(app.run("typeof layoutDef==='object'&&layoutDef!==null&&!Array.isArray(layoutDef)"), true,
+      label + ' def 镜像必须是对象');
+    /* layoutOf 必须始终能给出可用的 {order,widths}（不抛错、不返回 null/undefined） */
+    app.run("layoutOf('probe')");
+    assert.strictEqual(app.run("typeof layoutOf('probe')==='object'&&layoutOf('probe')!==null"), true,
+      label + ' layoutOf 必须返回对象');
+  });
+  app.dispose();
+});
+
+/* ---------- F2：畸形 v2 经 /api/save 灌入（真实 HTTP 可达攻击面）----------
+   /api/save {key:'tblLayout'} 刻意放行任意值 → 这是**唯一**能把任意形状灌进全局布局的通道。
+   验证两端各自的兜底：① 服务端归一后是否能给出合法形状？② 前端内存态是否会被污染成数组/字符串？ */
+test("F2 攻击面：向 /api/save 直接写畸形 v2 {v:2,def:[],u:{pmc:'x'}} —— 两端兜底逐项核对", async () => {
+  const pmc = await live.login('pmc');
+  const admin = await live.login('admin');
+
+  const payload = { v: 2, def: [], u: { pmc: 'x' } };
+  const r = await live.api('POST', '/api/save', pmc, { key: 'tblLayout', value: payload });
+  assert.strictEqual(r.status, 200, '/api/save 上 tblLayout 放行（可达前提）');
+
+  const d = await live.api('GET', '/api/data', admin);
+  const t = d.body.data.tblLayout;
+  assert.strictEqual(t.v, 2);
+  /* ① 服务端归一：顶层 def/u 被净化（工程师第三轮加固生效） */
+  assert.strictEqual(Array.isArray(t.def), false, '① def 被服务端净化为非数组');
+  assert.deepStrictEqual(t.def, {}, '① def 归空');
+  /* ① 但 **u[账号]（分片）层未被服务端净化** —— 服务端只校验顶层 def/u，不校验每个分片 */
+  assert.strictEqual(t.u.pmc, 'x', "① 分片 u.pmc 仍是字符串 'x'（服务端未按账号净化 → 口径不完整）");
+
+  /* ② 前端兜底：即便如此，内存态也不得变成数组/字符串（applyServerLayout 的 isLayoutMap(mine) 守卫） */
+  const app = mkApp();
+  app.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  app.run('applyServerLayout(' + JSON.stringify(t) + ')');
+  assert.strictEqual(app.run('Array.isArray(tblLayout)'), false, '② 内存态不得为数组');
+  assert.strictEqual(app.run("typeof tblLayout==='string'"), false, "② 内存态不得为字符串（分片兜底必须生效）");
+  assert.strictEqual(jsonOf(app, 'tblLayout'), '{}', '② 非法分片被归空 → 内存态为合法空映射');
+  app.run("layoutOf('delivery')");
+  assert.strictEqual(app.run("typeof layoutOf('delivery')==='object'&&layoutOf('delivery')!==null"), true,
+    '② layoutOf 必须仍能给出可用记录（不在非对象上挂属性）');
+  app.dispose();
+
+  /* 清理：把该账号分片改回合法值，避免影响后续用例 */
+  await live.api('POST', '/api/layout', pmc, { layout: { m: { order: ['ok'], widths: {} } } });
+});
+
+/* ---------- F3：两处「超工单加固」是否真的必要（变异注入判定）----------
+   做法：把加固**就地退回**（每一步都断言替换真的生效，否则用例自身失败），
+        再看失败模式是否真的复现。若复现 ⇒ 必要；若不复现 ⇒ 冗余。 */
+test('F3 加固必要性判定（变异注入）：N1 前端分片守卫必要 / N2 后端快通道仅保形状 / N3 两者缺一不可', async () => {
+  /* --- 变异体定义（每条都校验「替换确实生效」，防退化） --- */
+  const revertFrontSliceGuard = (main) => {
+    const from = '\n  if(!isLayoutMap(mine))mine={};';
+    assert.ok(main.indexOf(from) >= 0, '变异注入失败：applyServerLayout 的 mine 守卫现状不符，请同步本用例');
+    return main.replace(from, '');
+  };
+  const revertFrontNorm = (main) => {
+    const from = "function normLayoutServer(v){\n  if(v&&typeof v==='object'&&v.v===2){\n    if(!isLayoutMap(v.def))v.def={};\n    if(!isLayoutMap(v.u))v.u={};\n    return v;\n  }\n  return {v:2,def:isLayoutMap(v)?v:{},u:{}};\n}";
+    const to = "function normLayoutServer(v){\n  if(v&&typeof v==='object'&&v.v===2)return v;\n  return {v:2,def:(v&&typeof v==='object')?v:{},u:{}};\n}";
+    assert.ok(main.indexOf(from) >= 0, '变异注入失败：normLayoutServer 现状不符，请同步本用例');
+    return main.replace(from, to);
+  };
+  const revertBackend = (text) => {
+    const from = "function normalizeLayout(v) {\n  if (v && typeof v === 'object' && v.v === 2) {\n    if (!isLayoutMap(v.def)) v.def = {};\n    if (!isLayoutMap(v.u)) v.u = {};\n    return v;\n  }\n  return { v: 2, def: isLayoutMap(v) ? v : {}, u: {} };\n}";
+    const to = "function normalizeLayout(v) {\n  if (v && typeof v === 'object' && v.v === 2) return v;\n  return { v: 2, def: (v && typeof v === 'object') ? v : {}, u: {} };\n}";
+    assert.ok(text.indexOf(from) >= 0, '变异注入失败：normalizeLayout 现状不符，请同步本用例');
+    return text.replace(from, to);
+  };
+
+  /* --- N1：只退回前端「分片守卫」→ 非法分片能否真正到达内存态？ --- */
+  const appN1mut = createApp({ installRecorder: false, transformMain: revertFrontSliceGuard });
+  appN1mut.setGlobal('renderContent', function () {});
+  appN1mut.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  appN1mut.run('applyServerLayout(' + JSON.stringify({ v: 2, def: {}, u: { pmc: 'x' } }) + ')');
+  assert.strictEqual(appN1mut.run("typeof tblLayout==='string'"), true,
+    'N1 退回守卫后：内存态真的变成了字符串 ⇒ 前端分片守卫是**必要**的（load-bearing）');
+  appN1mut.run("layoutOf('d')");
+  assert.strictEqual(appN1mut.run("layoutOf('d')===undefined"), true,
+    'N1 佐证危害：字符串上挂属性静默失败 → layoutOf 返回 undefined（下游取值即 TypeError）');
+  appN1mut.dispose();
+  /* 对照：未退回时同一输入是安全的 */
+  const appN1 = mkApp();
+  appN1.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  appN1.run('applyServerLayout(' + JSON.stringify({ v: 2, def: {}, u: { pmc: 'x' } }) + ')');
+  assert.strictEqual(jsonOf(appN1, 'tblLayout'), '{}', '对照组：现状（带守卫）同一输入安全 → 守卫确实在起作用');
+  appN1.dispose();
+
+  /* --- N2：只退回后端快通道净化（保持硬化前端）→ 服务端会吐出非法形状，但前端仍安全 --- */
+  const mutServer = path.join(TMP, 'nohard-server.js');
+  fs.writeFileSync(mutServer, revertBackend(fs.readFileSync(SERVER_JS, 'utf8')));
+  const n2Data = path.join(TMP, 'n2-data.json');
+  const n2Users = path.join(TMP, 'n2-users.json');
+  fs.writeFileSync(n2Users, JSON.stringify(SEED_USERS));
+  const base = {};
+  DEFAULT_KEYS.forEach(k => { base[k] = JSON.parse(JSON.stringify(srv.DEFAULT_DATA[k])); });
+  base.tblLayout = { v: 2, def: { order_frame: { order: ['a'], widths: {} } }, u: {} };
+  fs.writeFileSync(n2Data, JSON.stringify(base));
+
+  const srvN2 = await startServer(mutServer, n2Data, n2Users);
+  try {
+    const tok = await srvN2.login('pmc');
+    await srvN2.api('POST', '/api/save', tok, { key: 'tblLayout', value: { v: 2, def: [], u: {} } });
+    const dd = await srvN2.api('GET', '/api/data', tok);
+    assert.strictEqual(Array.isArray(dd.body.data.tblLayout.def), true,
+      'N2 退回后端加固后：/api/data 真的会吐出 `def: []`（非法形状）⇒ 后端加固对**形状纯度**是必要的');
+    /* 但前端兜底仍把内存态拉回合法（硬化后的前端独立生效） */
+    const appN2 = mkApp();
+    appN2.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+    appN2.run('applyServerLayout(' + JSON.stringify(host(dd.body.data.tblLayout)) + ')');
+    assert.strictEqual(appN2.run('Array.isArray(tblLayout)'), false,
+      'N2 但硬化前端独立兜底 → 内存态仍合法 ⇒ 后端加固对**不崩**并非唯一防线（属纵深防御）');
+    appN2.dispose();
+  } finally {
+    await srvN2.stop();
+  }
+
+  /* --- N3：两端同时退回 → 非法内存态必然复现（证明这对加固是必要的） --- */
+  const n3Data = path.join(TMP, 'n3-data.json');
+  fs.writeFileSync(n3Data, JSON.stringify(base));
+  const srvN3 = await startServer(mutServer, n3Data, n2Users);
+  try {
+    const tok = await srvN3.login('pmc');
+    await srvN3.api('POST', '/api/save', tok, { key: 'tblLayout', value: [] });
+    const dd = await srvN3.api('GET', '/api/data', tok);
+    assert.deepStrictEqual(host(dd.body.data.tblLayout), { v: 2, def: [], u: {} },
+      'N3 两端退回后：/api/data 吐出 `def: []`');
+
+    const appN3 = createApp({
+      installRecorder: false,
+      transformMain: (m) => revertFrontSliceGuard(revertFrontNorm(m)),
+    });
+    appN3.setGlobal('renderContent', function () {});
+    appN3.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+    appN3.run('applyServerLayout(' + JSON.stringify(host(dd.body.data.tblLayout)) + ')');
+    assert.strictEqual(appN3.run('Array.isArray(tblLayout)'), true,
+      'N3 非法内存态（数组）真的复现 ⇒ 「后端快通道 + 前端分片兜底」这对加固是**必要**的');
+    appN3.run("layoutOf('d')");
+    assert.strictEqual(appN3.run("Object.prototype.hasOwnProperty.call(tblLayout,'d')"), true,
+      'N3 佐证危害：模块键被挂到**数组实例**上（内存态被污染，非崩溃但语义非法）');
+    appN3.dispose();
+  } finally {
+    await srvN3.stop();
+  }
 });
