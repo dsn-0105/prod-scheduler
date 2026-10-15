@@ -259,6 +259,57 @@ test('L8 v1 存量数据经 handleLayout 保存后：原内容进 def，本人�
   assert.deepStrictEqual(data.tblLayout.u.pmc, { order_frame: { order: ['new'], widths: {} } }, '本人分片=本次提交');
 });
 
+test('L9 逐分片净化：非法分片用 delete 删除（不可归 {}），合法分片逐字节保留', () => {
+  /* 1) 标量分片 → 键**不存在**（delete 而非归 {}） */
+  const d1 = { v: 2, def: {}, u: { pmc: 'x' } };
+  const r1 = normalizeLayout(d1);
+  assert.strictEqual(r1, d1, '归一原地生效（返回同一引用）');
+  assert.ok(!('pmc' in r1.u), '标量分片必须被 delete（键不存在），而非归 {}');
+  assert.deepStrictEqual(r1.u, {}, 'u 中不含该键');
+  assert.deepStrictEqual(r1, { v: 2, def: {}, u: {} });
+
+  /* 2) 数组分片 → 键不存在 */
+  const r2 = normalizeLayout({ v: 2, def: {}, u: { pmc: [] } });
+  assert.ok(!('pmc' in r2.u), '数组分片必须被 delete');
+  assert.deepStrictEqual(r2.u, {});
+
+  /* 3) 混合：合法分片逐字节保留、非法分片被删；def 与其余键不动 */
+  const keep = { m: { order: [], widths: {} } };
+  const d3 = { v: 2, def: {}, u: { pmc: keep, admin: 'x' } };
+  const r3 = normalizeLayout(d3);
+  assert.ok('pmc' in r3.u, '合法分片保留');
+  assert.deepStrictEqual(r3.u.pmc, keep, '合法分片逐字节保留');
+  assert.ok(!('admin' in r3.u), '非法分片被删');
+  assert.deepStrictEqual(r3.u, { pmc: keep });
+  assert.deepStrictEqual(r3.def, {}, 'def 不受影响');
+
+  /* 3b) **合法分片一字不动**：已是合法 v2 ⇒ 归一为恒等（同一引用 + 逐字节不变） */
+  const clean = { v: 2, def: {}, u: { pmc: { order_frame: { order: ['a'], widths: { a: 120 } } } } };
+  const snap = JSON.stringify(clean);
+  const rc = normalizeLayout(clean);
+  assert.strictEqual(rc, clean, '已是合法 v2 → 返回同一引用');
+  assert.strictEqual(JSON.stringify(clean), snap, '合法分片一字不动（逐字节不变）');
+  assert.deepStrictEqual(rc.u.pmc, { order_frame: { order: ['a'], widths: { a: 120 } } });
+
+  /* 4) 幂等：一次净化后即为合法 v2 ⇒ 二次调用结果 deepEqual 且**返回同一引用** */
+  [r1, r2, r3].forEach(function (r, i) {
+    const again = normalizeLayout(r);
+    assert.strictEqual(again, r, '幂等#' + i + '：二次调用返回同一引用');
+    assert.deepStrictEqual(plain(again), plain(r), '幂等#' + i + '：结果 deepEqual');
+  });
+
+  /* 5) u 整体非法（数组/标量）仍归 {}（与「顶层 u 非法」既有口径一致，不逐个 delete） */
+  assert.deepStrictEqual(normalizeLayout({ v: 2, def: {}, u: [] }), { v: 2, def: {}, u: {} });
+  assert.deepStrictEqual(normalizeLayout({ v: 2, def: {}, u: 'x' }), { v: 2, def: {}, u: {} });
+
+  /* 6) 端到端口径：净化后的 u 再交给前端，非法分片已消失 ⇒ 前端走 def 回退（不是空布局） */
+  const def1 = { m: { order: ['a'], widths: {} } };
+  const dirty = { v: 2, def: plain(def1), u: { pmc: 'x', admin: { m: { order: ['z'], widths: {} } } } };
+  const purified = normalizeLayout(dirty);
+  assert.ok(!('pmc' in purified.u) && 'admin' in purified.u, '净化只删非法分片、保留合法分片');
+  assert.deepStrictEqual(purified.def, def1, 'def 一字不动');
+});
+
 /* ============================================================
    Part B · 前端静态守卫（源码文本断言）
    ============================================================ */
@@ -296,9 +347,12 @@ test('F1 服务器模式下 saveLayout 不再整表写 DB.set(tblLayout)（改�
 test('F2 applyServerLayout 存在且深拷贝本人分片（防与 def 共享引用）', () => {
   const body = extractFn(INDEX_SRC, 'applyServerLayout');
   assert.ok(/JSON\.parse\(\s*JSON\.stringify\(/.test(body), 'applyServerLayout 必须深拷贝后再赋给 tblLayout');
-  assert.ok(/r\.u\s*&&\s*currentUser\s*&&\s*r\.u\[currentUser\.username\]/.test(body),
+  assert.ok(/r\.u&&currentUser\)\?r\.u\[currentUser\.username\]:undefined/.test(body),
     '取本人分片口径：u[currentUser.username]');
-  assert.ok(/\|\|\s*r\.def\s*\|\|\s*\{\}/.test(body), '缺本人分片时回退 def');
+  assert.ok(/var mine=isLayoutMap\(raw\)\?raw:\(isLayoutMap\(r\.def\)\?r\.def:\{\}\);/.test(body),
+    '非法/缺失分片一律视同「不存在」⇒ 回退 def（与「无分片」同口径）');
+  assert.ok(!/mine=\{\}/.test(body),
+    '反断言：非法分片不得落到空布局 {}（否则＝系统默认列序，而非初始布局 def）');
   /* layoutDef 镜像一并赋值（供「重置我的列布局」回退初始布局用） */
   assert.match(body, /layoutDef\s*=\s*r\.def/, 'applyServerLayout 必须同步 def 镜像到 layoutDef');
   /* 归一函数与 server 端同口径：v2 快通道 + 非法 def/u 就地归空 */
@@ -306,17 +360,15 @@ test('F2 applyServerLayout 存在且深拷贝本人分片（防与 def 共享引
   assert.ok(/v\.v\s*===\s*2/.test(norm), 'normLayoutServer：v2 走快通道（原样返回）');
   assert.ok(/!\s*isLayoutMap\(v\.def\)\s*\)\s*v\.def\s*=\s*\{\}/.test(norm),
     'normLayoutServer：v2 的非法 def（数组等）必须就地归空自愈');
-  assert.ok(/!\s*isLayoutMap\(v\.u\)\s*\)\s*v\.u\s*=\s*\{\}/.test(norm),
-    'normLayoutServer：v2 的非法 u 必须就地归空自愈');
+  assert.ok(/Object\.keys\(v\.u\)\.forEach\(function\(k\)\{if\(!isLayoutMap\(v\.u\[k\]\)\)delete v\.u\[k\];\}\);/.test(norm),
+    'normLayoutServer：必须**逐分片**净化，非法分片用 delete 删除（与 server 端同口径）');
+  assert.ok(/v\.u\s*=\s*\{\}/.test(norm), 'normLayoutServer：v2 的顶层 u 非法（数组/标量）仍归 {}');
   assert.ok(/isLayoutMap\(v\)\s*\?\s*v\s*:\s*\{\}/.test(norm),
     'normLayoutServer：v1 扁平逐字进 def，非法（含数组）归空');
   /* 前端 isLayoutMap 与 server 端同口径：对象且非数组 */
   const isMap = extractFn(INDEX_SRC, 'isLayoutMap');
   assert.ok(/typeof\s+v\s*===\s*'object'/.test(isMap) && /!Array\.isArray\(v\)/.test(isMap),
     '前端 isLayoutMap：对象且非数组（与 server 端同口径）');
-  /* applyServerLayout 兜底：本人分片被伪造成数组/标量 → 归空，不留非法内存态 */
-  assert.ok(/if\(!isLayoutMap\(mine\)\)mine=\{\};/.test(body),
-    'applyServerLayout 兜底：非法本人分片归空（防 layoutOf 在数组实例上挂属性）');
 });
 
 test('F3 resetTableLayout 不再含 needSysAdmin()（所有用户可用，只重置自己）', () => {
@@ -512,22 +564,35 @@ test("C6 resetAllTableLayout admin → confirm 后 POST {action:'resetAll'} 并�
   app2.dispose();
 });
 
-test('C7 非法形状自愈：v2 的 def/u 为数组 → 归空；u[本人] 为数组 → 不留非法内存态', () => {
+test('C7 非法形状自愈：v2 的 def/u 为数组 → 归空；u[本人] 非法 → 回退 def（非空布局）', () => {
   const app = mkApp();
   app.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
   /* v2 的 def 是数组（可经仍放行的 /api/save 伪造）→ layoutDef 不得是数组、不崩 */
   app.run('applyServerLayout(' + JSON.stringify({ v: 2, def: [], u: {} }) + ')');
   assert.strictEqual(app.run('Array.isArray(layoutDef)'), false, 'def 为数组时 layoutDef 必须归空');
   assert.deepStrictEqual(plain(app.getGlobal('layoutDef')), {}, 'def 非法 → 归空');
-  assert.deepStrictEqual(plain(app.getGlobal('tblLayout')), {}, '内存态退化为空映射');
+  assert.deepStrictEqual(plain(app.getGlobal('tblLayout')), {}, 'def 非法且无分片 → 空映射');
   app.run("layoutOf('any')");   /* 不得抛错 */
   assert.ok(JSON.stringify(plain(app.getGlobal('tblLayout'))).indexOf('any') >= 0, 'layoutOf 仍能按模块建档');
 
-  /* u[本人] 被伪造成数组 → 兜底归空 */
-  app.run('applyServerLayout(' + JSON.stringify({ v: 2, def: { m: { order: ['a'], widths: {} } }, u: { pmc: [] } }) + ')');
-  assert.strictEqual(app.run('Array.isArray(tblLayout)'), false, '本人分片为数组时必须归空');
-  assert.deepStrictEqual(plain(app.getGlobal('tblLayout')), {}, '非法分片 → 空映射（不采信非法形状）');
-  assert.deepStrictEqual(plain(app.getGlobal('layoutDef')), { m: { order: ['a'], widths: {} } }, '合法 def 仍被保留供重置');
+  /* 关键口径修正：u[本人] 非法 ⇒ **视同「不存在」⇒ 回退 def**（**不是**空布局 {} ——
+     {} 会被当成「该账号自己的空布局」⇒ 看到系统默认列序，与「无分片⇒初始布局」用户可见结果不同） */
+  const DEF1 = { m: { order: ['a'], widths: {} } };
+  [{ pmc: [] }, { pmc: 'x' }, { pmc: 0 }, { pmc: null }].forEach(function (u, i) {
+    app.run('applyServerLayout(' + JSON.stringify({ v: 2, def: DEF1, u: u }) + ')');
+    const got = plain(app.getGlobal('tblLayout'));
+    assert.strictEqual(Array.isArray(got), false, '用例#' + i + '：内存态不得是数组');
+    assert.deepStrictEqual(got, DEF1, '用例#' + i + '：非法分片必须回退 def');
+    assert.notDeepStrictEqual(got, {}, '用例#' + i + '：非法分片**不得**落到空布局（否则＝系统默认列序）');
+    assert.deepStrictEqual(plain(app.getGlobal('layoutDef')), DEF1, '用例#' + i + '：def 镜像保留供重置');
+  });
+
+  /* 反面对照：合法分片优先于 def；且**显式空分片 `{}` 是合法分片**（＝用户自己的空布局，不回落 def） */
+  const MINE1 = { z: { order: ['z'], widths: {} } };
+  app.run('applyServerLayout(' + JSON.stringify({ v: 2, def: DEF1, u: { pmc: MINE1 } }) + ')');
+  assert.deepStrictEqual(plain(app.getGlobal('tblLayout')), MINE1, '合法分片优先于 def');
+  app.run('applyServerLayout(' + JSON.stringify({ v: 2, def: DEF1, u: { pmc: {} } }) + ')');
+  assert.deepStrictEqual(plain(app.getGlobal('tblLayout')), {}, '空对象是合法分片 → 不回落 def（与非法分片区分开）');
   app.dispose();
 });
 

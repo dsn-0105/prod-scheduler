@@ -101,6 +101,47 @@ function resolveBaseline(rel, marker, what) {
     '防对消守卫：当前 ' + rel + ' 必须含「' + marker + '」→ 否则两侧是同一修订，比对无意义');
   return { rev: rev, text: text };
 }
+/** 语义化别名：找最近一个**不含** marker 的提交（与 findPreChangeRev 同一实现） */
+const findRevLacking = findPreChangeRev;
+
+/** 精确锚定替换（主理人裁定口径，两条硬约束缺一不可）：
+      ① 匹配数必须**恰为 1** —— 0 次报「锚点未命中，请同步本用例」；≥2 次报「锚点不唯一，无法安全注入」；
+      ② 替换后字符串必须**确实变化**（否则变异没打进去、守卫空转）。
+    **禁止**静默跳过 / 宽松匹配 / 多命中取首：那会让守卫静默退化为恒真。
+    「脆但可控」优于「静默通过」—— 源码变更时本函数会**大声失败**并要求同步锚点。 */
+function injectOnce(src, needle, repl, label) {
+  assert.ok(needle && needle.length > 0, '锚点[' + label + ']不得为空串');
+  const hits = src.split(needle).length - 1;
+  assert.strictEqual(hits, 1, '锚点问题[' + label + ']：命中 ' + hits + ' 次（必须恰 1 次）→ '
+    + (hits === 0 ? '锚点未命中，请同步本用例' : '锚点不唯一，无法安全注入'));
+  const out = src.split(needle).join(repl);
+  assert.notStrictEqual(out, src, '变异注入未生效[' + label + ']：替换前后字符串相同');
+  return out;
+}
+
+/* ============================================================
+   【build .152 补丁】源码锚点片段（**关键片段定位**，不再整函数全文）
+   ------------------------------------------------------------
+   背景：本文件第一版用**整函数全文**作变异注入锚点，源码每微调一次就失效。
+   2026-10-15 主理人裁定：允许改用关键片段，但必须满足 injectOnce 的两条硬约束。
+   ⚠ 这些片段若在源码中命中 0 次或 ≥2 次，本文件会**报错并要求同步** —— 这是设计意图，不是缺陷。
+   ============================================================ */
+const A_BE_SLICE = '      Object.keys(v.u).forEach(function (k) { if (!isLayoutMap(v.u[k])) delete v.u[k]; });\n';
+const A_FE_SLICE = '\n      Object.keys(v.u).forEach(function(k){if(!isLayoutMap(v.u[k]))delete v.u[k];});';
+const A_FE_PICK = 'var raw=(r.u&&currentUser)?r.u[currentUser.username]:undefined;\n  var mine=isLayoutMap(raw)?raw:(isLayoutMap(r.def)?r.def:{});';
+/** 旧版（.152 补丁前）前端分片守卫 —— 仅用于在**旧修订**上复核「旧结论当时为真」 */
+const A_OLD_FE_GUARD = '\n  if(!isLayoutMap(mine))mine={};';
+
+/** 退回后端逐分片净化 */
+const revertBackendSlice = (txt) => injectOnce(txt, A_BE_SLICE, '', '后端 normalizeLayout 逐分片 delete 行');
+/** 退回前端 normLayoutServer 的逐分片净化 */
+const revertFrontNormSlice = (main) => injectOnce(main, A_FE_SLICE, '', '前端 normLayoutServer 逐分片 delete 行');
+/** 退回前端 applyServerLayout 的「取分片 + 非法回退 def」逻辑（回到补丁前的 `||r.def||{}` 形态） */
+const revertFrontPick = (main) => injectOnce(main, A_FE_PICK,
+  'var mine=(r.u&&currentUser&&r.u[currentUser.username])||r.def||{};', '前端 applyServerLayout 分片取值/回退');
+/** 退回**前端两层** */
+const revertFrontBoth = (main) => revertFrontPick(revertFrontNormSlice(main));
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -1039,7 +1080,7 @@ test('E4 临时目录与夹具自清理确认', () => {
 /* ---------- F1：前后端归一口径一致性矩阵 ----------
    本轮最大结构性风险：`normLayoutServer`（前端）与 `normalizeLayout`+`isLayoutMap`（后端）
    是**两个运行时各写一份同口径函数**。这里对同一批输入逐项对拍，产出必须逐字段相同。 */
-test('F1 前后端归一口径一致性矩阵：15 类输入前后端产出必须一致且形状恒合法', () => {
+test('F1 前后端归一口径一致性矩阵：18 类输入前后端产出必须一致且形状恒合法（+ 回退语义对照）', () => {
   const cases = [
     ['① 空数组 []', []],
     ['② 空对象 {}', {}],
@@ -1056,6 +1097,13 @@ test('F1 前后端归一口径一致性矩阵：15 类输入前后端产出必�
     ["⑬ v 是别的东西 {v:'2'}", { v: '2', def: {}, u: {} }],
     ["⑭ 分片非法 {v:2,def:{},u:{pmc:'x'}}", { v: 2, def: {}, u: { pmc: 'x' } }],
     ['⑮ 分片非法 {v:2,def:{},u:{pmc:[]}}', { v: 2, def: {}, u: { pmc: [] } }],
+    /* ⑯⑰⑱：build .152 补丁（逐分片净化）新增的对拍面 */
+    ["⑯ 混合分片（非法删 + 合法留）{v:2,def:{},u:{pmc:'x',chejian:<合法>}}",
+      { v: 2, def: {}, u: { pmc: 'x', chejian: { m: { order: [], widths: {} } } } }],
+    ['⑰ 合法空对象分片 {v:2,def:{},u:{pmc:{}}}（**不得**被净化误删）',
+      { v: 2, def: {}, u: { pmc: {} } }],
+    ['⑱ 合法分片 {v:2,def:{},u:{pmc:{m:{order:[],widths:{}}}}}',
+      { v: 2, def: {}, u: { pmc: { m: { order: [], widths: {} } } } }],
   ];
 
   const app = mkApp();
@@ -1090,140 +1138,216 @@ test('F1 前后端归一口径一致性矩阵：15 类输入前后端产出必�
     assert.strictEqual(app.run("typeof layoutOf('probe')==='object'&&layoutOf('probe')!==null"), true,
       label + ' layoutOf 必须返回对象');
   });
+
+  /* ---------- ⑲「delete vs 落 `{}`」的回退语义对照（用户可见差别，必须钉住）----------
+     补丁要求非法分片**删键**而非归 `{}`：`{}` 本身是合法布局映射，会被当成「该账号自己的空布局」
+     ⇒ 看到**系统默认列序**；删键 = 「无有效自定义布局」⇒ 回退 **def 初始布局**。二者用户可见结果不同。 */
+  const DEFC = { alpha: { order: ['a1'], widths: {} } };
+  const probe = (u) => {
+    app.run('applyServerLayout(' + JSON.stringify({ v: 2, def: host(DEFC), u: u }) + ')');
+    return jsonOf(app, 'tblLayout');
+  };
+  assert.strictEqual(probe({ pmc: 'x' }), JSON.stringify(DEFC), '非法分片(字符串) → 回退 def（**不是** {}）');
+  assert.strictEqual(probe({ pmc: [] }), JSON.stringify(DEFC), '非法分片(数组) → 回退 def');
+  assert.strictEqual(probe({}), JSON.stringify(DEFC), '无本人分片 → 回退 def');
+  assert.strictEqual(probe({ pmc: {} }), '{}', '合法**空对象**分片 → 取本人（**不**回退 def）');
+  assert.strictEqual(probe({ pmc: { m: { order: null, widths: {} } } }), '{"m":{"order":null,"widths":{}}}',
+    '合法分片 → 取本人');
+  assert.notStrictEqual(probe({ pmc: [] }), '{}',
+    '钉死差别：非法分片的结果**不得**等于「合法空布局」的结果（否则用户会从初始布局掉到默认列序）');
   app.dispose();
 });
 
 /* ---------- F2：畸形 v2 经 /api/save 灌入（真实 HTTP 可达攻击面）----------
    /api/save {key:'tblLayout'} 刻意放行任意值 → 这是**唯一**能把任意形状灌进全局布局的通道。
-   验证两端各自的兜底：① 服务端归一后是否能给出合法形状？② 前端内存态是否会被污染成数组/字符串？ */
-test("F2 攻击面：向 /api/save 直接写畸形 v2 {v:2,def:[],u:{pmc:'x'}} —— 两端兜底逐项核对", async () => {
+   build .152 补丁后服务端 `normalizeLayout` **逐分片净化**（非法分片用 delete 删键）。
+   本用例断言**新契约**：非法分片键被删除、**合法分片与空对象 `{}` 不得被误删**、前端内存态恒合法。
+   📌 本文件早先版本此处断言的是「服务端未按账号净化」（把缺陷当作正确行为），缺陷修复后已按新契约改写。 */
+test('F2 攻击面：畸形 v2 经 /api/save → 服务端按分片净化（非法删键；合法与 `{}` 保留）', async () => {
   const pmc = await live.login('pmc');
   const admin = await live.login('admin');
 
-  const payload = { v: 2, def: [], u: { pmc: 'x' } };
-  const r = await live.api('POST', '/api/save', pmc, { key: 'tblLayout', value: payload });
-  assert.strictEqual(r.status, 200, '/api/save 上 tblLayout 放行（可达前提）');
+  /* ---------- 第 1 段：非法分片必须被**服务端**删键（本次补丁的目标） ---------- */
+  const r1 = await live.api('POST', '/api/save', pmc, { key: 'tblLayout', value: { v: 2, def: [], u: { pmc: 'x' } } });
+  assert.strictEqual(r1.status, 200, '/api/save 上 tblLayout 放行（可达前提；零回归不变）');
 
-  const d = await live.api('GET', '/api/data', admin);
-  const t = d.body.data.tblLayout;
-  assert.strictEqual(t.v, 2);
-  /* ① 服务端归一：顶层 def/u 被净化（工程师第三轮加固生效） */
-  assert.strictEqual(Array.isArray(t.def), false, '① def 被服务端净化为非数组');
-  assert.deepStrictEqual(t.def, {}, '① def 归空');
-  /* ① 但 **u[账号]（分片）层未被服务端净化** —— 服务端只校验顶层 def/u，不校验每个分片 */
-  assert.strictEqual(t.u.pmc, 'x', "① 分片 u.pmc 仍是字符串 'x'（服务端未按账号净化 → 口径不完整）");
+  const t1 = (await live.api('GET', '/api/data', admin)).body.data.tblLayout;
+  assert.strictEqual(t1.v, 2);
+  assert.strictEqual(Array.isArray(t1.def), false, '① 顶层 def 被服务端净化为非数组');
+  assert.deepStrictEqual(t1.def, {}, '① def 归空');
+  assert.ok(!('pmc' in t1.u), '① 服务端已按账号分片净化：非法分片键 u.pmc 被**删除**');
+  assert.strictEqual(t1.u.pmc, undefined, '① delete 语义：u.pmc 必须为 undefined（而非归 `{}`）');
+  assert.strictEqual(Array.isArray(t1.u), false, '① u 本身仍是非数组对象');
 
-  /* ② 前端兜底：即便如此，内存态也不得变成数组/字符串（applyServerLayout 的 isLayoutMap(mine) 守卫） */
+  /* ---------- 第 2 段：净化**不得误伤** —— 合法分片逐字节保留、空对象 `{}` 保留 ---------- */
+  const legal = { order_frame: { order: ['a'], widths: { a: 120 } } };
+  const r2 = await live.api('POST', '/api/save', pmc, {
+    key: 'tblLayout',
+    value: { v: 2, def: {}, u: { pmc: host(legal), chejian: {}, admin: 'x' } },
+  });
+  assert.strictEqual(r2.status, 200);
+  const t2 = (await live.api('GET', '/api/data', admin)).body.data.tblLayout;
+  assert.deepStrictEqual(t2.u.pmc, legal, '② 合法分片必须**逐字节保留**（防过度净化）');
+  assert.ok('chejian' in t2.u,
+    '② 合法**空对象**分片 `{}` 必须保留 —— 它是合法布局映射，误删会把该账号从「自己的空布局」推去「回退 def」，用户可见语义改变');
+  assert.deepStrictEqual(t2.u.chejian, {}, '② 空对象分片内容仍为 {}');
+  assert.ok(!('admin' in t2.u), '② 非法分片 admin 被删除（与合法分片并存时逐键判断）');
+
+  /* ---------- 第 3 段：前端内存态 —— 非法分片回退 def；合法分片取本人 ---------- */
+  const DEFC = { alpha: { order: ['a1'], widths: {} } };
+  const payload = { v: 2, def: host(DEFC), u: { pmc: 'x', chejian: {} } };
   const app = mkApp();
-  app.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
-  app.run('applyServerLayout(' + JSON.stringify(t) + ')');
-  assert.strictEqual(app.run('Array.isArray(tblLayout)'), false, '② 内存态不得为数组');
-  assert.strictEqual(app.run("typeof tblLayout==='string'"), false, "② 内存态不得为字符串（分片兜底必须生效）");
-  assert.strictEqual(jsonOf(app, 'tblLayout'), '{}', '② 非法分片被归空 → 内存态为合法空映射');
+  app.setGlobals({ currentUser: { username: 'admin', role: 'admin', perms: {} } });
+  app.run('applyServerLayout(' + JSON.stringify(payload) + ')');
+  assert.strictEqual(app.run('Array.isArray(tblLayout)'), false, '③ 内存态不得为数组');
+  assert.strictEqual(app.run("typeof tblLayout==='string'"), false, '③ 内存态不得为字符串');
+  assert.strictEqual(jsonOf(app, 'tblLayout'), JSON.stringify(DEFC), '③ admin 无有效分片 → 回退 def 初始布局');
+  app.setGlobals({ currentUser: { username: 'chejian', role: 'staff', perms: {} } });
+  app.run('applyServerLayout(' + JSON.stringify(payload) + ')');
+  assert.strictEqual(jsonOf(app, 'tblLayout'), '{}',
+    '③ chejian 的合法**空**分片 → 取本人 `{}`（**不**回退 def）—— 与非法分片的可见差别');
   app.run("layoutOf('delivery')");
   assert.strictEqual(app.run("typeof layoutOf('delivery')==='object'&&layoutOf('delivery')!==null"), true,
-    '② layoutOf 必须仍能给出可用记录（不在非对象上挂属性）');
+    '③ layoutOf 必须仍能给出可用记录（不在非对象上挂属性）');
   app.dispose();
 
-  /* 清理：把该账号分片改回合法值，避免影响后续用例 */
+  /* 清理：把分片改回合法值，避免影响后续用例 */
   await live.api('POST', '/api/layout', pmc, { layout: { m: { order: ['ok'], widths: {} } } });
 });
 
-/* ---------- F3：两处「超工单加固」是否真的必要（变异注入判定）----------
-   做法：把加固**就地退回**（每一步都断言替换真的生效，否则用例自身失败），
-        再看失败模式是否真的复现。若复现 ⇒ 必要；若不复现 ⇒ 冗余。 */
-test('F3 加固必要性判定（变异注入）：N1 前端分片守卫必要 / N2 后端快通道仅保形状 / N3 两者缺一不可', async () => {
-  /* --- 变异体定义（每条都校验「替换确实生效」，防退化） --- */
-  const revertFrontSliceGuard = (main) => {
-    const from = '\n  if(!isLayoutMap(mine))mine={};';
-    assert.ok(main.indexOf(from) >= 0, '变异注入失败：applyServerLayout 的 mine 守卫现状不符，请同步本用例');
-    return main.replace(from, '');
-  };
-  const revertFrontNorm = (main) => {
-    const from = "function normLayoutServer(v){\n  if(v&&typeof v==='object'&&v.v===2){\n    if(!isLayoutMap(v.def))v.def={};\n    if(!isLayoutMap(v.u))v.u={};\n    return v;\n  }\n  return {v:2,def:isLayoutMap(v)?v:{},u:{}};\n}";
-    const to = "function normLayoutServer(v){\n  if(v&&typeof v==='object'&&v.v===2)return v;\n  return {v:2,def:(v&&typeof v==='object')?v:{},u:{}};\n}";
-    assert.ok(main.indexOf(from) >= 0, '变异注入失败：normLayoutServer 现状不符，请同步本用例');
-    return main.replace(from, to);
-  };
-  const revertBackend = (text) => {
-    const from = "function normalizeLayout(v) {\n  if (v && typeof v === 'object' && v.v === 2) {\n    if (!isLayoutMap(v.def)) v.def = {};\n    if (!isLayoutMap(v.u)) v.u = {};\n    return v;\n  }\n  return { v: 2, def: isLayoutMap(v) ? v : {}, u: {} };\n}";
-    const to = "function normalizeLayout(v) {\n  if (v && typeof v === 'object' && v.v === 2) return v;\n  return { v: 2, def: (v && typeof v === 'object') ? v : {}, u: {} };\n}";
-    assert.ok(text.indexOf(from) >= 0, '变异注入失败：normalizeLayout 现状不符，请同步本用例');
-    return text.replace(from, to);
-  };
+/* ============================================================
+   F3 · 加固必要性判定（变异注入）—— **新旧两版结论并列**
+   ------------------------------------------------------------
+   设计在 .152 补丁（后端逐分片 delete + 前端镜像）前后发生变化，旧结论的部分前提已失效。
+   两版并列如下，并各自用变异注入验证（**不把旧结论套到新设计上**）：
 
-  /* --- N1：只退回前端「分片守卫」→ 非法分片能否真正到达内存态？ --- */
-  const appN1mut = createApp({ installRecorder: false, transformMain: revertFrontSliceGuard });
-  appN1mut.setGlobal('renderContent', function () {});
-  appN1mut.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
-  appN1mut.run('applyServerLayout(' + JSON.stringify({ v: 2, def: {}, u: { pmc: 'x' } }) + ')');
-  assert.strictEqual(appN1mut.run("typeof tblLayout==='string'"), true,
-    'N1 退回守卫后：内存态真的变成了字符串 ⇒ 前端分片守卫是**必要**的（load-bearing）');
-  appN1mut.run("layoutOf('d')");
-  assert.strictEqual(appN1mut.run("layoutOf('d')===undefined"), true,
-    'N1 佐证危害：字符串上挂属性静默失败 → layoutOf 返回 undefined（下游取值即 TypeError）');
-  appN1mut.dispose();
-  /* 对照：未退回时同一输入是安全的 */
-  const appN1 = mkApp();
-  appN1.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
-  appN1.run('applyServerLayout(' + JSON.stringify({ v: 2, def: {}, u: { pmc: 'x' } }) + ')');
-  assert.strictEqual(jsonOf(appN1, 'tblLayout'), '{}', '对照组：现状（带守卫）同一输入安全 → 守卫确实在起作用');
-  appN1.dispose();
+   旧结论（补丁前源码 = 修订 findRevLacking('index.html', A_FE_SLICE)）
+     · 前端 `applyServerLayout` 的 `if(!isLayoutMap(mine))mine={};` 是**唯一防线**：
+       单独退回它即可复现「内存态变字符串、layoutOf 返回 undefined」。
+     · 当时为真 —— 由 N1_old 在**旧修订**上复现，故不是"事后诸葛"。
 
-  /* --- N2：只退回后端快通道净化（保持硬化前端）→ 服务端会吐出非法形状，但前端仍安全 --- */
-  const mutServer = path.join(TMP, 'nohard-server.js');
-  fs.writeFileSync(mutServer, revertBackend(fs.readFileSync(SERVER_JS, 'utf8')));
-  const n2Data = path.join(TMP, 'n2-data.json');
-  const n2Users = path.join(TMP, 'n2-users.json');
-  fs.writeFileSync(n2Users, JSON.stringify(SEED_USERS));
-  const base = {};
-  DEFAULT_KEYS.forEach(k => { base[k] = JSON.parse(JSON.stringify(srv.DEFAULT_DATA[k])); });
-  base.tblLayout = { v: 2, def: { order_frame: { order: ['a'], widths: {} } }, u: {} };
-  fs.writeFileSync(n2Data, JSON.stringify(base));
+   新结论（当前源码）
+     · 后端 `normalizeLayout` 逐分片 delete 承担**主要防线**（同时保证 /api/data 形状纯度）；
+     · 前端两层（`normLayoutServer` 删键 + `applyServerLayout` 非法分片回退 def）**互为冗余**
+       ⇒ 单独退回任一层**不再复现**（N1b_new / N1c_new）；
+     · 「整套」仍必要：全退才复现非法内存态（N3_new）。
 
-  const srvN2 = await startServer(mutServer, n2Data, n2Users);
+   变异注入锚点统一走 injectOnce()：**命中必须恰 1 次 + 替换必须确实生效**，否则本用例
+   大声失败并要求同步锚点（防止守卫静默退化为恒真 —— 本文件 C1/C4/D7 曾因基线选取不当
+   退化为恒真，同一失效模式不重复发生）。
+   ============================================================ */
+test('F3 加固必要性（新旧并列）：N1_old 旧版单层即复现 / N1b、N1c 新版单层已冗余 / N2 后端保形状 / N3 全退复现', async () => {
+  const BAD = { v: 2, def: { alpha: 1 }, u: { pmc: 'x' } };
+
+  /* ---------- N1_old：在**补丁前修订**上退回当时唯一的守卫 → 复现（证明旧结论当时为真）---------- */
+  const oldRev = findRevLacking('index.html', A_FE_SLICE);
+  assert.ok(oldRev, '未能定位「无前端逐分片净化」的修订（防对消：不可用 HEAD 代替）');
+  const oldHtml = gitShowAt(oldRev, 'index.html');
+  assert.strictEqual(oldHtml.indexOf(A_FE_SLICE), -1, '前提：该旧修订不含前端逐分片净化');
+  assert.ok(oldHtml.indexOf(A_OLD_FE_GUARD) >= 0, '前提：该旧修订含旧版 mine 守卫');
+  assert.strictEqual(INDEX_SRC.indexOf(A_OLD_FE_GUARD), -1, '前提：当前源码已无旧版 mine 守卫（两侧必须是不同修订）');
+
+  const appOld = createApp({
+    installRecorder: false, indexHtml: oldHtml,
+    transformMain: (m) => injectOnce(m, A_OLD_FE_GUARD, '', '旧版 applyServerLayout mine 守卫'),
+  });
+  appOld.setGlobal('renderContent', function () {});
+  appOld.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  appOld.run('applyServerLayout(' + JSON.stringify(BAD) + ')');
+  assert.strictEqual(appOld.run("typeof tblLayout==='string'"), true,
+    'N1_old：旧修订上退回该守卫 → 内存态真的变成字符串 ⇒ **旧结论（唯一防线）当时为真**');
+  assert.strictEqual(appOld.run("layoutOf('d')===undefined"), true,
+    'N1_old 佐证危害：字符串上挂属性静默失败 → layoutOf 返回 undefined（下游取值即 TypeError）');
+  appOld.dispose();
+
+  /* ---------- N1b_new：只退前端「回退 def」逻辑（保留后端 + 前端删键）→ 不再复现 ---------- */
+  const appN1b = createApp({ installRecorder: false, transformMain: revertFrontPick });
+  appN1b.setGlobal('renderContent', function () {});
+  appN1b.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  appN1b.run('applyServerLayout(' + JSON.stringify(BAD) + ')');
+  assert.strictEqual(appN1b.run("typeof tblLayout==='string'"), false,
+    'N1b_new：只退「回退 def」逻辑 → 不再复现（前端删键已把非法分片摘掉）⇒ 该层单独已冗余');
+  assert.strictEqual(jsonOf(appN1b, 'tblLayout'), JSON.stringify(BAD.def),
+    'N1b_new：结果回退到 def（合法基线，不崩）');
+  appN1b.dispose();
+
+  /* ---------- N1c_new：只退前端「逐分片删键」→ 由「回退 def」兜住，不再复现 ---------- */
+  const appN1c = createApp({ installRecorder: false, transformMain: revertFrontNormSlice });
+  appN1c.setGlobal('renderContent', function () {});
+  appN1c.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  appN1c.run('applyServerLayout(' + JSON.stringify(BAD) + ')');
+  assert.strictEqual(appN1c.run("typeof tblLayout==='string'"), false,
+    'N1c_new：只退前端删键 → 「回退 def」兜住，不再复现 ⇒ 两层互为冗余（纵深防御）');
+  appN1c.dispose();
+
+  /* ---------- N1d_new：前端**两层同时**退回 → 复现（前端的防护集合仍是必要的）---------- */
+  const appN1d = createApp({ installRecorder: false, transformMain: revertFrontBoth });
+  appN1d.setGlobal('renderContent', function () {});
+  appN1d.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  appN1d.run('applyServerLayout(' + JSON.stringify(BAD) + ')');
+  assert.strictEqual(appN1d.run("typeof tblLayout==='string'"), true,
+    'N1d_new：前端两层同退 → 非法内存态复现 ⇒ 前端这对防护作为**集合**仍是必要的');
+  appN1d.dispose();
+
+  /* ---------- N2_new / N3_new：后端逐分片 delete 的作用（真实子进程）---------- */
+  const mutServer = path.join(TMP, 'no-be-slice-server.js');
+  fs.writeFileSync(mutServer, revertBackendSlice(fs.readFileSync(SERVER_JS, 'utf8')));
+  const beData = path.join(TMP, 'be-data.json');
+  const beUsers = path.join(TMP, 'be-users.json');
+  fs.writeFileSync(beUsers, JSON.stringify(SEED_USERS));
+  const seed = {};
+  DEFAULT_KEYS.forEach(k => { seed[k] = JSON.parse(JSON.stringify(srv.DEFAULT_DATA[k])); });
+  seed.tblLayout = { v: 2, def: {}, u: {} };
+  fs.writeFileSync(beData, JSON.stringify(seed));
+
+  const mut = await startServer(mutServer, beData, beUsers);
   try {
-    const tok = await srvN2.login('pmc');
-    await srvN2.api('POST', '/api/save', tok, { key: 'tblLayout', value: { v: 2, def: [], u: {} } });
-    const dd = await srvN2.api('GET', '/api/data', tok);
-    assert.strictEqual(Array.isArray(dd.body.data.tblLayout.def), true,
-      'N2 退回后端加固后：/api/data 真的会吐出 `def: []`（非法形状）⇒ 后端加固对**形状纯度**是必要的');
-    /* 但前端兜底仍把内存态拉回合法（硬化后的前端独立生效） */
-    const appN2 = mkApp();
-    appN2.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
-    appN2.run('applyServerLayout(' + JSON.stringify(host(dd.body.data.tblLayout)) + ')');
-    assert.strictEqual(appN2.run('Array.isArray(tblLayout)'), false,
-      'N2 但硬化前端独立兜底 → 内存态仍合法 ⇒ 后端加固对**不崩**并非唯一防线（属纵深防御）');
-    appN2.dispose();
-  } finally {
-    await srvN2.stop();
-  }
+    const tok = await mut.login('pmc');
+    await mut.api('POST', '/api/save', tok, { key: 'tblLayout', value: { v: 2, def: {}, u: { pmc: 'x' } } });
+    const t = (await mut.api('GET', '/api/data', tok)).body.data.tblLayout;
+    assert.strictEqual(t.u.pmc, 'x',
+      'N2_new：退掉后端逐分片 delete → /api/data **真的**吐出非法分片 u.pmc="x" ⇒ 该层对**形状纯度**必要');
 
-  /* --- N3：两端同时退回 → 非法内存态必然复现（证明这对加固是必要的） --- */
-  const n3Data = path.join(TMP, 'n3-data.json');
-  fs.writeFileSync(n3Data, JSON.stringify(base));
-  const srvN3 = await startServer(mutServer, n3Data, n2Users);
-  try {
-    const tok = await srvN3.login('pmc');
-    await srvN3.api('POST', '/api/save', tok, { key: 'tblLayout', value: [] });
-    const dd = await srvN3.api('GET', '/api/data', tok);
-    assert.deepStrictEqual(host(dd.body.data.tblLayout), { v: 2, def: [], u: {} },
-      'N3 两端退回后：/api/data 吐出 `def: []`');
+    const appSafe = mkApp();
+    appSafe.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+    appSafe.run('applyServerLayout(' + JSON.stringify(host(t)) + ')');
+    assert.strictEqual(appSafe.run("typeof tblLayout==='string'"), false,
+      'N2_new：硬化前端独立兜底 → 内存态仍合法 ⇒ 后端该层对「不崩」并非唯一防线（互为纵深）');
+    appSafe.dispose();
 
-    const appN3 = createApp({
-      installRecorder: false,
-      transformMain: (m) => revertFrontSliceGuard(revertFrontNorm(m)),
-    });
-    appN3.setGlobal('renderContent', function () {});
-    appN3.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
-    appN3.run('applyServerLayout(' + JSON.stringify(host(dd.body.data.tblLayout)) + ')');
-    assert.strictEqual(appN3.run('Array.isArray(tblLayout)'), true,
-      'N3 非法内存态（数组）真的复现 ⇒ 「后端快通道 + 前端分片兜底」这对加固是**必要**的');
-    appN3.run("layoutOf('d')");
-    assert.strictEqual(appN3.run("Object.prototype.hasOwnProperty.call(tblLayout,'d')"), true,
-      'N3 佐证危害：模块键被挂到**数组实例**上（内存态被污染，非崩溃但语义非法）');
-    appN3.dispose();
+    const appBad = createApp({ installRecorder: false, transformMain: revertFrontBoth });
+    appBad.setGlobal('renderContent', function () {});
+    appBad.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+    appBad.run('applyServerLayout(' + JSON.stringify(host(t)) + ')');
+    assert.strictEqual(appBad.run("typeof tblLayout==='string'"), true,
+      'N3_new：后端 + 前端两层**全退** → 非法内存态复现 ⇒ **整套加固是必要的**');
+    appBad.run("layoutOf('d')");
+    assert.strictEqual(appBad.run("layoutOf('d')===undefined"), true, 'N3_new 佐证危害同 N1_old');
+    appBad.dispose();
   } finally {
-    await srvN3.stop();
+    await mut.stop();
   }
+});
+
+/* ---------- F4：锚定守卫自检（证明 injectOnce 本身不恒真）----------
+   主理人裁定的两条硬约束若自身失效，整套变异注入就会静默变成恒真。
+   这里**反向**验证：未命中 / 多命中 / 替换未生效 三种情况都必须**报错**。 */
+test('F4 锚定守卫自检：injectOnce 对「未命中/多命中/替换未生效」必须报错，且现用锚点各命中恰 1 次', () => {
+  assert.throws(() => injectOnce('abc', 'NOT_THERE', '', '未命中'), /锚点未命中，请同步本用例/,
+    '命中 0 次必须报错（不得静默跳过）');
+  assert.throws(() => injectOnce('xAyAz', 'A', '', '多命中'), /锚点不唯一，无法安全注入/,
+    '命中 ≥2 次必须报错（不得取首个）');
+  assert.throws(() => injectOnce('abc', 'abc', 'abc', '替换未生效'), /变异注入未生效/,
+    '替换后字符串未变化必须报错（防"以为注入成功、其实空转"）');
+  assert.strictEqual(injectOnce('x A y', 'A', 'B', '正常'), 'x B y', '恰 1 命中且确实变化 → 正常替换');
+
+  /* 现用锚点必须各命中恰 1 次（否则本条自身也会报错，属有意设计） */
+  const serverSrc = fs.readFileSync(SERVER_JS, 'utf8');
+  [['index.html', INDEX_SRC, A_FE_SLICE], ['index.html', INDEX_SRC, A_FE_PICK],
+    ['server/server.js', serverSrc, A_BE_SLICE]].forEach(p => {
+    assert.strictEqual(p[1].split(p[2]).length - 1, 1, p[0] + ' 锚点必须命中恰 1 次');
+  });
+  /* 防对消：旧版守卫锚点不得出现在当前源码（它只应存在于旧修订上） */
+  assert.strictEqual(INDEX_SRC.split(A_OLD_FE_GUARD).length - 1, 0,
+    'A_OLD_FE_GUARD 不应出现在当前 index.html（否则 N1_old 会与当前版本对消）');
 });

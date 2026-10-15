@@ -1426,25 +1426,32 @@ var tblLayout={};   // tblLayout[模块]={order:[key...],widths:{key:px}}（恒�
 var layoutDef={};   /* 服务器 def（初始布局）的内存镜像，供「重置我的列布局」回退使用 */
 /* 合法「布局映射」判定（与 server 端 isLayoutMap 同口径）：对象且**非数组**；空对象 `{}` 合法（＝尚无已存布局） */
 function isLayoutMap(v){return !!(v&&typeof v==='object'&&!Array.isArray(v));}
-/* 服务端形状归一（幂等，与 server 端 normalizeLayout 同口径）：
-   · v2 → 原样返回；但 def / u 非法（数组等）时就地归空自愈（/api/save 仍放行任意值，防非法形状进内存态）
+/* 服务端形状归一（幂等，与 server 端 normalizeLayout **逐分片同口径**）：
+   · v2 → 原样返回；但顶层 def / u 非法（数组等）时就地净化，且 **u 的每个分片非法时用 delete 删该键**
+     （不可归 `{}` —— `{}` 是合法布局映射，会被当成「该账号自己的空布局」⇒ 系统默认列序；
+      删除＝「无有效自定义布局」⇒ 回退 def 初始布局。二者用户可见结果不同）
    · 否则（v1 扁平 / 空 / 标量 / 数组）→ 包成 v2，原内容逐字进 def（非法者归空）、u 置空 */
 function normLayoutServer(v){
   if(v&&typeof v==='object'&&v.v===2){
     if(!isLayoutMap(v.def))v.def={};
-    if(!isLayoutMap(v.u))v.u={};
+    if(isLayoutMap(v.u)){
+      Object.keys(v.u).forEach(function(k){if(!isLayoutMap(v.u[k]))delete v.u[k];});
+    }else{
+      v.u={};
+    }
     return v;
   }
   return {v:2,def:isLayoutMap(v)?v:{},u:{}};
 }
-/* 把服务端 tblLayout 落到内存：取本人分片（u[currentUser.username]）→ 缺则回退 def → **深拷贝**后赋给 tblLayout。
+/* 把服务端 tblLayout 落到内存：取本人分片（u[currentUser.username]）→ **非法或缺失一律视同「不存在」⇒ 回退 def** → **深拷贝**后赋给 tblLayout。
    ⚠ 必须深拷贝：绝不能与 def 本体共享引用，否则拖列/调宽会就地污染「所有人的初始布局」。
-   兜底：本人分片被伪造成数组/标量时归空，不留非法内存态（否则 layoutOf 会在数组实例上挂属性）。 */
+   ⚠ 非法分片**不得**落到空布局 `{}` —— `{}` 是「该账号自己的（空）布局」⇒ 看到系统默认列序，
+     与「无分片 ⇒ 回退初始布局 def」的用户可见结果不同，故非法分片必须与「缺失」同口径走 def。 */
 function applyServerLayout(raw){
   var r=normLayoutServer(raw||{});
   layoutDef=r.def||{};
-  var mine=(r.u&&currentUser&&r.u[currentUser.username])||r.def||{};
-  if(!isLayoutMap(mine))mine={};
+  var raw=(r.u&&currentUser)?r.u[currentUser.username]:undefined;
+  var mine=isLayoutMap(raw)?raw:(isLayoutMap(r.def)?r.def:{});
   tblLayout=JSON.parse(JSON.stringify(mine));
 }
 function layoutOf(m){if(!tblLayout[m])tblLayout[m]={order:null,widths:{}};return tblLayout[m];}

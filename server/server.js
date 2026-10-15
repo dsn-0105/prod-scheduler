@@ -462,15 +462,23 @@ function isLayoutMap(v) {
 }
 
 /* 形状归一（幂等）：
-   · v2 → **原样返回同一引用**（幂等最强形态）；但 def / u 非法（数组等）时**就地归空自愈** ——
-     /api/save 对 tblLayout 仍放行任意值（用户拍板不防旧标签页），故 v2 也可能被伪造成非法形状，
-     这里守住「给前端的 def/u 必为合法映射」。
+   · v2 → **原样返回同一引用**（幂等最强形态）；但顶层 `def` / `u` 及 **`u` 的每个分片**非法时
+     **就地净化** —— /api/save 对 tblLayout 仍放行任意值（用户拍板不防旧标签页），故 v2 也可能
+     被伪造成非法形状，这里守住对外契约：「`def` 必为合法映射；`u` 的每个分片也必为合法映射」。
    · 否则（v1 扁平 / 空 / 标量 / 数组）→ 包成 v2，原内容**逐字**进 def（非法者归空）、u 置空。
    幂等等价：normalizeLayout(normalizeLayout(x)) 与 normalizeLayout(x) 深度相等。 */
 function normalizeLayout(v) {
   if (v && typeof v === 'object' && v.v === 2) {
     if (!isLayoutMap(v.def)) v.def = {};
-    if (!isLayoutMap(v.u)) v.u = {};
+    if (isLayoutMap(v.u)) {
+      /* 逐分片净化：非法分片**用 delete 删除该键**，不可归 `{}` ——
+         `{}` 本身是「合法布局映射」，归空会被前端当成「该账号自己的（空）布局」⇒ 该账号看到的是
+         **系统默认列序**；删除则表示「无有效自定义布局」⇒ 前端正确**回退到 def（初始布局）**。
+         二者用户可见结果不同，故必须 delete。 */
+      Object.keys(v.u).forEach(function (k) { if (!isLayoutMap(v.u[k])) delete v.u[k]; });
+    } else {
+      v.u = {};
+    }
     return v;
   }
   return { v: 2, def: isLayoutMap(v) ? v : {}, u: {} };
