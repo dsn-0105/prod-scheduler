@@ -1351,3 +1351,44 @@ test('F4 锚定守卫自检：injectOnce 对「未命中/多命中/替换未生�
   assert.strictEqual(INDEX_SRC.split(A_OLD_FE_GUARD).length - 1, 0,
     'A_OLD_FE_GUARD 不应出现在当前 index.html（否则 N1_old 会与当前版本对消）');
 });
+
+/* ---------- F5：把「前端两层」的必要性固化为**常驻用例** ----------
+   【前提】（必须与文档成对；本用例就是把这句话变成"删不掉"的守卫）
+     后端逐分片 `delete` 生效时，前端两层互为冗余（纵深防御）；
+     **当后端未净化（旧后端 / 部署顺序倒置 / 后端回归）时，前端两层是唯一防线，两者合起来仍不可移除。**
+
+   为什么必须常驻：若「前端两层已冗余」只写在文档里，将来有人据此把这两层当**死代码**删掉，
+   **不会有任何测试拦住** —— 这正是本项目反复出现的「守卫静默失效」模式（文档与测试必须成对）。
+
+   载荷 `{v:2,def:{},u:{pmc:'x'}}` 就是**补丁前后端**经 /api/data 真实吐出的形状：
+   补丁前后端只净化顶层 `def`/`u`、不逐分片 `delete`（该事实已由真实子进程对修订 `736ce09`
+   的 server.js 实测确认）。此处**直接以该形状喂前端**，使本用例不依赖任何历史修订
+   （无 rebase 脆性、无需固定哈希、不可能解析失败），只钉住真正需要常驻的不变量：**前端契约**。 */
+test('F5 旧后端/未净化载荷：前端两层是唯一防线 —— ① 未净化载荷喂前端必须安全 ② 两层同退才复现（禁当死代码删除）', () => {
+  const RAW = { v: 2, def: {}, u: { pmc: 'x' } };
+
+  /* ① 正向（常驻核心）：未净化载荷 ⇒ 内存态合法、layoutOf 可用 */
+  const app = mkApp();
+  app.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  app.run('applyServerLayout(' + JSON.stringify(RAW) + ')');
+  assert.strictEqual(app.run('Array.isArray(tblLayout)'), false, '① 内存态不得为数组');
+  assert.strictEqual(app.run("typeof tblLayout==='string'"), false, '① 内存态不得为字符串');
+  assert.strictEqual(app.run("typeof tblLayout==='object'&&tblLayout!==null"), true, '① 内存态必须是对象');
+  assert.strictEqual(jsonOf(app, 'tblLayout'), '{}', '① 非法分片按「不存在」处理 → 内存态为合法空映射');
+  app.run("layoutOf('delivery')");
+  assert.strictEqual(app.run("typeof layoutOf('delivery')==='object'&&layoutOf('delivery')!==null"), true,
+    '① layoutOf 必须仍可用（不在非对象上挂属性）—— 这条就是「前端两层不可移除」的守卫');
+  app.dispose();
+
+  /* ② 反证：前端两层同退 ⇒ 复现非法态（证明 ① 不是恒真、两层确实在起作用） */
+  const bad = createApp({ installRecorder: false, transformMain: revertFrontBoth });
+  bad.setGlobal('renderContent', function () {});
+  bad.setGlobals({ currentUser: { username: 'pmc', role: 'staff', perms: {} } });
+  bad.run('applyServerLayout(' + JSON.stringify(RAW) + ')');
+  assert.strictEqual(bad.run("typeof tblLayout==='string'"), true,
+    '② 前端两层同退 ⇒ 非法内存态复现；后端未净化时这两层就是唯一防线，故作为**集合**不可移除');
+  bad.run("layoutOf('d')");
+  assert.strictEqual(bad.run("layoutOf('d')===undefined"), true,
+    '② 佐证危害：字符串上挂属性静默失败 → layoutOf 返回 undefined');
+  bad.dispose();
+});
