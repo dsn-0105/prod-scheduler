@@ -314,14 +314,16 @@ entities:
     permission_form: null（系统表）
 
   - id: tblLayout
-    name: 表格列布局
+    name: 表格列布局（.152 起按账号分片）
     kind: fact
     storage_key: tblLayout
     container: object
+    shape: '{ v:2, def:{模块:{order,widths}}, u:{用户名:{模块:{order,widths}}} }（v2；旧 v1 扁平由 normalizeLayout 幂等归一，原内容逐字进 def）'
     registered: [DEFAULT_DATA, SYSTEM_KEYS]
-    writers: [saveLayout（index.html:1168）]
-    readers: [applyTable, thCol]
+    writers: [saveLayout（index.html:1472）, resetTableLayout（index.html:1701）, resetAllTableLayout（index.html:1715）, handleLayout（server/server.js:473；POST /api/layout）]
+    readers: [applyTable, thCol, 'applyServerLayout（index.html:1434；取 u[当前用户名] 深拷贝，缺则回退 def）']
     permission_form: null（系统表）
+    note: '语义：def=全局初始布局（启动期一次性迁移，所有人共用）/ u[用户名]=该账号自己的扁平布局。.152 起 saveLayout 只写本人分片（POST /api/layout，不带 expectedRev ⇒ 无 409、互不覆盖）；/api/save 上 tblLayout 仍放行（D3 不动，用户拍板旧标签页整表覆盖不防）—— 正因该通道放行任意值，v2 形状也可能被伪造成 def/u 为数组，故 normalizeLayout（v2 快通道）与前端 applyServerLayout 均按 isLayoutMap 就地归空自愈。'
 
   - id: users
     name: 员工账号
@@ -641,12 +643,30 @@ commands:
     note: '内部独立 save(''logs'')，不在调用方事务内'
 
   - id: layout.save
-    name: 保存表格列布局
-    entry: saveLayout()
-    status: 现状
-    writes: [tblLayout]
-    file: 'index.html:1168'
-    permission: null
+    name: 保存表格列布局（只写本人分片）
+    entry: 'saveLayout() → POST /api/layout {layout}（本地模式仍写 localStorage）'
+    status: 现状（.152 改）
+    writes: ['tblLayout.u[当前用户名]']
+    file: 'index.html:1472（postLayout index.html:1444；服务端 handleLayout server/server.js:473）'
+    permission: 登录用户（不带 expectedRev：分片天然无冲突，这正是消除拖列 409 的原因）
+    note: '同一账号多标签页仍会后写覆盖自己（分片内部无版本控制，符合设计）'
+
+  - id: layout.reset
+    name: 重置本人列布局
+    entry: 'resetTableLayout(m) → POST /api/layout {layout:<def 基线>}'
+    status: 现状（.152 新增语义）
+    writes: ['tblLayout.u[当前用户名]']
+    file: 'index.html:1701'
+    permission: 所有登录用户可用（.152 起移除 needSysAdmin 守卫；语义=重置我自己的，个人无害）
+    note: '回落「初始布局 def」（用户 Q2 拍板：现有那份作为所有人的初始值），而非系统默认列序；m 为空=整份、指定 m=仅该模块'
+
+  - id: layout.resetAll
+    name: 重置所有人的列布局
+    entry: "resetAllTableLayout() → POST /api/layout {action:'resetAll'}"
+    status: 现状（.152 新增）
+    writes: [tblLayout.u（整体清空；def 绝不动）]
+    file: 'index.html:1715（服务端 handleLayout 的 resetAll 分支 server/server.js:481）'
+    permission: '仅管理员（按钮 data-admin-only + 函数级 needSysAdmin() 守卫 + 二次 confirm；服务端 user.role==="admin" 否则 403）'
 
   - id: auth.login
     name: 登录
