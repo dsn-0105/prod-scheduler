@@ -32,7 +32,12 @@ const DEPRECATE_QUERY_TOKEN = process.env.DEPRECATE_QUERY_TOKEN === '1';
 const DEFAULT_DATA = {
   products: [], orders: [], deliveries: [], productionPlans: [], productionReports: [], processTemplates: [],
   logs: [], fields: null, meta: { seq: 0 },
-  fieldsAudit: 'audited', fieldsDraft: null, tblLayout: {},
+  /* 【build .152】tblLayout 形状升级：v1 扁平（tblLayout[模块]={order,widths}）→ v2 分片
+     { v:2, def:{模块:{order,widths}}, u:{用户名:{模块:{order,widths}}} }：
+       · def = 全局初始布局（迁移时把原 v1 扁平内容逐字搬入）
+       · u   = 按登录账号分片，u[username] 整体就是一份 v1 形状的扁平布局
+     旧值仍可被 normalizeLayout() 幂等归一，前端永远只看到 v2。 */
+  fieldsAudit: 'audited', fieldsDraft: null, tblLayout: { v: 2, def: {}, u: {} },
   transfers: []
 };
 
@@ -86,6 +91,19 @@ if (!data) { data = JSON.parse(JSON.stringify(DEFAULT_DATA)); saveJson(DATA_FILE
 let dataBootChanged = false;
 Object.keys(DEFAULT_DATA).forEach(k => { if (data[k] === undefined) { data[k] = DEFAULT_DATA[k]; dataBootChanged = true; } });
 if (dataBootChanged) saveJson(DATA_FILE, data);
+
+/* 【build .152】启动期对 tblLayout 归一并落盘（幂等）：
+   线上存量 data.json 的 tblLayout 是 v1 扁平（全公司共用一份）→ 逐字搬进 def 作为所有人的初始布局，
+   u 置空（迁移前后各账号看到的排版不变）。已是 v2 时 normalizeLayout 原样返回、无需二次落盘。 */
+(function migrateTblLayoutAtBoot() {
+  const before = JSON.stringify(data.tblLayout);
+  data.tblLayout = normalizeLayout(data.tblLayout);
+  if (JSON.stringify(data.tblLayout) !== before) {
+    saveJson(DATA_FILE, data);
+    console.log('[.152 迁移] data.tblLayout 已归一为 v2（原全局布局 → def 初始布局，u 置空）');
+  }
+})();
+
 let revs = {};
 Object.keys(data).forEach(k => revs[k] = 0);
 
@@ -423,6 +441,77 @@ function handleTx(data, revs, user, body, canWriteFn, saveJsonFn, defaultData) {
   /* ⑧ 成功 */
   return { code: 200, body: { ok: true, revs: newRevs } };
 }
+
+/* ============================================================
+   【build .152】列布局（tblLayout）按账号隔离
+   ------------------------------------------------------------
+   v2 形状：{ v:2, def:{模块:{order,widths}}, u:{用户名:{模块:{order,widths}}} }
+     · def = 全局初始布局（迁移时把原 v1 扁平内容逐字搬入，所有人共用）
+     · u   = 按登录账号的用户名分片；u[username] 整体即一份 v1 形状的扁平布局
+   设计动因：v1 全公司共用一份、并发拖列撞 /api/save 的 expectedRev 乐观锁报 409 且布局不落库。
+   本中心函数**不走 expectedRev**（个人偏好分片天然无冲突），故新增独立端点 /api/layout。
+   ============================================================ */
+
+/* 「合法布局映射」判定：必须是**对象且不是数组** —— 布局是「模块 → {order,widths}」的映射，
+   空对象 `{}` 合法（＝尚无任何已存布局），数组 / 标量 / null 一律非法。
+   ⚠ 与 handleLayout 内 `L.def` / `L.u` 的守卫**同口径**（都拒绝数组）：否则 `def: []` 会经前端
+     applyServerLayout 落到内存态 tblLayout 上，使 layoutOf() 在**数组实例**上挂属性；且
+     normalizeLayout 的快通道也会把非法形状原样放行，前后端口径不自洽。 */
+function isLayoutMap(v) {
+  return !!(v && typeof v === 'object' && !Array.isArray(v));
+}
+
+/* 形状归一（幂等）：
+   · v2 → **原样返回同一引用**（幂等最强形态）；但 def / u 非法（数组等）时**就地归空自愈** ——
+     /api/save 对 tblLayout 仍放行任意值（用户拍板不防旧标签页），故 v2 也可能被伪造成非法形状，
+     这里守住「给前端的 def/u 必为合法映射」。
+   · 否则（v1 扁平 / 空 / 标量 / 数组）→ 包成 v2，原内容**逐字**进 def（非法者归空）、u 置空。
+   幂等等价：normalizeLayout(normalizeLayout(x)) 与 normalizeLayout(x) 深度相等。 */
+function normalizeLayout(v) {
+  if (v && typeof v === 'object' && v.v === 2) {
+    if (!isLayoutMap(v.def)) v.def = {};
+    if (!isLayoutMap(v.u)) v.u = {};
+    return v;
+  }
+  return { v: 2, def: isLayoutMap(v) ? v : {}, u: {} };
+}
+
+/* ============================================================
+   POST /api/layout 的纯净核心（不触碰 res，便于单测注入）
+   handleLayout(data, revs, user, body, saveJsonFn) → { code, body }
+     · !user                       → 401
+     · body.action === 'resetAll'  → 仅 admin 可执行；语义 = data.tblLayout.u = {}
+                                     （只清所有人的个人分片，绝不动 def）
+     · body.action === 'reset'     → 删除自己的分片 delete data.tblLayout.u[user.username]
+     · 默认（保存本人分片）        → body.layout 必须是对象 → data.tblLayout.u[user.username] = body.layout
+   校验前置：400/403/401 一律**不触碰内存 data/revs、不落盘**（对齐 handleTx 的「一字不写」）。
+   saveJsonFn 由调用方闭包注入（生产传 () => saveJson(DATA_FILE, data)）。
+   ============================================================ */
+function handleLayout(data, revs, user, body, saveJsonFn) {
+  /* ① 鉴权（路由已先行拦截，此处兜底，保证核心函数自洽可测） */
+  if (!user) return { code: 401, body: { error: '未登录或登录已过期' } };
+  const action = body && body.action;
+  /* ② 校验（失败路径不改内存、不落盘） */
+  if (action === 'resetAll') {
+    if (user.role !== 'admin') return { code: 403, body: { error: '无权限' } };
+  } else if (action !== 'reset') {
+    const lv = body ? body.layout : undefined;
+    if (!lv || typeof lv !== 'object' || Array.isArray(lv)) return { code: 400, body: { error: '参数缺失' } };
+  }
+  /* ③ 应用（归一 → 写分片 → 单次落盘） */
+  const L = normalizeLayout(data.tblLayout);
+  data.tblLayout = L;
+  if (!L.def || typeof L.def !== 'object' || Array.isArray(L.def)) L.def = {};
+  if (!L.u || typeof L.u !== 'object' || Array.isArray(L.u)) L.u = {};
+  if (action === 'resetAll') L.u = {};
+  else if (action === 'reset') delete L.u[user.username];
+  else L.u[user.username] = body.layout;
+  saveJsonFn(DATA_FILE, data);
+  revs.tblLayout = (revs.tblLayout || 0) + 1;
+  /* ④ 成功 */
+  return { code: 200, body: { ok: true, rev: revs.tblLayout, layout: data.tblLayout } };
+}
+
 function publicUser(u) {
   /* 【安全 P0·②】额外返回 mustChangePwd 标记（存量用户无该字段 → undefined，前端按 false 处理），
      前端据此提示「当前为初始/重置密码，请尽快修改」。不泄露 hash/salt。 */
@@ -529,8 +618,12 @@ function handleRequest(req, res) {
   /* 当前登录用户信息（刷新页面恢复权限用） */
   if (p === '/api/me' && req.method === 'GET') return send(res, 200, publicUser(user));
 
-  /* 全量数据 + 版本号 */
-  if (p === '/api/data' && req.method === 'GET') return send(res, 200, { data, revs });
+  /* 全量数据 + 版本号
+     【build .152】返回前对 tblLayout 归一，保证前端**永远只看到 v2**（不落盘，幂等，不改变 revs）。 */
+  if (p === '/api/data' && req.method === 'GET') {
+    data.tblLayout = normalizeLayout(data.tblLayout);
+    return send(res, 200, { data, revs });
+  }
   /* 版本号轮询 */
   if (p === '/api/revs' && req.method === 'GET') return send(res, 200, { revs });
   /* 保存单表（业务表按表单权限；系统表放行）
@@ -573,6 +666,20 @@ function handleRequest(req, res) {
   if (p === '/api/tx' && req.method === 'POST') {
     return readBody(req, b => {
       const r = handleTx(data, revs, user, b, canWrite, saveJson, DEFAULT_DATA);
+      send(res, r.code, r.body);
+    });
+  }
+
+  /* ============ 列布局分片写端点 POST /api/layout（build .152 新增）============
+     与 /api/save、/api/tx 并列，位于统一鉴权之后。语义见 handleLayout：
+       · 默认 {layout}          → 只写「本人」分片 data.tblLayout.u[user.username]
+       · {action:'reset'}       → 只删本人分片
+       · {action:'resetAll'}    → 仅 admin，清空所有人的分片（def 不动）
+     **刻意不走 expectedRev 乐观锁**：个人偏好分片互不干扰，这正是要消除拖列 409 的原因。
+     /api/save {key:'tblLayout'} 保持放行不变（用户已拍板旧标签页整表覆盖不做防御）。 */
+  if (p === '/api/layout' && req.method === 'POST') {
+    return readBody(req, b => {
+      const r = handleLayout(data, revs, user, b, () => saveJson(DATA_FILE, data));
       send(res, r.code, r.body);
     });
   }
@@ -661,6 +768,9 @@ if (require.main === module) {
    不影响 `node server.js` 启动（上方 require.main 守卫保证）。 */
 module.exports = {
   handleTx,                       /* (data, revs, user, body, canWriteFn, saveJsonFn, defaultData) → {code, body} */
+  handleLayout,                   /* (data, revs, user, body, saveJsonFn) → {code, body}；build .152 列布局分片端点核心 */
+  normalizeLayout,                /* (v) → {v:2, def, u}；幂等形状归一（v1 扁平 → v2 分片） */
+  isLayoutMap,                    /* (v) → boolean；合法「布局映射」判定（对象且非数组；{} 合法＝尚无已存布局） */
   canWrite,                       /* (user, key, ctx) → boolean；/api/save 与 /api/tx 共用 */
   logsAppendOK,                   /* (oldArr, neu) → boolean；logs「只追加」白名单 */
   isPureStockProjection,          /* (oldArr, neu) → boolean；products 纯 stock 投影守卫 α′ */
