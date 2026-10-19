@@ -11,7 +11,10 @@
    2026-09-06.115：调拨方向模型（见下）
    2026-09-20.129：「退回库存」上限唯一口径 = 全局 saleMaxCallable（见 csReturnCap，严禁在本模块复制公式）
    2026-09-21.133：「调用库存」剩余可调用量唯一口径 = 全局 saleRemainCallable
-     （= max(0, 未交付 − saleMaxCallable)，定义在 index.html）；本模块只委托、严禁复制公式 */
+     （= max(0, 未交付 − saleMaxCallable)，定义在 index.html）；本模块只委托、严禁复制公式
+   2026-10-19.153：「调用库存」弹窗「选择库存订单」按**历史替换**推荐排序
+     （csRankCands 排序副本 + buildSubstRankMap 推荐索引，判定复用全局 trCrossCallSides）；
+     退回库存弹窗与默认预填口径均不变 */
 /* ================================================================
    调拨方向模型（2026-09-06.115）
    - 台账字段从「销售订单/库存订单」（订单类型语义）改为「调出订单/调入订单」（方向语义）：
@@ -78,11 +81,47 @@ let __csCands=[],__csLines=[],__csMode='call',__csOrder=null;
 function csReturnCap(line){
   return saleMaxCallable(line);
 }
-/* 2026-08-25.51：打开库存订单选择弹窗（单选，复用 productPickerModal 参数化版，列表可筛选） */
+/* 2026-10-19.153：库存候选排序（仅「调用库存」弹窗使用）。
+   次序＝**同料号（恒第一）→ 该行料号历史上的替换料号（按推荐索引名次）→ 其它**；
+   同档内按「可用量」降序；仍相同则保持原顺序（稳定、可复现）。
+   ⚠ 返回**新数组**（元素仍是原候选对象引用，浅拷贝不改对象）——入参 cands 的顺序绝对不能被改：
+     `.cs-inv-box[data-ci]` 存的是**下标**，csWarn / csAutoFill / doCallStock 全靠它取候选，
+     原地 sort 会让已写入的 data-ci 全部错位 → 静默取到错的库存订单（把货调错）。
+   recs = buildSubstRankMap().get(销售料号) 的结果（已按次数/最近时间排好）。 */
+function csRankCands(cands,pid,recs){
+  const order={};
+  (recs||[]).forEach(function(r,i){order[String(r.code)]=i;});
+  const target=String(pid==null?'':pid);
+  function wt(c){
+    const code=String(c&&c.productId==null?'':c.productId);
+    if(code===target)return -1;                                  /* 同料号恒第一 */
+    if(Object.prototype.hasOwnProperty.call(order,code))return order[code];   /* 历史替换名次 0,1,2… */
+    return 1e6;                                                   /* 其它 */
+  }
+  return (cands||[]).map(function(c,i){return {c:c,i:i};}).sort(function(a,b){
+    const wa=wt(a.c),wb=wt(b.c);
+    if(wa!==wb)return wa-wb;
+    const d=num(b.c&&b.c.available)-num(a.c&&a.c.available);
+    if(d)return d;
+    return a.i-b.i;
+  }).map(function(x){return x.c;});
+}
+/* 2026-08-25.51：打开库存订单选择弹窗（单选，复用 productPickerModal 参数化版，列表可筛选）
+   2026-10-19.153：**仅「调用库存」模式**按历史替换推荐排在最前（退回库存弹窗口径不变，用户拍板） */
 function csPickInv(li){
+  const line=__csLines.find(function(l){return l.i===li;});
+  const isCall=(__csMode==='call');
+  const pid=String((line&&line.productId)||'');
+  /* 推荐索引与排序副本：__csCands 本身不动（见 csRankCands 头部 data-ci 说明） */
+  const recs=isCall?(buildSubstRankMap().get(pid)||[]):[];
+  const rows=isCall?csRankCands(__csCands,pid,recs):__csCands;
   const schema=[
     {key:'invOrderId',label:'库存订单',type:'text'},
-    {key:'productId',label:'编码',type:'text'},
+    {key:'productId',label:'编码',type:'text',get:function(c){
+      const code=String(c.productId==null?'':c.productId);
+      const r=recs.find(function(x){return x.code===code;});
+      return code+(r?(' ★常用替换×'+r.cnt):'');   /* ★ = 该料号历史上替换过本行料号 */
+    }},
     {key:'productName',label:'名称',type:'text'},
     {key:'model',label:'型号',type:'text'},
     {key:'spec',label:'规格',type:'text'},
@@ -90,7 +129,11 @@ function csPickInv(li){
   ];
   productPickerModal({
     mode:'single', title:'选择库存订单', clickSelect:true,   /* 2026-08-29.84：点击行直接选中（立即确认回填） */
-    rows:__csCands, schema:schema,
+    note:recs.length
+      ?('「'+esc(pid)+'」历史替换：'+recs.map(function(r){return esc(r.code)+'×'+r.cnt;}).join('、')
+        +'。排序＝同料号（恒第一）→ 历史替换（按次数，次数相同看最近）→ 其它；★ 为历史替换料号，可用量为负仍按次数排在前，请核对「可用量」。')
+      :'',
+    rows:rows, schema:schema,
     onConfirm:function(ids){
       const c=ids&&ids.length?__csCands.find(function(x){return x.uid===ids[0];}):null;
       csSetInv(li,c||null);

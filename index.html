@@ -3304,6 +3304,24 @@ function buildPlannedUndelMap(){
   });
   return m;
 }
+/* 2026-10-19.153：「跨料替代」判定器 —— **全工程唯一一份**。
+   用途：① 销售订单「已调用」跨料警示（.127 buildCrossCallMap）；② 「调用库存」弹窗历史替换推荐（.153 buildSubstRankMap）。
+   判定口径（两处必须逐条一致，故抽成单一函数，禁各自复制）：
+     · 仅台账 type==='call' 且 !reversed（未冲销的调用）
+     · 必须经 trSide(t,'out') / trSide(t,'in') 读取双方（线上存量含大量旧结构 call，直读字段会漏判）
+     · 调入侧必须有订单 id；调出侧料号 ≠ 调入侧料号 → 跨料替代（同料号=正常调用，不算替代）
+   ⚠ 返回里的 outPid 允许为空串（沿用 .127 原行为：空调出料号 + 非空调入料号仍算一条跨料记录，
+     由调用方自行决定是否要它）；.153 推荐只取 outPid 非空的（空料号无法作为"可推荐的替代料"）。
+   返回 {oS,iS,outPid,inPid} 或 null。 */
+function trCrossCallSides(t){
+  if(!t||t.type!=='call'||t.reversed)return null;
+  const oS=trSide(t,'out'),iS=trSide(t,'in');
+  if(!iS.orderId)return null;                          /* 无调入订单无法归集 */
+  const outPid=String(oS.productId==null?'':oS.productId);
+  const inPid=String(iS.productId==null?'':iS.productId);
+  if(outPid===inPid)return null;                       /* 同料号=正常调用，不警示/不推荐 */
+  return {oS:oS,iS:iS,outPid:outPid,inPid:inPid};
+}
 /* 2026-09-18.127：销售订单「已调用」列跨料替代警示——归集未冲销的跨料号 call 记录。
    判定：transfers 中 type==='call' 且 !reversed，且调出侧料号 ≠ 调入侧料号。
    必须经 trSide(t,'out') / trSide(t,'in') 读取双方：线上存量含大量旧结构 call（无 outOrderId / inOrderId 等字段），
@@ -3321,16 +3339,13 @@ function buildCrossCallMap(){
   const prodMap={};
   (products||[]).forEach(function(p){if(p&&p.id!=null)prodMap[p.id]=p;});
   transfers.forEach(function(t){
-    if(!t||t.type!=='call'||t.reversed)return;      /* 仅未冲销的调用记录 */
-    const oS=trSide(t,'out'),iS=trSide(t,'in');
-    if(!iS.orderId)return;                          /* 无调入订单无法归集 */
-    const outPid=String(oS.productId==null?'':oS.productId);
-    const inPid=String(iS.productId==null?'':iS.productId);
-    if(outPid===inPid)return;                       /* 同料号=正常调用，不警示 */
+    const cx=trCrossCallSides(t);                   /* .153：判定单源（与「调用库存」推荐同一函数） */
+    if(!cx)return;
+    const oS=cx.oS,iS=cx.iS;
     /* 替代物料四项字段：优先取调出（库存）订单行快照，缺失回退产品主数据 */
     const oo=orderMap[oS.orderId];
     const it=(oo&&Array.isArray(oo.items))?oo.items[oS.lineIdx]:null;
-    const code=outPid||(it&&it.productId?String(it.productId):'');
+    const code=cx.outPid||(it&&it.productId?String(it.productId):'');
     const pr=prodMap[code]||{};
     const rec={
       code:code,
@@ -3345,6 +3360,54 @@ function buildCrossCallMap(){
     map.get(key).push(rec);
   });
   return map;
+}
+/* 2026-10-19.153：台账时间串 → 可比较的毫秒数（推荐排序的「次数相同看谁更近」用）。
+   为什么不直接字符串比较：台账 ts 由 toLocaleString('zh-CN') 生成，形如 `2026/9/6 15:03:03`
+   —— 月/日**不补零**，字典序会把 9 月排到 10 月之后（'9'>'1'），排序会错。
+   故显式解析 年/月/日[ 时:分[:秒]]；解析失败返回 0（该记录不参与"更近"比较，不制造乱序）。 */
+function tsRankOf(v){
+  const s=String(v==null?'':v).trim();
+  if(!s)return 0;
+  const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if(m)return Date.UTC(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0),+(m[6]||0));
+  const t=Date.parse(s);
+  return isFinite(t)?t:0;
+}
+/* 2026-10-19.153：「调用库存」弹窗历史替换推荐索引（用户需求）。
+   数据源：调拨台账中**未撤销的跨料号调用**，判定直接复用 trCrossCallSides（与 .127 跨料警示同一函数，
+   严禁在此复制判定条件）。归集方向：调入侧（被履行的销售料号）→ 调出侧（实际出货的替代料号）。
+   排序（用户 .153 拍板）：**次数降序 → 最近一次时间降序**；次数与时间都相同的按料号字典序（保证可复现）。
+   口径边界：
+     · 只统计"替换"（跨料号），同料号正常调用不参与 —— 否则每个料号都会"推荐自己"。
+     · reversed=true 的调用不计入（已冲销）。
+     · **不按可用量降级**：欠货（可用量为负）的替代料仍按次数排在前面，由用户看「可用量」列自行判断
+       （.153 用户明示：顶在最上面）。
+   返回 Map<销售料号, [{code,cnt,last,lastMs}]>；纯只读派生，不落库、零迁移。 */
+function buildSubstRankMap(){
+  const out=new Map();
+  if(!Array.isArray(transfers)||!transfers.length)return out;
+  const acc=new Map();
+  transfers.forEach(function(t){
+    const cx=trCrossCallSides(t);
+    if(!cx||!cx.outPid)return;               /* 空调出料号 → 无法作为"可推荐的替代料" */
+    let m=acc.get(cx.inPid);
+    if(!m){m=new Map();acc.set(cx.inPid,m);}
+    let r=m.get(cx.outPid);
+    if(!r){r={cnt:0,last:'',lastMs:0};m.set(cx.outPid,r);}
+    r.cnt++;
+    const ts=String(t.ts==null?'':t.ts);
+    const ms=tsRankOf(ts);
+    if(ms>r.lastMs){r.lastMs=ms;r.last=ts;}
+  });
+  acc.forEach(function(m,inPid){
+    const arr=[];
+    m.forEach(function(r,code){arr.push({code:code,cnt:r.cnt,last:r.last,lastMs:r.lastMs});});
+    arr.sort(function(a,b){
+      return (b.cnt-a.cnt)||(b.lastMs-a.lastMs)||(a.code<b.code?-1:a.code>b.code?1:0);
+    });
+    out.set(inPid,arr);
+  });
+  return out;
 }
 /* 2026-09-18.127：跨料替代悬浮框文本（多行；每行一条；行末附来源库存订单号）。字段缺失优雅降级。 */
 function crossCallTip(recs){
@@ -4041,7 +4104,10 @@ function productPickerModal(opts){
   });
   const mode=opts.mode||'multi';
   /* 表头：单/复选 + 各列名（带筛选漏斗） */
-  let body='<div class="table-wrap" style="max-height:55vh;overflow:auto"><table id="pp_table"><thead><tr><th style="width:36px">'+(mode==='single'?'单选':'复选')+'</th>';
+  /* 2026-10-19.153：可选顶部说明行（opts.note）。仅「调用库存」传值（说明推荐排序依据）；
+     **不传则完全不渲染** —— 产品选择器 / 批量选产品 / 选择调出库存订单 三个调用点零变化。 */
+  let body=(opts.note?('<div style="margin-bottom:6px;font-size:12px;color:var(--muted);line-height:1.6">'+opts.note+'</div>'):'')
+    +'<div class="table-wrap" style="max-height:55vh;overflow:auto"><table id="pp_table"><thead><tr><th style="width:36px">'+(mode==='single'?'单选':'复选')+'</th>';
   window.__ppSchema.forEach(function(col){
     body+=ppTh(col);
   });
@@ -7792,7 +7858,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-15.152</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-19.153</div>
 </body>
 </html>
 

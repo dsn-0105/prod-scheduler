@@ -670,7 +670,9 @@ test('B5 同一账号多标签页：后写覆盖自己（无 409、无合并）�
    Part C · 静态守卫（自己提取源码，不抄工程师断言）
    ============================================================ */
 test('C1 反潮汐：6 个既有函数体与 .152 **改前基线**逐字相同（不是形态正则）', () => {
-  const base = resolveBaseline('index.html', 'build 2026-10-15.152', '.152 列布局改造');
+  /* 基线 marker 用 .152 改动的**注释令牌**（`【build .152】`），不用权威水印：
+     水印每推进一个版本就变，会把「当前版本必须含 marker」的防对消守卫打成假失败（.153 实测）。 */
+  const base = resolveBaseline('index.html', '【build .152】', '.152 列布局改造');
   const headHtml = base.text;
   assert.notStrictEqual(base.rev, '', '基线修订必须解析成功');
   const names = ['layoutOf', 'applyTableLayout', 'startColDrag', 'startColResize', 'syncHeadBody', 'thCol'];
@@ -690,10 +692,11 @@ test('C1 反潮汐：6 个既有函数体与 .152 **改前基线**逐字相同�
 });
 
 test('C1b 防对消守卫自检：基线与 HEAD 必须是不同修订，且守卫能拦住「拿 HEAD 当基线」', () => {
-  const marker = 'build 2026-10-15.152';
+  /* marker 用注释令牌而非水印（理由见 C1 注释）：水印随版本推进，HEAD 会不再含旧水印 */
+  const marker = '【build .152】';
   const headRev = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
   const headIdx = gitShowAt('HEAD', 'index.html');
-  assert.ok(headIdx.indexOf(marker) >= 0, '前提：HEAD 已含 .152 标记（.152 已提交，故 HEAD 不可作基线）');
+  assert.ok(headIdx.indexOf(marker) >= 0, '前提：HEAD 已含 .152 改动标记（.152 已提交，故 HEAD 不可作基线）');
 
   const base = resolveBaseline('index.html', marker, '.152 列布局改造');
   assert.strictEqual(base.text.indexOf(marker), -1, '解析出的基线必须不含 .152 标记');
@@ -754,41 +757,41 @@ test('C4 顶栏按钮：重置=全员可见；重置所有人=admin-only；apply
     assert.ok(body.indexOf("querySelectorAll('[data-admin-only]')") >= 0, fn + ' 必须仍用通配选择器');
   });
   /* 且这两个函数体与 .152 改前基线逐字一致（.152 未改动顶栏权限机制） */
-  const base = resolveBaseline('index.html', 'build 2026-10-15.152', '.152 列布局改造');
+  const base = resolveBaseline('index.html', '【build .152】', '.152 列布局改造');
   assert.strictEqual(extractFn(INDEX_SRC, 'applyTopbarPerm'), extractFn(base.text, 'applyTopbarPerm'),
     'applyTopbarPerm 相对改前基线（' + base.rev.slice(0, 7) + '）逐字不变');
 });
 
-test('C5 水印 7 锚点齐全；.152 权威水印恰 1 处、.151 水印 0 处（逐条解释 .151 残留）', () => {
+test('C5 水印 7 锚点齐全；.153 权威水印恰 1 处、.152 水印 0 处（逐条解释 .152 残留）', () => {
   /* ① index.html 权威水印 */
-  assert.strictEqual((INDEX_SRC.match(/>build 2026-10-15\.152</g) || []).length, 1, '① index.html >build …< 恰 1 处');
-  assert.strictEqual((INDEX_SRC.match(/build 2026-10-14\.151/g) || []).length, 0, 'index.html 不得残留 .151 权威水印');
+  assert.strictEqual((INDEX_SRC.match(/>build 2026-10-19\.153</g) || []).length, 1, '① index.html >build …< 恰 1 处');
+  assert.strictEqual((INDEX_SRC.match(/build 2026-10-15\.152/g) || []).length, 0, 'index.html 不得残留 .152 权威水印');
   /* ② harness/build.js */
-  assert.strictEqual(BUILD.BUILD, '2026-10-15.152');
-  assert.strictEqual(BUILD.PREV, '2026-10-14.151');
+  assert.strictEqual(BUILD.BUILD, '2026-10-19.153');
+  assert.strictEqual(BUILD.PREV, '2026-10-15.152');
   /* ③④⑤ 两个测试文件的字面量副本 */
   const pp = fs.readFileSync(path.join(ROOT, 'tests', 'qa.ppshift-advance.independent.test.js'), 'utf8');
   const pq = fs.readFileSync(path.join(ROOT, 'tests', 'qa.prodplan-query.independent.test.js'), 'utf8');
-  assert.ok(pp.indexOf("assert.equal(build.BUILD, '2026-10-15.152'") >= 0, '③ §E2 BUILD');
-  assert.ok(pp.indexOf("assert.equal(build.PREV, '2026-10-14.151'") >= 0, '③ §E2 PREV');
-  assert.ok(pq.indexOf("assert.equal(build.BUILD, '2026-10-15.152'") >= 0, '④ §E2 BUILD');
-  assert.ok(pq.indexOf("assert.equal(build.PREV, '2026-10-14.151'") >= 0, '④ §E2 PREV');
-  assert.ok(pq.indexOf('2026-10-15（build .152）') >= 0, '⑤ §E4 guide 版本行');
+  assert.ok(pp.indexOf("assert.equal(build.BUILD, '2026-10-19.153'") >= 0, '③ §E2 BUILD');
+  assert.ok(pp.indexOf("assert.equal(build.PREV, '2026-10-15.152'") >= 0, '③ §E2 PREV');
+  assert.ok(pq.indexOf("assert.equal(build.BUILD, '2026-10-19.153'") >= 0, '④ §E2 BUILD');
+  assert.ok(pq.indexOf("assert.equal(build.PREV, '2026-10-15.152'") >= 0, '④ §E2 PREV');
+  assert.ok(pq.indexOf('2026-10-19（build .153）') >= 0, '⑤ §E4 guide 版本行');
   /* ⑥ js/guide.js 文首 */
-  assert.ok(GUIDE_SRC.indexOf('更新：2026-10-15（build .152）') >= 0, '⑥ guide.js 文首更新行');
-  assert.strictEqual(GUIDE_SRC.indexOf('更新：2026-10-14（build .151）'), -1, 'guide.js 不得残留 .151');
+  assert.ok(GUIDE_SRC.indexOf('更新：2026-10-19（build .153）') >= 0, '⑥ guide.js 文首更新行');
+  assert.strictEqual(GUIDE_SRC.indexOf('更新：2026-10-15（build .152）'), -1, 'guide.js 不得残留 .152');
   /* ⑦ README.md */
-  assert.ok(README_SRC.indexOf('build 2026-10-15.152') >= 0, '⑦ README.md 当前版本');
+  assert.ok(README_SRC.indexOf('build 2026-10-19.153') >= 0, '⑦ README.md 当前版本');
 
-  /* .151 残留逐条解释：index.html 中每一处 .151 都必须落在注释内（历史沿革注释，非水印） */
+  /* .152 残留逐条解释：index.html 中每一处 .152 都必须落在注释内（历史沿革注释，非水印） */
   const lines = INDEX_SRC.split('\n');
   const res = [];
-  lines.forEach((ln, i) => { if (ln.indexOf('.151') >= 0) res.push({ n: i + 1, ln: ln }); });
-  assert.ok(res.length > 0, '应存在（合理数量的）.151 历史注释');
+  lines.forEach((ln, i) => { if (ln.indexOf('.152') >= 0) res.push({ n: i + 1, ln: ln }); });
+  assert.ok(res.length > 0, '应存在（合理数量的）.152 历史注释');
   res.forEach(r => {
     assert.ok(r.ln.indexOf('/*') >= 0 || r.ln.trim().indexOf('*') === 0,
-      'index.html:' + r.n + ' 的 .151 必须位于注释内，实为: ' + r.ln.trim().slice(0, 120));
-    assert.ok(r.ln.indexOf('build 2026-10-14.151') < 0, 'index.html:' + r.n + ' 不得是 .151 权威水印');
+      'index.html:' + r.n + ' 的 .152 必须位于注释内，实为: ' + r.ln.trim().slice(0, 120));
+    assert.ok(r.ln.indexOf('build 2026-10-15.152') < 0, 'index.html:' + r.n + ' 不得是 .152 权威水印');
   });
 });
 
