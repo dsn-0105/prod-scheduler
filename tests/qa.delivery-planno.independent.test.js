@@ -1033,15 +1033,20 @@ test('V10-2 applyTableLayout 追加机制：已存 order 不含新键时 planNo 
   console.log(JSON.stringify(bodyKeys));
 
   /* 【机制结论】已存 order 过滤仍存在的 + 新增列按当前顺序追加到末尾
-     → 已存布局不含新键时，该新列必然落在最末（这正是「新增列默认位置」的成因）。 */
-  assert.equal(headKeys.indexOf('planNo'), headKeys.length - 1, '机制行为：表头 planNo 落到最末列');
-  assert.equal(bodyKeys.indexOf('planNo'), bodyKeys.length - 1, '机制行为：数据行 planNo 落到最末列');
+     → 已存布局不含新键时，该新列必然落在最末（这正是「新增列默认位置」的成因）。
+     【.154 同步】交付计划新增「任务单号」taskNo（schema 第 8 项）→ 相对 PROD_ORDER（13 列）
+     本表单现在有**两个**新键（planNo、taskNo）。applyTableLayout 按 schema 当前顺序追加
+     ⇒ 新键依次落在末两列：planNo 在倒数第 2 格、taskNo 在最末格。 */
+  assert.equal(headKeys.indexOf('planNo'), headKeys.length - 2, '机制行为：planNo 落到倒数第 2 列（taskNo 更靠后）');
+  assert.equal(headKeys.indexOf('taskNo'), headKeys.length - 1, '机制行为：taskNo（.154 新增）落到最末列');
+  assert.equal(bodyKeys.indexOf('planNo'), bodyKeys.length - 2, '机制行为：数据行 planNo 落到倒数第 2 列');
+  assert.equal(bodyKeys.indexOf('taskNo'), bodyKeys.length - 1, '机制行为：数据行 taskNo 落到最末列');
   assert.notEqual(headKeys.indexOf('planNo'), 0, '机制行为：planNo 不是第 1 数据列');
-  /* 已存列序整体保留（除 planNo 外，order 中 13 列按原顺序在前；首格 null = 选择列表头） */
+  /* 已存列序整体保留（除两个新增列外，order 中 13 列按原顺序在前；首格 null = 选择列表头） */
   const headKeysNoSel = headKeys.filter(function (k) { return k !== null; });
   assert.deepEqual(headKeysNoSel.slice(0, 13), PROD_ORDER, '已存 13 列顺序必须完整保留');
-  assert.equal(headKeysNoSel.length, 14, '13 已存列 + 1 新增列');
-  assert.equal(headKeys.length, 15, '含选择列表头共 15 格');
+  assert.equal(headKeysNoSel.length, 15, '13 已存列 + 2 新增列（planNo / taskNo，.154）');
+  assert.equal(headKeys.length, 16, '含选择列表头共 16 格');
   app.dispose();
 });
 
@@ -1068,33 +1073,34 @@ test('V10-3 历史列序（.134 线上快照）下 rowspan 合并不破裂（网
     const uniq = Array.from(new Set(keys));
     assert.equal(uniq.length, 1, '第 ' + c + ' 列跨行 key 必须唯一，实际 ' + JSON.stringify(uniq));
   }
-  /* ③ 单据级 7 列在「2 明细行」的组首行必须 rowspan=2，且续行不重复输出
-     （默认按 createdAt 降序，组序会变，故按 rowspan 定位目标组而不按下标 0 硬编码） */
-  const HEAD7 = ['planNo', 'createdAt', 'orderId', 'customer', 'ppStatus', 'finalDate', 'firstDate'];
+  /* ③ 单据级 8 列在「2 明细行」的组首行必须 rowspan=2，且续行不重复输出
+     （默认按 createdAt 降序，组序会变，故按 rowspan 定位目标组而不按下标 0 硬编码）
+     —— .154：单据级列 7 → 8（新增「任务单号」taskNo，紧跟「首次交付日」） */
+  const HEAD8 = ['planNo', 'createdAt', 'orderId', 'customer', 'ppStatus', 'finalDate', 'firstDate', 'taskNo'];
   const twoIdx = rows.findIndex(function (r) {
     return r.cells.some(function (c) { return c.key === 'planNo' && c.rowspan === 2; });
   });
   assert.ok(twoIdx >= 0, 'KCDD-1（2 个明细行）必须存在 rowspan=2 的分组首行');
   const groupFirst = rows[twoIdx];
   const cont = rows[twoIdx + 1];
-  HEAD7.forEach(function (k) {
+  HEAD8.forEach(function (k) {
     const cell = groupFirst.cells.find(function (x) { return x.key === k; });
     assert.ok(cell, '组首行必须含单据级列 ' + k);
     assert.equal(cell.rowspan, 2, '单据级列 ' + k + ' 必须 rowspan=2');
   });
-  HEAD7.forEach(function (k) {
+  HEAD8.forEach(function (k) {
     assert.equal(cont.cells.find(function (x) { return x.key === k; }), undefined, '续行不得重复输出单据格 ' + k);
   });
-  /* 单据级 7 列在网格里的可视列索引必须两两不同（各自独占一列）；
-     注意：线上自定义列序把行级列混排进来，单据级 7 列**必然不连续**（实测 cols=[17,1,2,3,5,16,15]），
+  /* 单据级 8 列在网格里的可视列索引必须两两不同（各自独占一列）；
+     注意：线上自定义列序把行级列混排进来，单据级 8 列**必然不连续**，
      这是用户自定列序的自然结果，不构成缺陷 —— 故此处只断言"独占且跨行稳定"。 */
-  const colsOfHead = HEAD7.map(function (k) {
+  const colsOfHead = HEAD8.map(function (k) {
     return grid[twoIdx].findIndex(function (cell) { return cell && cell.key === k; });
   });
-  assert.equal(colsOfHead.filter(function (c) { return c < 0; }).length, 0, '单据级 7 列必须都能定位到列');
-  assert.equal(new Set(colsOfHead).size, 7, '单据级 7 列必须各占不同列（无重叠）');
-  console.log('---- V10 单据级 7 列的可视列索引（0-based，0=选择列）----');
-  console.log(JSON.stringify(HEAD7.map(function (k, i) { return k + '@' + colsOfHead[i]; })));
+  assert.equal(colsOfHead.filter(function (c) { return c < 0; }).length, 0, '单据级 8 列必须都能定位到列');
+  assert.equal(new Set(colsOfHead).size, 8, '单据级 8 列必须各占不同列（无重叠）');
+  console.log('---- V10 单据级 8 列的可视列索引（0-based，0=选择列）----');
+  console.log(JSON.stringify(HEAD8.map(function (k, i) { return k + '@' + colsOfHead[i]; })));
   /* ④ 合计行逐列同构（每 schema 列一个 td） */
   const sumKeys = p.bodyRows[p.bodyRows.length - 1].cells.filter(function (c) { return c.key; }).map(function (c) { return c.key; });
   const schemaKeys = plain(app.run('TBL_SCHEMAS.delivery.map(function(c){return c.key})'));
@@ -1137,18 +1143,18 @@ test('V11-2 initApp 迁移接线顺序：createdAt → orderLine → planNoField
   assert.ok(INDEX_SRC.indexOf('function migrateDeliveryPlanNo()') > 0);
 });
 
-test('V11-3 三处列集合一致性：TBL_SCHEMAS 前 7 / HEAD_COLS / headHtml 前 7 td 逐一对齐', () => {
+test('V11-3 三处列集合一致性：TBL_SCHEMAS 前 8 / HEAD_COLS / headHtml 前 8 td 逐一对齐（.154：7→8）', () => {
   const app = app0({ deliveries: PROD_SEED });
   const html = String(app.run('renderDelivery()'));
   const schemaKeys = plain(app.run('TBL_SCHEMAS.delivery.map(function(c){return c.key})'));
   const headHtmlKeys = (html.match(/<td data-key="([^"]+)" rowspan=/g) || []).map((s) => s.match(/data-key="([^"]+)"/)[1]);
-  const head7 = schemaKeys.slice(0, 7);
-  assert.deepEqual(head7, ['planNo', 'createdAt', 'orderId', 'customer', 'ppStatus', 'finalDate', 'firstDate']);
-  assert.equal(headHtmlKeys.length % 7, 0, '单据级 td 数必须是 7 的整数倍（每条记录 7 个）');
-  assert.equal(headHtmlKeys.length, 14, '2 条记录 → 2 组单据级 td');
-  /* 逐组校验：每条记录的单据级 td 顺序都必须与 schema 前 7 一致 */
-  for (let g = 0; g < headHtmlKeys.length; g += 7) {
-    assert.deepEqual(headHtmlKeys.slice(g, g + 7), head7, '第 ' + (g / 7 + 1) + ' 组单据级 td 序不符');
+  const head8 = schemaKeys.slice(0, 8);
+  assert.deepEqual(head8, ['planNo', 'createdAt', 'orderId', 'customer', 'ppStatus', 'finalDate', 'firstDate', 'taskNo']);
+  assert.equal(headHtmlKeys.length % 8, 0, '单据级 td 数必须是 8 的整数倍（每条记录 8 个）');
+  assert.equal(headHtmlKeys.length, 16, '2 条记录 → 2 组单据级 td');
+  /* 逐组校验：每条记录的单据级 td 顺序都必须与 schema 前 8 一致 */
+  for (let g = 0; g < headHtmlKeys.length; g += 8) {
+    assert.deepEqual(headHtmlKeys.slice(g, g + 8), head8, '第 ' + (g / 8 + 1) + ' 组单据级 td 序不符');
   }
   /* 表头 th 与 schema 全量一致 */
   const thKeys = (html.match(/<th[^>]*data-key="([^"]+)"/g) || []).map((s) => s.match(/data-key="([^"]+)"/)[1]);
@@ -1156,9 +1162,9 @@ test('V11-3 三处列集合一致性：TBL_SCHEMAS 前 7 / HEAD_COLS / headHtml 
   /* HEAD_COLS 源码值 */
   const m = INDEX_SRC.slice(INDEX_SRC.indexOf('function renderDelivery()')).match(/const HEAD_COLS=(\d+);/);
   assert.ok(m, 'renderDelivery 内应有 const HEAD_COLS=n;');
-  assert.equal(Number(m[1]), 7, 'HEAD_COLS 必须为 7 且等于单据级列数');
+  assert.equal(Number(m[1]), 8, 'HEAD_COLS 必须为 8 且等于单据级列数（.154：7→8）');
   /* 单据级列必须都不是行级（有 get 取 r.it 的） */
-  const isLine = plain(app.run('TBL_SCHEMAS.delivery.slice(0,7).map(function(c){return /r\\.it/.test(String(c.get));})'));
-  assert.deepEqual(isLine, [false, false, false, false, false, false, false], '前 7 列不得取行级字段');
+  const isLine = plain(app.run('TBL_SCHEMAS.delivery.slice(0,8).map(function(c){return /r\\.it/.test(String(c.get));})'));
+  assert.deepEqual(isLine, [false, false, false, false, false, false, false, false], '前 8 列不得取行级字段');
   app.dispose();
 });

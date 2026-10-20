@@ -788,7 +788,11 @@ const HARD_FIELDS={
        已停止持久化 ⇒ 单据头不再存在这三项可比对的字段，故从字段级日志清单一并移除。
        明细行的「订单数量/已交付/未交付」不受影响（那是 items[].orderQty/deliveredQty，界面与超量校验照旧）。 */
     {key:'productName',label:'产品名称'},{key:'planQty',label:'本批计划'},{key:'finalDate',label:'最终交付期'},
-    {key:'firstDate',label:'首次交付日'},{key:'notes',label:'备注'},
+    {key:'firstDate',label:'首次交付日'},
+    /* 2026-10-20.154：单据头新增「任务单号」taskNo（文本 · 非必填 · 可编辑）——
+       纳入字段级日志对比：编辑弹窗改了就记一条「字段=任务单号」的编辑日志，未改不产生噪音。 */
+    {key:'taskNo',label:'任务单号'},
+    {key:'notes',label:'备注'},
     /* 2026-10-06.134：单据头新增「交付计划编号」planNo（系统生成、必填、全局唯一、不可修改）——
        纳入字段级日志对比以保日志完整；编辑态该值由 doSaveDelivery 原样保留，故不产生噪音日志。 */
     {key:'planNo',label:'交付计划编号'}
@@ -885,6 +889,11 @@ const defaultFields={
     {key:'planQty',label:'本批计划',type:'number',required:true,locked:false},
     {key:'finalDate',label:'最终交付期',type:'date',required:false,locked:true},
     {key:'firstDate',label:'首次交付日',type:'date',required:false,locked:false},
+    /* 2026-10-20.154：单据头新增「任务单号」taskNo（单据级 · 文本 · **非必填** · 可编辑）。
+       列位置：紧跟「首次交付日」之后，即列表第 8 个单据级列（三处必须对齐，见 renderDelivery）。
+       ⚠ 老单不补：存量 deliveries 无该键即按空串读取/渲染，**不做任何回填迁移**（用户明确要求）。
+       本字段同时进 Excel 导出列 / 覆盖导入模板（表头按 fields.delivery 映射）。 */
+    {key:'taskNo',label:'任务单号',type:'text',required:false,locked:false},
     {key:'notes',label:'备注',type:'text',required:false,locked:false}
   ]
 };
@@ -3088,6 +3097,38 @@ function migrateDeliveryPlanNoField(){
   }
   if(changed){save('fields',fields);logOp('系统','交付计划','系统迁移：字段配置补齐「交付计划编号」');}
 }
+/* 迁移（2026-10-20.154）：交付计划**字段配置**补齐「任务单号」taskNo。
+   背景：与 .134 的 planNo / .132 的 calledQty **同型事故**——fields 是**持久化**的。
+         只改 defaultFields 而不补线上已落库的 fields.delivery，导出 / 导入模板会**静默缺少**「任务单号」列
+         （列表页却看得见该列 → 导出与界面不一致）。
+   逻辑：确保持久化 fields.delivery 含 taskNo；缺失则插入到 firstDate 之后（firstDate 不存在则 push 末尾）；
+         已存在但定义不符（label/type/required/locked）则逐项纠正；位置不符则移到 firstDate 之后。
+         有变化才落盘 + 记日志。幂等（第二次调用零变更、零日志）。
+   ⚠ 只动**字段配置**，绝不回填 deliveries 存量数据（老单不补）。 */
+function migrateDeliveryFieldsTaskNo(){
+  if(!fields||!Array.isArray(fields.delivery))return;
+  const DEF={key:'taskNo',label:'任务单号',type:'text',required:false,locked:false};
+  let changed=false;
+  let i=fields.delivery.findIndex(f=>f&&f.key==='taskNo');
+  if(i<0){
+    fields.delivery.push(JSON.parse(JSON.stringify(DEF)));
+    i=fields.delivery.length-1;
+    changed=true;
+  }else{
+    const f=fields.delivery[i];
+    ['label','type','required','locked'].forEach(k=>{if(f[k]!==DEF[k]){f[k]=DEF[k];changed=true;}});
+  }
+  /* 列序对齐：taskNo 恒紧跟 firstDate（firstDate 不存在时保持在末尾） */
+  const fi=fields.delivery.findIndex(f=>f&&f.key==='firstDate');
+  const target=fi>=0?fi+1:fields.delivery.length-1;
+  if(i!==target){
+    const moved=fields.delivery.splice(i,1)[0];
+    const fi2=fields.delivery.findIndex(f=>f&&f.key==='firstDate');
+    if(fi2>=0)fields.delivery.splice(fi2+1,0,moved);else fields.delivery.push(moved);
+    changed=true;
+  }
+  if(changed){save('fields',fields);logOp('系统','交付计划','系统迁移：字段配置补齐「任务单号」');}
+}
 /* 迁移（2026-10-14.149）：交付计划**字段配置**移除已废弃的单据头三项冗余汇总。
    背景：与 .134 的 planNo 事故**同型**——fields 是**持久化**的。只改 defaultFields 而不清理线上
          已落库的 fields.delivery，导出 / 导入模板仍会带「订单总量 / 已交付 / 未交付」三列
@@ -4724,6 +4765,7 @@ function renderDelivery(){
     /* 2026-08-25.23：单据级汇总字段（订单总量/本批计划/已排产）拆到明细行——单据级仅保留单据属性 7 列；
        明细级新增「已排产」行级字段（ppPlannedOf 该单据+该产品已排产，排除已取消，不落库实时计算） */
     /* 2026-10-06.134：单据头新增「交付计划编号」planNo，置于**第 1 列**（勾选框之后、单据时间之前）。
+       2026-10-20.154：单据头新增「任务单号」taskNo，置于「首次交付日」之后 → 单据级列 7 → 8。
        ⚠️ 列集合三处必须严格一致：本 schema 前 HEAD_COLS 项 ↔ HEAD_COLS ↔ headHtml 的前 HEAD_COLS 个 <td>。 */
     TBL_SCHEMAS.delivery=[
       {key:'planNo',label:'交付计划编号',type:'text',get:r=>r.d.planNo},
@@ -4733,6 +4775,8 @@ function renderDelivery(){
       {key:'ppStatus',label:'状态',type:'text',select:true,options:['未下推','部分下推','全部下推'],get:r=>ppDeliveryStatus(r.di),sort:v=>PP_DL_STATUS_W[String(v)]!=null?PP_DL_STATUS_W[String(v)]:0},   /* 2026-08-25.55/.58：状态列恢复复选框多选（select 类列）+ 筛选显示全部状态；.78 选项改名 未下推/部分下推/全部下推 */
       {key:'finalDate',label:'最终交付期',type:'date',get:r=>r.d.finalDate},
       {key:'firstDate',label:'首次交付日',type:'date',get:r=>r.d.firstDate},
+      /* 2026-10-20.154：新增「任务单号」列（单据级 · 文本 · 非必填）。老单无该键 → 渲染空单元格，不报错。 */
+      {key:'taskNo',label:'任务单号',type:'text',get:r=>r.d.taskNo},
       {key:'productId',label:'产品编码',type:'text',get:r=>r.it.productId},
       {key:'productName',label:'产品名称',type:'text',get:r=>r.it.productName||r.it.productId},
       {key:'spec',label:'规格',type:'text',get:r=>r.it.spec},
@@ -4748,8 +4792,9 @@ function renderDelivery(){
     TBL_ROWS.delivery=rows;
     let shown=applyTable('delivery',rows);
     const dAll=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存，供底部合计行） */
-    /* 单据级列合并（订单管理同款）：前 7 列按单据 rowspan 合并；仅未按明细级列排序时合并，避免明细行打散致 rowspan 断裂 */
-    const HEAD_COLS=7;
+    /* 单据级列合并（订单管理同款）：前 8 列按单据 rowspan 合并；仅未按明细级列排序时合并，避免明细行打散致 rowspan 断裂
+       2026-10-20.154：单据级列 7 → 8（新增「任务单号」taskNo，紧跟「首次交付日」） */
+    const HEAD_COLS=8;
     const manualSort=tState('delivery').sort;
     const sortKey=manualSort?manualSort.key:null;
     const lineKeys=TBL_SCHEMAS.delivery.slice(HEAD_COLS).map(c=>c.key);
@@ -4792,7 +4837,9 @@ function renderDelivery(){
         '<td data-key="customer" rowspan="'+rs+'">'+esc(d.customer)+'</td>'+
         '<td data-key="ppStatus" rowspan="'+rs+'" style="text-align:center"><span class="tag '+ppDlStatusTag(ppDeliveryStatus(di))+'">'+ppDeliveryStatus(di)+'</span></td>'+
         '<td data-key="finalDate" rowspan="'+rs+'">'+fmtDate(d.finalDate)+'</td>'+
-        '<td data-key="firstDate" rowspan="'+rs+'">'+fmtDate(d.firstDate)+'</td>';
+        '<td data-key="firstDate" rowspan="'+rs+'">'+fmtDate(d.firstDate)+'</td>'+
+        /* 2026-10-20.154：单据级「任务单号」（老单无该键 → 空单元格） */
+        '<td data-key="taskNo" rowspan="'+rs+'">'+esc(d.taskNo||'')+'</td>';
       if(shouldMerge){
         if(isFirst)headCells=headHtml;
       }else{
@@ -6366,6 +6413,9 @@ function deliveryModal(idx,prefill){
     '<div><label>最终交付期</label><input type="date" id="dl_finalDate" value="'+fmtDate(d.finalDate)+'"></div>'+
     '<div><label>首次交付日</label><input type="date" id="dl_firstDate" value="'+fmtDate(d.firstDate)+'"></div>'+
     '</div><div class="form-row">'+
+    /* 2026-10-20.154：单据头新增「任务单号」taskNo（文本 · **非必填** · 可编辑）——
+       与「备注」并排一格，保持弹窗 2 列布局；不加 * 标记。 */
+    '<div><label>任务单号</label><input type="text" id="dl_taskNo" value="'+esc(d.taskNo||'')+'"></div>'+
     '<div><label>备注</label><input type="text" id="dl_notes" value="'+esc(d.notes)+'"></div>'+
     '</div>';
   /* 表体区：交付明细（由订单带出，本批计划逐行填写） */
@@ -6388,6 +6438,8 @@ function saveDelivery(idx){
     customer:document.getElementById('dl_customer').value,
     finalDate:document.getElementById('dl_finalDate').value,
     firstDate:document.getElementById('dl_firstDate').value,
+    /* 2026-10-20.154：「任务单号」非必填，表单无该值时存空串（不做任何「系统生成 / 保留旧值」特殊逻辑） */
+    taskNo:(document.getElementById('dl_taskNo')||{}).value||'',
     notes:document.getElementById('dl_notes').value,
     createdAt:(idx>=0)?(deliveries[idx].createdAt||'2026-08-23'):todayStr(),   /* 单据时间：新增=当天，编辑保留原值（老数据缺失兜底回填值） */
     items:[]
@@ -7744,6 +7796,8 @@ async function initApp(){
   migrateDeliveryOrderLine();
   // 交付计划：字段配置补齐「交付计划编号」planNo（2026-10-06.134，持久化 fields 老库缺键 → 导出/模板不带该列）
   migrateDeliveryPlanNoField();
+  // 交付计划：字段配置补齐「任务单号」taskNo（2026-10-20.154，持久化 fields 老库缺键 → 导出/模板不带该列）
+  migrateDeliveryFieldsTaskNo();
   // 交付计划：字段配置移除已废弃的单据头三项汇总（2026-10-14.149，持久化 fields 老库仍带这三列 → 导出/模板出现多余空列）
   migrateDeliveryDropHeadTotals();
   // 交付计划：清除明细行已删除的两个字段存量值（2026-10-14.150，一次性幂等；离线脚本已先行，线上正常路径见标记即空转）
@@ -7858,7 +7912,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-19.153</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-20.154</div>
 </body>
 </html>
 

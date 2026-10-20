@@ -13,7 +13,8 @@
    本文件钉死的口径（**口径单源**硬约束）：
      · 取号一律经 index.html 的全局 nextDeliveryPlanNo（同前缀 max+1 + 去重兜底，与既有 nextOrderNo 同款）；
        存量回填迁移 / 导入补号**不得**复制第二份编号公式（§I 静态守卫，参照 invcall-cap.test.js §S2 写法）。
-     · 列表列序三处一致：TBL_SCHEMAS.delivery 前 7 项 ↔ HEAD_COLS=7 ↔ headHtml 前 7 个 <td>（§G）。
+     · 列表列序三处一致：TBL_SCHEMAS.delivery 前 8 项 ↔ HEAD_COLS=8 ↔ headHtml 前 8 个 <td>（§G）。
+       （.154：单据级列 7→8 —— 新增「任务单号」taskNo，紧跟「首次交付日」；三处一致性守卫同步升级）
 
    已知边界（口径已与用户确认，非缺陷，登记备查）：
      「删除后编号不复用」在**同前缀 max+1**口径下仅对被删非最大号的场景成立——删除当日**最后一条**
@@ -548,33 +549,37 @@ test('F2 已知边界（口径已确认，登记备查）：删除当日**最大
 });
 
 /* ================================================================
-   §G 列表列序三处一致：TBL_SCHEMAS.delivery 前 7 项 ↔ HEAD_COLS ↔ headHtml 7 个 <td>
+   §G 列表列序三处一致：TBL_SCHEMAS.delivery 前 8 项 ↔ HEAD_COLS ↔ headHtml 8 个 <td>
+   —— .154：单据级列 7→8（新增「任务单号」taskNo，紧跟「首次交付日」），三处一致性守卫同步升级
    ================================================================ */
 
-const HEAD7 = ['planNo', 'createdAt', 'orderId', 'customer', 'ppStatus', 'finalDate', 'firstDate'];
+const HEAD8 = ['planNo', 'createdAt', 'orderId', 'customer', 'ppStatus', 'finalDate', 'firstDate', 'taskNo'];
 
-test('G1 TBL_SCHEMAS.delivery 前 7 项列序 = [planNo, createdAt, orderId, customer, ppStatus, finalDate, firstDate]', () => {
+test('G1 TBL_SCHEMAS.delivery 前 8 项列序 = [planNo, createdAt, orderId, customer, ppStatus, finalDate, firstDate, taskNo]', () => {
   const app = app0({ deliveries: [dl('KCDD-1', '2026-08-23', null, { planNo: 'JFJH-20260823-00001' })] });
   app.run('renderDelivery()');
   const keys = plain(app.run('TBL_SCHEMAS.delivery.map(function(c){return c.key})'));
-  assert.deepEqual(keys.slice(0, 7), HEAD7, '第 1 列必须是 planNo');
+  assert.deepEqual(keys.slice(0, 8), HEAD8, '第 1 列必须是 planNo；第 8 列必须是 taskNo（.154）');
   assert.equal(keys[0], 'planNo', '防列序回退：首列 key 必须为 planNo');
   assert.equal(plain(app.run('TBL_SCHEMAS.delivery[0].label')), '交付计划编号');
+  /* .154：任务单号紧跟「首次交付日」（index 7），且为文本列 */
+  assert.equal(plain(app.run('TBL_SCHEMAS.delivery[7].label')), '任务单号');
+  assert.equal(plain(app.run('TBL_SCHEMAS.delivery[7].type')), 'text');
   app.dispose();
 });
 
-test('G2 源码 HEAD_COLS 必须是 7（renderDelivery 内）且与 schema 单据级列数一致', () => {
+test('G2 源码 HEAD_COLS 必须是 8（renderDelivery 内）且与 schema 单据级列数一致', () => {
   const body = extractFn(INDEX_SRC, 'renderDelivery');
   const m = body.match(/const HEAD_COLS\s*=\s*(\d+)\s*;/);
   assert.ok(m, 'renderDelivery 内应有 const HEAD_COLS=<n>;');
-  assert.equal(Number(m[1]), 7, 'HEAD_COLS 必须为 7（本次由 6 → 7）');
+  assert.equal(Number(m[1]), 8, 'HEAD_COLS 必须为 8（.154 由 7 → 8，新增「任务单号」）');
   const app = app0({ deliveries: [dl('KCDD-1', '2026-08-23', null, { planNo: 'JFJH-20260823-00001' })] });
   app.run('renderDelivery()');
-  assert.equal(plain(app.run('TBL_SCHEMAS.delivery.length > 7')), true, '行级列必须仍有内容');
+  assert.equal(plain(app.run('TBL_SCHEMAS.delivery.length > 8')), true, '行级列必须仍有内容');
   app.dispose();
 });
 
-test('G3 headHtml 前 7 个 <td> 的 data-key 与 schema 前 7 项逐一对应（rowspan 合并不破裂）', () => {
+test('G3 headHtml 前 8 个 <td> 的 data-key 与 schema 前 8 项逐一对应（rowspan 合并不破裂）', () => {
   const app = app0({
     deliveries: [
       /* 一条记录 2 个明细行（验证单据级列 rowspan=2 + 续行不含单据格） */
@@ -590,9 +595,9 @@ test('G3 headHtml 前 7 个 <td> 的 data-key 与 schema 前 7 项逐一对应�
   assert.equal(parts.length, 2, '双表结构（sticky 表头 + 表体）');
   /* 表头：th 的 data-key 序列（跳过选择列 th） */
   const thKeys = [...parts[0].matchAll(/<th[^>]*data-key="([^"]+)"/g)].map(function (m) { return m[1]; });
-  assert.deepEqual(thKeys, HEAD7.concat(plain(app.run('TBL_SCHEMAS.delivery.map(function(c){return c.key})')).slice(7)),
+  assert.deepEqual(thKeys, HEAD8.concat(plain(app.run('TBL_SCHEMAS.delivery.map(function(c){return c.key})')).slice(8)),
     '表头列序必须与 schema 全量列序一致');
-  assert.equal(thKeys.slice(0, 7).join(','), HEAD7.join(','), '表头前 7 列 = 单据级 7 列');
+  assert.equal(thKeys.slice(0, 8).join(','), HEAD8.join(','), '表头前 8 列 = 单据级 8 列');
 
   const bodyRows = [...parts[1].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(function (m) { return m[1]; });
   const sumRow = bodyRows[bodyRows.length - 1];
@@ -616,37 +621,38 @@ test('G3 headHtml 前 7 个 <td> 的 data-key 与 schema 前 7 项逐一对应�
   const g1item = groups.find(function (g) { return g.planNo === 'JFJH-20260824-00001'; });
   assert.ok(g2items && g1item, '两组编号必须各自正确渲染（planNo 值）');
 
-  /* 组 A（2 个明细行）：7 个单据格 rowspan=2 + 行级 7 格 + 选择格 1 = 15
-     （.150：行级列 10 → 7 —— 移除「订单数量 / 已交付 / 未交付」三列） */
+  /* 组 A（2 个明细行）：8 个单据格 rowspan=2 + 行级 7 格 + 选择格 1 = 16
+     （.150：行级列 10 → 7 —— 移除「订单数量 / 已交付 / 未交付」三列；
+       .154：单据级列 7 → 8 —— 新增「任务单号」taskNo） */
   const a0 = g2items.rows[0];
   assert.equal(g2items.rows.length, 2, 'rowspan=2 的组应有 2 行');
-  assert.equal(TDS(a0), 15, '组首行 td 总数 = 1(选择) + 7(单据) + 7(行级)');
-  HEAD7.forEach(function (k) {
+  assert.equal(TDS(a0), 16, '组首行 td 总数 = 1(选择) + 8(单据) + 7(行级)');
+  HEAD8.forEach(function (k) {
     assert.match(a0, new RegExp('<td data-key="' + k + '" rowspan="2"'), '单据级列 ' + k + ' 必须 rowspan=2');
   });
   assert.equal(KEY(a0, 'planNo'), 'JFJH-20260823-00001', '首列值 = 交付计划编号');
   /* 续行：单据格与选择格均已 rowspan 合并 → 只剩行级 7 格 */
   const a1 = g2items.rows[1];
   assert.equal(TDS(a1), 7, '续行 td 总数 = 0(选择,已合并) + 0(单据,已合并) + 7(行级)');
-  HEAD7.forEach(function (k) { assert.equal(KEY(a1, k), null, '续行不得重复输出单据格 ' + k); });
+  HEAD8.forEach(function (k) { assert.equal(KEY(a1, k), null, '续行不得重复输出单据格 ' + k); });
 
   /* 组 B（1 个明细行）：rowspan=1 */
   const b0 = g1item.rows[0];
   assert.equal(g1item.rows.length, 1);
-  assert.equal(TDS(b0), 15, '单明细行组的 td 总数');
-  HEAD7.forEach(function (k) {
+  assert.equal(TDS(b0), 16, '单明细行组的 td 总数');
+  HEAD8.forEach(function (k) {
     assert.match(b0, new RegExp('<td data-key="' + k + '" rowspan="1"'), '单据级列 ' + k + ' 必须 rowspan=1');
   });
   assert.equal(KEY(b0, 'planNo'), 'JFJH-20260824-00001');
 
-  /* 合计行：所有 schema 列各一个 td（带 data-key），前 7 列随列布局对齐 */
+  /* 合计行：所有 schema 列各一个 td（带 data-key），前 8 列随列布局对齐 */
   const sumKeys = [...sumRow.matchAll(/data-key="([^"]+)"/g)].map(function (m) { return m[1]; });
   assert.deepEqual(sumKeys, plain(app.run('TBL_SCHEMAS.delivery.map(function(c){return c.key})')), '合计行逐列同构');
   assert.equal(KEY(sumRow, 'planNo'), '合计', '合计标签落在首列（标签随列布局首列）');
   app.dispose();
 });
 
-test('G4 空数据：仍渲染 7 个单据级表头（列集合不因无数据而少列）', () => {
+test('G4 空数据：仍渲染 8 个单据级表头（列集合不因无数据而少列）', () => {
   const app = app0({ deliveries: [] });
   const html = String(app.run('renderDelivery()'));
   assert.match(html, /暂无交付计划/);

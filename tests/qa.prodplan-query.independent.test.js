@@ -504,8 +504,8 @@ test('E1 水印：index.html 恰 1 处 >build <BUILD><，上一版本权威/任�
 });
 
 test('E2 tests/harness/build.js 的 BUILD/PREV 为手写字面量，且与 index.html 双向一致', function () {
-  assert.equal(build.BUILD, '2026-10-19.153', 'BUILD 必须手写为本次版本 .153');
-  assert.equal(build.PREV, '2026-10-15.152', 'PREV 必须手写为上一版本 .152');
+  assert.equal(build.BUILD, '2026-10-20.154', 'BUILD 必须手写为本次版本 .154');
+  assert.equal(build.PREV, '2026-10-19.153', 'PREV 必须手写为上一版本 .153');
   /* 正向：BUILD 必须能在 index.html 中命中 */
   assert.equal((INDEX_SRC.match(build.buildMarkRe(build.BUILD)) || []).length, 1, 'BUILD 必须命中且恰 1 处');
   /* 反向：deploy.sh 的提取式从 index.html 抽出实际水印，必须 === BUILD */
@@ -530,7 +530,7 @@ test('E3 §E2 字面量副本（qa.ppshift-advance）已同步为本次 BUILD/PR
 });
 
 test('E4 js/guide.js：版本标注同步 + 新增「排产查询」使用说明条目（运行时可见）', function () {
-  assert.ok(GUIDE_SRC.indexOf('2026-10-19（build .153）') >= 0, 'guide.js 顶部「更新」行必须标注 2026-10-19（build .153）');
+  assert.ok(GUIDE_SRC.indexOf('2026-10-20（build .154）') >= 0, 'guide.js 顶部「更新」行必须标注 2026-10-20（build .154）');
   assert.equal(countOf(GUIDE_SRC, '排产查询（.147）'), 1, 'guide.js 必须有恰 1 条「排产查询（.147）」使用说明条目');
   assert.ok(GUIDE_SRC.indexOf('强制切「总览」视图') >= 0, '说明条目必须写明「强制切总览视图」（口径1 的用户可见承诺）');
 
