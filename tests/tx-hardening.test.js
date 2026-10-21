@@ -113,7 +113,11 @@ function mkApp(seed) {
    ================================================================ */
 
 test('A-① bulkDelete（产品）：勾选 2 条 → 恰好 1 次 DB.tx[products, logs]；每条日志带操作者', async () => {
-  const app = mkApp();
+  /* 【build .155】本用例只锁定「批量删除 = 1 次事务」这一不变式，与「哪些产品可删」无关。
+     .155 起被**库存订单引用过的产品禁止删除**（含历史单），默认 fixture 的 O-INV 引用了 P1，
+     会让新守卫整批拒绝删除、txCount 变 0。故此处清空 orders，把两个关注点解耦。
+     新守卫本身由 tests/product-delete-guard.155.test.js 独立覆盖（不在本文件测）。 */
+  const app = mkApp({ orders: [] });
   await app.run('selSet("product").add("0");selSet("product").add("2");');
 
   await app.run('bulkDelete("product")');
@@ -148,7 +152,8 @@ test('A-① bulkDelete（排产计划）：非「待排产」跳过但仍只有 
 });
 
 test('A-① bulkDelete：tx 失败 → 不渲染、不清勾选（不进入成功态）', async () => {
-  const app = mkApp();
+  /* 【build .155】同上一用例：清空 orders 以避开「被库存订单引用禁删」新守卫，只测失败态不变式 */
+  const app = mkApp({ orders: [] });
   await app.run('selSet("product").add("0");');
   app.recorder.setResult('tx', false);
 

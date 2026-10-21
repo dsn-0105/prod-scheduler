@@ -38,6 +38,13 @@ const DEFAULT_DATA = {
        · u   = 按登录账号分片，u[username] 整体就是一份 v1 形状的扁平布局
      旧值仍可被 normalizeLayout() 幂等归一，前端永远只看到 v2。 */
   fieldsAudit: 'audited', fieldsDraft: null, tblLayout: { v: 2, def: {}, u: {} },
+  /* 【build .155】全局展示偏好（**全公司共用一份，仅管理员可写**）。
+     首个消费方 = 产品主数据「默认排序」{sort:{product:{key,dir}}}；库存订单列表按该排序派生的
+     「产品座次」排（见 index.html sortInvRowsByProdRank）。
+     与 tblLayout 的分工：tblLayout 是**按账号分片**的个人列序/列宽，本表是**全局唯一**的管理态配置，
+     故不复用 tblLayout（否则「重置我的列布局」会深拷贝 def 把默认排序一起冻结进个人分片）。
+     空对象 = 未配置 ⇒ 前端一律回落到各项既有默认行为（零回归）。 */
+  uiDefaults: {},
   transfers: []
 };
 
@@ -48,7 +55,7 @@ const BIZ_KEYS = ['products', 'orders', 'deliveries', 'productionPlans', 'proces
    【P1·T02 变更】canWrite 起**不再对 SYSTEM_KEYS 一律放行**——transfers / productionReports / logs
    已按设计 §5.1 逐键收紧（原实现「任意登录用户可整表覆盖调拨台账」是线上实测到的真实越权）。
    本常量保留仅为「键分类」参考，判定逻辑见下方 canWrite 的 switch。 */
-const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers', 'productionReports'];
+const SYSTEM_KEYS = ['logs', 'meta', 'tblLayout', 'fieldsAudit', 'fieldsDraft', 'transfers', 'productionReports', 'uiDefaults'];
 
 function load(file, def) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return def; }
@@ -265,6 +272,13 @@ function canWrite(user, key, ctx) {
     case 'fieldsAudit':
     case 'fieldsDraft':
       return true;
+    /* 【build .155】全局展示偏好（产品主数据默认排序等）：**仅管理员可写**。
+       admin 已在函数首行 `if (user.role === 'admin') return true` 放行，走到本例即非 admin
+       ⇒ 一律 false。这是「只能由管理员调整」的**服务端硬闸**——前端按钮隐藏 + 函数级
+       needSysAdmin() 只是体验层，F12 直调 /api/save 或 /api/tx 也必须被挡在此处。
+       读路径不受限：/api/data 全量下发，前端只读消费（普通账号照常按管理员配的顺序显示）。 */
+    case 'uiDefaults':
+      return false;
     default:
       return p[key] === true;                             /* deliveries / processTemplates / fields */
   }

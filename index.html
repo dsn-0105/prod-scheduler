@@ -516,7 +516,7 @@ const DB={
    serverData / serverRevs 缓存，而调用方对业务内存的「乐观变更」并未回滚 —— 页面会停在算错的值上，
    必须 F5 才复原（且失败后若用户继续点保存，会把脏值写回服务器）。
    本函数按 initApp 的同一批 key（products/orders/deliveries/productionPlans/productionReports/
-   processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout）
+   processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout/uiDefaults）
    从 serverData（pullAll 后 = 服务器真值）复位这批全局量。
    刻意不做（与 initApp 的区别）：不 seed()、不跑 migrate*()、不 syncStockFromInvOrders()
      —— 失败回灌只做「值复位」，不得触发任何写盘 / 迁移 / 派生投影副作用。
@@ -537,6 +537,7 @@ function rehydrateFromServer(){
   if(serverData.fieldsDraft!==undefined)fieldsDraft=serverData.fieldsDraft;
   if(serverData.meta!==undefined)meta=serverData.meta;
   if(serverData.tblLayout!==undefined)applyServerLayout(serverData.tblLayout);   /* .152：v2 分片 → 取本人分片并深拷贝 */
+  if(serverData.uiDefaults!==undefined)applyUiDefaults(serverData.uiDefaults);   /* .155：全局展示偏好（产品默认排序等） */
 }
 /* ---- 实时同步：轮询版本号，有变化自动拉取刷新 ---- */
 async function pollRevs(){
@@ -942,6 +943,10 @@ function toggleOrderSection(k){orderCollapse[k]=!orderCollapse[k];renderContent(
 function orderTypeOf(o){return o&&o.orderType?o.orderType:'销售订单';}
 /* 新增订单时记录"意图分类"，保存时强制写入，杜绝串类 */
 let pendingOrderType=null;
+/* 【build .155】批量生成库存订单模式开关（一屏填 N 行 → 保存时拆成 N 张单，一产品一张单）。
+   由 orderModal 第 3 参数 opts.bulkGen 决定，**每次打开弹窗都重设**，防止上一次的批量态残留到
+   普通新增/编辑（残留会让单行库存订单也被误判为「批量模式」而绕过 1 行校验）。 */
+var __orderBulkGen=false;
 
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -1046,20 +1051,26 @@ function filterRows(m,rows){
   });
 }
 
+/* 【build .155】按「列定义 + 方向」比较两行 —— **全工程唯一的排序比较口径**。
+   sortRows（点击列头的手动排序）与 productsSortedByDefault（管理员默认排序）共用本函数，
+   禁止各自复制一份 number/date/text 分支（否则日后口径漂移，同一份数据在两张表里排出来不一致）。
+   入参 r 只要能被 colVal(col,r) 取值即可（订单行是 {order,item,…} 包装；产品行就是产品对象本身）。
+   行为与 .154 及以前 sortRows 的内联实现**逐字等价**（含 localeCompare('zh-CN') 与 date 的 -dir/+dir）。 */
+function cmpByColDef(col,dir,a,b){
+  let va=colVal(col,a),vb=colVal(col,b);
+  if(typeof col.sort==='function')return (col.sort(va)-col.sort(vb))*dir;   /* 自定义语义排序（如交付计划状态权重） */
+  if(col.type==='number')return (num(va)-num(vb))*dir;
+  if(col.type==='date'){va=fmtDate(va);vb=fmtDate(vb);return va<vb?-dir:(va>vb?dir:0);}
+  va=String(va);vb=String(vb);
+  return va.localeCompare(vb,'zh-CN')*dir;
+}
 function sortRows(m,rows){
   const s=tState(m);
   if(!s.sort)return rows;
   const col=(TBL_SCHEMAS[m]||[]).find(c=>c.key===s.sort.key);
   if(!col)return rows;
   const dir=s.sort.dir;
-  return [...rows].sort((a,b)=>{
-    let va=colVal(col,a),vb=colVal(col,b);
-    if(typeof col.sort==='function')return (col.sort(va)-col.sort(vb))*dir;   /* 自定义语义排序（如交付计划状态权重） */
-    if(col.type==='number')return (num(va)-num(vb))*dir;
-    if(col.type==='date'){va=fmtDate(va);vb=fmtDate(vb);return va<vb?-dir:(va>vb?dir:0);}
-    va=String(va);vb=String(vb);
-    return va.localeCompare(vb,'zh-CN')*dir;
-  });
+  return [...rows].sort((a,b)=>cmpByColDef(col,dir,a,b));
 }
 
 function applyTable(m,rows){return sortRows(m,filterRows(m,rows));}
@@ -1422,6 +1433,60 @@ function filterBar(m){
 /* 空筛选结果行 */
 function noMatchRow(m,colspan){
   return '<tr><td colspan="'+colspan+'" style="text-align:center;padding:24px;color:var(--muted)">无匹配数据 <button class="btn btn-sm" style="margin-left:8px" onclick="clearAllFilt(\''+m+'\')">清除筛选</button></td></tr>';
+}
+
+/* ================================================================
+   【build .155】全局展示偏好 uiDefaults —— 仅管理员可改，全公司共用一份
+   ----------------------------------------------------------------
+   与 tblLayout 的分工（勿混）：
+     · tblLayout  = 按账号分片的**个人**列序/列宽（每人各一份，谁都能改自己的）
+     · uiDefaults = 全局唯一的**管理态**配置（只有管理员能改，所有人共用同一份）
+   为什么不塞进 tblLayout.def（.155 方案评审结论）：
+     `resetTableLayout()` 会把 `def[模块]` **整份深拷贝**进当前账号的个人分片 ——
+     若默认排序存在 def 里，该账号一旦点过「重置列布局」，排序就被**冻结进他的分片**，
+     管理员之后再改全局默认对他永久失效。故必须与列布局解耦、另立一张表。
+   当前唯一消费方：产品主数据「默认排序」→ 库存订单列表按该排序派生的「产品座次」排列。
+   空表 / 字段缺失 ⇒ 一律视同「未配置」，各消费方回落自己的既有默认（零回归）。
+================================================================ */
+var uiDefaults={};
+/* 形状归一（幂等，宽进严出）：非对象/数组 → {}；sort 只保留**合法**条目
+   （key 必须是非空字符串；dir 只认 ±1，其余按升序 1）。非法条目一律**丢弃**而不是抛错
+   —— 本表是「锦上添花」的展示偏好，坏数据不应让页面渲染中断，静默回落既有默认即可。 */
+function normUiDefaults(v){
+  var out={sort:{}};
+  if(!v||typeof v!=='object'||Array.isArray(v))return out;
+  var s=v.sort;
+  if(s&&typeof s==='object'&&!Array.isArray(s)){
+    Object.keys(s).forEach(function(k){
+      var e=s[k];
+      if(!e||typeof e!=='object'||Array.isArray(e))return;
+      if(typeof e.key!=='string'||!e.key)return;
+      out.sort[k]={key:e.key,dir:(e.dir===-1?-1:1)};
+    });
+  }
+  return out;
+}
+/* 落内存（/api/data 下发或 DB.get 之后调用）—— 深拷贝，避免与 serverData 共享引用 */
+function applyUiDefaults(raw){uiDefaults=normUiDefaults(raw);}
+/* 【唯一取值点】某表单的管理员默认排序 → {key,dir} 或 null（未配置）。
+   禁止调用方各自去读 uiDefaults 内部结构（防日后结构演进时漏改）。 */
+function defaultSortOf(formKey){
+  var e=(uiDefaults&&uiDefaults.sort)?uiDefaults.sort[formKey]:null;
+  return (e&&typeof e.key==='string'&&e.key)?e:null;
+}
+/* 保存（**仅管理员**）：patch 语义 —— 传入 {表单: {key,dir}} 覆盖该表单，传 null 删除该表单。
+   服务端 canWrite 对 uiDefaults 非 admin 恒 403（硬闸），前端 needSysAdmin() 只是体验层。
+   返回 true/false（false 时 DB.set 已提示并回灌内存）。 */
+async function saveUiDefaults(patch){
+  var nd=normUiDefaults(uiDefaults);
+  Object.keys(patch||{}).forEach(function(k){
+    var e=patch[k];
+    if(e===null)delete nd.sort[k];
+    else nd.sort[k]={key:e.key,dir:(e.dir===-1?-1:1)};
+  });
+  var ok=await DB.set('uiDefaults',nd);
+  if(ok)uiDefaults=nd;
+  return ok;
 }
 
 /* ================================================================
@@ -2115,17 +2180,151 @@ function sumRowHtml(schema,rows,preTd,rowStyle,labelKey){
 }
 
 /* ================================================================
+   【build .155】产品主数据「管理员默认排序」+ 库存订单「产品座次」
+   ----------------------------------------------------------------
+   需求（用户 2026-10-20/21 拍板）：自定义默认排序设**在产品主数据**上，库存订单列表
+   **直接跟随**它的排序。为什么落成「传座次」而不是「传字段名」：
+     两张表存在**同名不同义**的列 —— `id` 在产品是「产品编码」、在库存订单是「订单编号」；
+     `status` 在产品是「启用/停用」、在库存订单是「执行中/已完成/已取消/已暂停」。
+     若照搬产品那边的 {key,dir} 到订单表按同名找列，会**静默排错**（既不报错、结果也不对）；
+     且产品的「日产能/库存/自定义字段」在库存订单表根本没有对应列。
+   故本组函数只传递**顺序**：先按管理员配置把产品排一遍 → 得到 productId→名次 的映射 →
+   订单行按自己产品的名次排。产品那边无论按什么字段排（含日后新增的自定义字段），
+   库存订单都自动跟随，永不踩同名不同义的坑。
+================================================================ */
+
+/* 【唯一取值点·产品侧】按「管理员默认排序」排好的**产品副本**（不动 products 本身顺序）。
+   renderProducts（产品列表）与 sortInvRowsByProdRank（库存订单座次）**共用本函数**
+   —— 两者看到的顺序必须同源，否则会出现「产品页按日产能排、库存订单却不跟」。
+   降级规则：未配置 / 字段已被删除（fields.product 里找不到该 key）→ 返回原顺序（语义不变）。
+   ⚠ 返回的是**副本数组**，元素仍是 products 里的同一批对象引用（故 indexOf 仍可用）。 */
+function productsSortedByDefault(){
+  const arr=(products||[]).slice();
+  const s=defaultSortOf('product');
+  if(!s)return arr;
+  const fp=(fields&&fields.product)?fields.product:null;
+  if(!fp)return arr;
+  const f=fp.find(x=>x.key===s.key);
+  if(!f)return arr;                    /* 该字段已被「字段设置」删除 → 回落录入顺序，不报错 */
+  const col={key:f.key,type:(f.type==='number'?'number':(f.type==='date'?'date':'text'))};
+  return arr.sort((a,b)=>cmpByColDef(col,s.dir,a,b));
+}
+
+/* 【唯一取值点·订单侧】库存订单默认排序 = 跟随产品座次。
+   边界口径（与用户 .155 拍板一致）：
+     · 未配置默认排序 → **原样返回**（调用方保持 .154 及以前「单据编号升序」，零回归）
+     · 查不到的产品（产品主数据已删的孤儿料号，.155 体检线上为 0）统一**排最后**，相互间保持原序
+     · 名次相同 → 按**原下标**升序 ⇒ 结果稳定可预期，不依赖引擎 sort 的稳定性
+     · 只读：不改入参、返回新数组（与 .153「禁原地 sort 共享数组」同款纪律）
+   注：库存订单恒为 1 行明细（.155 起保存侧强制），故不存在「同一订单多行被打散」的问题；
+   整单合并仍由 renderOrderTable 既有的 shouldMerge 分支负责，本函数只管行序。 */
+function sortInvRowsByProdRank(rows){
+  if(!defaultSortOf('product'))return rows;
+  const rank={};
+  productsSortedByDefault().forEach((p,i)=>{ if(p&&p.id!=null)rank[String(p.id)]=i; });
+  const BIG=Number.MAX_SAFE_INTEGER;
+  const dec=rows.map((r,i)=>{
+    const pid=String((r&&r.item&&r.item.productId!=null)?r.item.productId:'');
+    const o=(pid&&rank[pid]!=null)?rank[pid]:BIG;
+    return {r:r,i:i,o:o};
+  });
+  dec.sort((a,b)=>(a.o-b.o)||(a.i-b.i));
+  return dec.map(x=>x.r);
+}
+
+/* 产品字段中文名（提示语用；字段已删除时回落 key 本身） */
+function prodFieldLabelOf(key){
+  const fp=(fields&&fields.product)?fields.product:[];
+  const f=fp.find(x=>x.key===key);
+  return f?f.label:key;
+}
+/* 【仅管理员】把当前列头排序固化为全公司默认排序（产品主数据 + 库存订单跟随）。
+   双保险：按钮 isSysAdmin() 显隐 + 本函数 needSysAdmin() 守卫（防 F12 绕过）+ 二次 confirm。
+   未手动排过序时无「当前排序」可取 → 明确提示先点列头，不猜、不默认选第一列。 */
+async function setProductDefaultSort(){
+  if(!needSysAdmin())return;
+  const s=tState('product').sort;
+  if(!s||!s.key){alert('请先点击产品列表的「列头」排到想要的顺序（点 1 次升序、2 次降序），再点本按钮固化。');return;}
+  const fp=(fields&&fields.product)?fields.product:[];
+  if(!fp.find(x=>x.key===s.key)){alert('该列已不在产品字段配置中，无法设为默认排序。');return;}
+  const dirTxt=s.dir===-1?'降序':'升序';
+  const label=prodFieldLabelOf(s.key);
+  if(!confirm('把「'+label+' '+dirTxt+'」设为**所有账号**的产品主数据默认排序？\n\n· 库存订单列表将按该顺序跟随（同产品的行聚在一起）\n· 员工仍可临时点列头自行排序，刷新/切页后回到此默认'))return;
+  const ok=await saveUiDefaults({product:{key:s.key,dir:s.dir}});
+  if(!ok)return;                       /* DB.set 已弹失败原因 */
+  logOp('设置','产品主数据','设置产品主数据默认排序：'+label+' '+dirTxt);
+  renderContent();
+}
+/* 【仅管理员】清除产品默认排序（回落到「录入顺序」，库存订单回落「单据编号升序」） */
+async function clearProductDefaultSort(){
+  if(!needSysAdmin())return;
+  if(!defaultSortOf('product'))return;
+  if(!confirm('清除产品主数据的默认排序？\n\n· 产品列表恢复「录入顺序」\n· 库存订单列表恢复「单据编号升序」'))return;
+  const ok=await saveUiDefaults({product:null});
+  if(!ok)return;
+  logOp('设置','产品主数据','清除产品主数据默认排序');
+  renderContent();
+}
+
+/* ================================================================
+   【build .155】产品删除前置守卫：被库存订单引用过的产品禁止删除
+   ----------------------------------------------------------------
+   用户 .155 拍板口径：**历史订单也算**（已完成/已取消同样计入），用过就不能删；提示改「停用」。
+   原因：产品删了但历史单据还引着料号 → 料号断链、无法追溯。
+   ⚠ 口径范围：**只看库存订单**（销售订单不在本次拦截内，按用户口径逐字实现，勿擅自扩大）。
+   只读：不改任何数据。返回受阻说明字符串（null = 可删）。 */
+function guardProductDelByInvOrders(pids){
+  const want={};
+  (pids||[]).forEach(p=>{ if(p!=null&&p!=='')want[String(p)]=1; });
+  if(!Object.keys(want).length)return null;
+  const hit={};
+  (orders||[]).forEach(o=>{
+    if(orderTypeOf(o)!=='库存订单')return;
+    (o.items||[]).forEach(it=>{
+      const pid=String(it&&it.productId!=null?it.productId:'');
+      if(!pid||!want[pid])return;
+      if(!hit[pid])hit[pid]=[];
+      hit[pid].push(o.id);
+    });
+  });
+  const keys=Object.keys(hit);
+  if(!keys.length)return null;
+  const lines=keys.map(pid=>{
+    const ids=hit[pid];
+    return '　· '+pid+'（'+ids.length+' 张库存订单：'+ids.slice(0,3).join('、')+(ids.length>3?' 等':'')+'）';
+  });
+  return '以下产品已被库存订单引用，不能删除：\n'+lines.join('\n')+
+    '\n\n（已完成/已取消的历史订单同样计入——删除会让单据料号断链、无法追溯。\n'+
+    '　若只是不再使用该产品，请编辑产品并把「状态」改为「停用」。）';
+}
+
+/* ================================================================
    产品主数据
 ================================================================ */
 function renderProducts(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜勾选记录后点上方按钮编辑/复制/删除</span> '+(canWriteForm('product')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button>':'')+'</div>';
+  /* 【build .155】默认排序状态条（所有人可见，只读）+ 管理员专属「设为默认排序 / 清除」。
+     按钮可见性由 isSysAdmin() 控制，函数内另有 needSysAdmin() 守卫（防 F12 直调）。 */
+  const _ds=defaultSortOf('product');
+  const _dsTxt=_ds?(prodFieldLabelOf(_ds.key)+' '+(_ds.dir===-1?'降序':'升序')):'未设置（录入顺序）';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜勾选记录后点上方按钮编辑/复制/删除</span> '
+    +'<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:10px;white-space:nowrap">'
+      +'<span title="管理员设定的默认排序；库存订单列表按同一顺序跟随。你点列头临时排序后，刷新即回到此默认">默认排序：<b>'+esc(_dsTxt)+'</b></span>'
+      +(isSysAdmin()?'<button class="btn btn-sm" onclick="setProductDefaultSort()" title="把当前列头排序固化为所有账号的默认排序（仅管理员）">设为默认排序</button>':'')
+      +(isSysAdmin()&&_ds?'<button class="btn btn-sm" onclick="clearProductDefaultSort()" title="清除默认排序，回落录入顺序（仅管理员）">清除</button>':'')
+    +'</span>'
+    +(canWriteForm('product')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button>':'')+'</div>';
   if(products.length===0){
     html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg><br>暂无产品数据，点击「新增产品」开始</div>';
   }else{
     const cols=fields.product;
     TBL_SCHEMAS.product=cols.map(f=>({key:f.key,label:f.label,type:f.type==='number'?'number':(f.type==='date'?'date':'text'),select:f.type==='select',locked:f.locked}));
     TBL_ROWS.product=products;
-    let shown=applyTable('product',products);
+    /* 【build .155】管理员默认排序：仅当用户**未手动点击列头排序**时生效（手动排序优先级更高，
+       与订单表 `if(shouldMerge&&!manualSort)` 同款口径）。默认排序先作用于**副本**再进 applyTable，
+       保证「筛选 → 排序 → 分页」的先后不变（分页在下方，排序必须早于分页，否则只排当前页）。 */
+    let _pBase=products;
+    if(!tState('product').sort&&defaultSortOf('product'))_pBase=productsSortedByDefault();
+    let shown=applyTable('product',_pBase);
     const pAll=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存） */
     /* 2026-08-25.68：金蝶式分页（单行模型直接切行） */
     if(PAGED_FORMS.product&&shown.length>0)shown=slicePaged('product',shown,pageSizeOf('product')).rows;
@@ -2218,8 +2417,15 @@ function saveProduct(idx){
 }
 
 function delProduct(idx){
-  if(!confirm('确认删除产品「'+products[idx].name+'」？关联的库存和排产数据不会自动删除。'))return;
-  logOp('删除','产品主数据','删除产品「'+products[idx].name+'」('+products[idx].id+')');
+  const p=products[idx];
+  if(!p)return;
+  /* 【build .155】有库存订单引用的产品禁止删除（含已完成/已取消的历史单）——
+     用户拍板：历史订单也算，用过就不能删；提示改「停用」。守卫在 confirm **之前**，
+     否则用户先点了「确定」再被拦，体验与文案都对不上。 */
+  const blk=guardProductDelByInvOrders([p.id]);
+  if(blk){alert(blk);return;}
+  if(!confirm('确认删除产品「'+p.name+'」？关联的库存和排产数据不会自动删除。'))return;
+  logOp('删除','产品主数据','删除产品「'+p.name+'」('+p.id+')');
   products.splice(idx,1);
   save('products',products);
   renderContent();
@@ -3565,7 +3771,14 @@ function renderOrderTable(formKey,typeOrders,prodMap){
      手动排序分支保持分页后原位（历史行为不变，不引入回归）。 */
   if(shouldMerge&&!manualSort){
     if(formKey==='order_frame') shown=[...shown].sort((a,b)=>b.order.id.localeCompare(a.order.id,'zh-CN',{numeric:true})); // 销售订单默认：单据编号降序（数字感知，.79）
-    else if(formKey==='order_inv') shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN')); // 库存：id 升序（保持原行为）
+    /* 【build .155】库存订单默认排序改为**跟随产品主数据的默认排序**（产品座次）：
+       配了默认排序 → 按产品座次（sortInvRowsByProdRank，见其函数头注释）；
+       未配置 → 保持 .154 及以前「单据编号升序」原行为（零回归）。
+       排序必须留在分页（下方 slicePaged）**之前** —— .80 教训：写在分页后只排当前页。 */
+    else if(formKey==='order_inv'){
+      if(defaultSortOf('product'))shown=sortInvRowsByProdRank(shown);
+      else shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
+    }
   }
   /* 2026-09-05.110：幽灵勾选复发修复（用户报告「被筛选条目仍被选中→视觉 1 条但仅限 1 条操作报已选 N 张」）。
      .5/.64 只在编辑保存/操作后清理，筛选或排序条件变更本身不清 selSet → 被筛掉的行 checkbox 消失但 selSet 残留。
@@ -3976,6 +4189,8 @@ function bulkGenOrder(){
   });
   switchTab('inv');
   pendingOrderType='库存订单';
+  /* 【build .155】{bulkGen:true}：一屏预填 N 行，保存时由 saveOrder → saveBulkInvOrders 拆成
+     N 张独立订单（一产品一张单）。弹窗体验不变（仍是一次把数量填完），变的只是落库形态。 */
   orderModal(null,{
     id:nextOrderNo(todayStr(),'库存订单'),
     customer:'库存',
@@ -3985,10 +4200,13 @@ function bulkGenOrder(){
     deadline:'',
     notes:'',
     items:items
-  });
+  },{bulkGen:true});
 }
 
-function orderModal(idx,prefill){
+function orderModal(idx,prefill,opts){
+  /* 【build .155】第 3 参数 opts.bulkGen = 批量生成库存订单模式（唯一允许弹窗内多行的场景）。
+     每次打开都重设，避免批量态残留到普通新增/编辑。 */
+  __orderBulkGen=!!(opts&&opts.bulkGen);
   const src=prefill!=null?prefill:(idx!=null?orders[idx]:null);
   const o=src?JSON.parse(JSON.stringify(src)):{status:'执行中',orderType:'销售订单',startDate:todayStr(),items:[]};
   // 新增订单：按订单类型自动预填单号（库存订单 KCDD- / 销售订单 XSDD-），用户可手动修改
@@ -4020,7 +4238,19 @@ function orderModal(idx,prefill){
     body+='<div><label>'+esc(f.label)+(f.required?' *':'')+'</label>'+ctrl+'</div>';
   });
   body+='</div>';
-  body+='<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">订单明细</b><span style="font-size:12px;color:var(--muted)">每行一种产品，一单可含多种开关'+(o.orderType==='库存订单'?'；数量=最大库存量（自动）':'')+'</span>'+(locked?'':'<button class="btn btn-sm" style="margin-left:auto" onclick="batchPickProducts()">批量选择产品</button><button class="btn btn-sm btn-primary" onclick="addOrderItemRow()">+ 添加产品行</button>')+'</div>';
+  /* 【build .155】库存订单「只能 1 行明细」——弹窗内**不提供**「批量选择产品 / 添加产品行」
+     入口（用户拍板：老单一律 1 行，新单也只许 1 行）。
+     唯一例外 = bulkGenOrder 的批量生成模式（__orderBulkGen）：一屏预填 N 行、保存时拆成 N 张单，
+     故该模式下保留原提示语。删除单行仍可用行内「删除」（删到剩 1 行即普通单）。 */
+  body+='<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><b style="font-size:14px">订单明细</b><span style="font-size:12px;color:var(--muted)">'
+    +(_invModal
+        ?(__orderBulkGen
+            ?'批量生成：为每个产品各生成 1 张库存订单（共 '+esc(String(orderItems(o).length))+' 张）；数量=最大库存量'
+            :'库存订单每单仅 1 行产品；数量=最大库存量（自动）')
+        :'每行一种产品，一单可含多种开关')
+    +'</span>'
+    +(locked||_invModal?'':'<button class="btn btn-sm" style="margin-left:auto" onclick="batchPickProducts()">批量选择产品</button><button class="btn btn-sm btn-primary" onclick="addOrderItemRow()">+ 添加产品行</button>')
+    +'</div>';
   /* 2026-08-30.92：库存订单弹窗隐藏「数量」输入列（数量=最大库存量）——全局标志供添加行/批量选择复用（_invModal 定义见 headCols 前） */
   window.__orderModalInv=_invModal;
   body+='<div class="table-wrap"><table id="orderItemsTbl"><thead><tr>'+
@@ -4496,6 +4726,14 @@ function saveOrder(idx){
   if(items.length===0){alert('请至少填写一行产品明细（选择产品并填写'+(o.orderType==='库存订单'?'最大库存量':'订单数量')+'）');return;}
   const bad=items.find(it=>!it.productId||_oqOf(it)<=0);
   if(bad){alert('存在"未选产品或'+(o.orderType==='库存订单'?'最大库存量':'数量')+'为0"的明细行，请补全或删除该行');return;}
+  /* 【build .155】库存订单只能有 1 行产品明细（用户拍板：一产品一张单）。
+     唯一例外 = bulkGenOrder 的批量生成模式（__orderBulkGen）：弹窗内一屏填 N 行，
+     保存时由下方拆成 N 张独立订单。校验放在「行合法性」之后 → 先让用户看到具体哪行没填，
+     再谈行数超限，报错顺序更符合直觉。 */
+  if(o.orderType==='库存订单'&&items.length>1&&!__orderBulkGen){
+    alert('库存订单只能有 1 行产品明细（一产品一张单）。\n\n如需为多个产品备货：请到「产品主数据」勾选多个产品 → 点「生成订单」，系统会按「一产品一张单」批量生成。');
+    return;
+  }
   /* .132：编辑保存前置——①保序匹配新旧行 ②拒存仍有引用的被删行 ③回带内部字段 ④台账/交付计划行号重映射。
      顺序不可换：先守卫（拒存则一字不写）→ 再回带 → 最后重映射（重映射会改 transfers/deliveries，须在守卫之后）。 */
   if(_oldLines){
@@ -4521,6 +4759,13 @@ function saveOrder(idx){
   if(!o.orderType){
     if(idx>=0&&orders[idx]&&orders[idx].orderType)o.orderType=orders[idx].orderType;
     else o.orderType='销售订单';
+  }
+  /* 【build .155】批量生成模式：库存订单多行 → 拆成 N 张单（一产品一张单）。
+     在此处（o 已完整构造、尚未落库）分流，走独立落库函数；本函数不再执行下面的单表落库路径。 */
+  if(o.orderType==='库存订单'&&items.length>1&&__orderBulkGen){
+    __orderBulkGen=false;
+    saveBulkInvOrders(o,items);
+    return;
   }
   pendingOrderType=null;
   if(idx>=0){
@@ -4549,6 +4794,53 @@ function saveOrder(idx){
     if(!orderRowVisibleInDom(o.id))clearHiddenOrderSel(idx);
     maybeWarnHiddenOrder(fk,o.id);
   }
+}
+
+/* 【build .155】批量生成库存订单：**一产品一张单**（用户 .155 拍板口径）。
+   ----------------------------------------------------------------
+   触发路径：产品主数据勾选 N 个产品 →「生成订单」（bulkGenOrder）→ 弹窗一屏预填 N 行、
+   把各产品「最大库存量」填完 → 保存 → saveOrder 判定「库存订单 + 多行 + bulkGen 模式」→ 调用本函数。
+   为什么不在 UI 层就让用户一张一张点：N 个产品要开 N 次弹窗，操作不可接受；
+   所以**交互层仍是一屏填完**，只在**落库形态**上拆成一产品一张单（数据语义严格一单一行）。
+   实现要点：
+     · 单号：沿用 nextOrderNo 的 max+1 起点，本批内顺序递增；额外 while 防撞号
+       （既存订单 + 本批已生成都跳过）——不用「循环里反复调 nextOrderNo」那种 O(N²) 且易错的写法。
+     · 单据头：逐字继承弹窗收集的 head（客户/日期/状态/备注…），只覆盖 id 与 items。
+     · 原子性：orders + logs 一次 DB.tx 提交（对齐 .125 bulkDelete 范式，不再逐条写盘）；
+       失败由 DB.tx 内部 pullAll + rehydrateFromServer 复原内存，本函数不再乐观渲染成功态。
+     · 库存同步：成功后走与 saveOrder 完全相同的 syncOrderAutoStatus + syncStockFromInvOrders。
+   ⚠ 深拷贝 head/it：同一 items 元素若被两张单共享引用，后续任何一处修改都会串改另一张单。 */
+async function saveBulkInvOrders(head,items){
+  const dateStr=String(head.startDate||'').trim()||todayStr();
+  const base=nextOrderNo(dateStr,'库存订单');
+  const prefix=base.slice(0,base.lastIndexOf('-')+1);
+  let seq=parseInt(base.slice(prefix.length),10);
+  if(isNaN(seq)||seq<1)seq=1;
+  const news=[],entries=[];
+  (items||[]).forEach(function(it){
+    let no=prefix+String(seq).padStart(5,'0');
+    while(orders.some(function(o){return o.id===no;})||news.some(function(o){return o.id===no;})) {
+      seq++; no=prefix+String(seq).padStart(5,'0');
+    }
+    seq++;
+    const one=JSON.parse(JSON.stringify(head));
+    one.id=no;
+    one.orderType='库存订单';
+    one.items=[JSON.parse(JSON.stringify(it))];
+    news.push(one);
+    entries.push(makeLogEntry('新增','订单管理','新增订单「'+no+'」('+esc(one.customer)+')，1 行明细（批量生成·一产品一张单）'));
+  });
+  if(!news.length){alert('没有可生成的产品行。');return;}
+  news.forEach(function(o){orders.push(o);});
+  entries.forEach(function(e){pushLogEntry(e);});
+  const ok=await DB.tx([{key:'orders',value:orders},{key:'logs',value:logs}],true);
+  if(!ok){alert('批量生成失败，数据未保存（已回滚到服务器最新数据），请刷新后重试。');return;}
+  syncOrderAutoStatus();
+  syncStockFromInvOrders();
+  closeModal();
+  renderContent();
+  showSaveNotice('已生成 '+news.length+' 张库存订单（一产品一张单）：'+news.map(function(o){return o.id;}).join('、'),
+    '<button class="btn btn-sm" onclick="hideSaveNotice()">知道了</button>');
 }
 
 /* ===== 编辑后行被筛选/排序隐藏的提示与恢复 ===== */
@@ -7480,6 +7772,14 @@ async function bulkDelete(m){
     const blocked=[...s].map(Number).map(i=>FORM_ACTIONS[m].get(i)).filter(o=>o&&(hasDeliveryOf(o.id)||saleOrderTrace(o)));
     if(blocked.length>0){alert('以下订单不能删除：\n'+blocked.map(o=>{const t=saleOrderTrace(o);return '· '+o.id+'（'+o.customer+'）'+(t?' 已有业务记录（已交付 '+t.dv+'、已调用 '+t.ck+'）':' — 已下推交付计划');}).join('\n')+'\n\n（有业务记录的销售订单为防止误删历史数据禁止删除；已下推交付计划的订单需先删除对应交付计划）');return;}
   }
+  /* 【build .155】产品批量删除：勾选范围内存在**被库存订单引用**的产品 → **整批拒绝**
+     并列明受阻清单（含历史单）。对齐本函数既有的「整批拒绝、不部分删除」范式——
+     否则用户会以为全删成功。守卫必须在 confirm 之前（先拦后问，不让用户白点确定）。 */
+  if(m==='product'){
+    const _pids=[...s].map(Number).map(i=>products[i]).filter(Boolean).map(p=>p.id);
+    const _blk=guardProductDelByInvOrders(_pids);
+    if(_blk){alert(_blk+'\n\n（本次未删除任何记录）');return;}
+  }
   if(!confirm('确认删除选中的 '+s.size+' 条记录？此操作不可撤销。'))return;
   const idxs=[...s].map(Number).sort((x,y)=>y-x);
   /* .125：日志条目先入内存（不写盘）——文案与改造前逐字一致 */
@@ -7749,6 +8049,7 @@ async function initApp(){
   fieldsAudit=await DB.get('fieldsAudit','audited');
   fieldsDraft=await DB.get('fieldsDraft',null);
   meta=await DB.get('meta',{seq:0});
+  applyUiDefaults(await DB.get('uiDefaults',{}));   /* .155：全局展示偏好（产品主数据默认排序 → 库存订单跟随） */
   applyServerLayout(await DB.get('tblLayout',{}));   /* .152：服务端 v2 分片 → 取本人分片（缺则回退 def）并深拷贝 */
   autoBackupOn=false;
 
@@ -7912,7 +8213,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-20.154</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-21.155</div>
 </body>
 </html>
 
