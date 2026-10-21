@@ -153,6 +153,13 @@ thead .exp-col{background:#eef2ff}
 /* 选中行高亮：透明蓝（row-sel 类由 updateSelUI 切换；td 覆盖含左右吸顶列与 rowspan 合并组） */
 #content .table-wrap tbody tr.row-sel td{background:rgba(59,130,246,.16)}
 #content .table-wrap tbody tr.row-sel:hover td{background:rgba(59,130,246,.24)}
+/* 【build .156】产品主数据「长按整行上下拖拽」视觉：可拖行给抓取光标，
+   拖拽中的行抬起（半透明 + 阴影）让用户看清"拎起来的是哪一行"；
+   body.pd-dragging-on 锁文本选中 —— 否则一路拖动会把经过的单元格文字全选上。 */
+.table-wrap tbody tr.pd-draggable{cursor:grab}
+.table-wrap tbody tr.pd-dragging{cursor:grabbing;opacity:.62;background:var(--primary-light)!important;box-shadow:0 6px 18px rgba(0,0,0,.16);position:relative;z-index:5}
+.table-wrap tbody tr.pd-dragging td{background:var(--primary-light)!important}
+body.pd-dragging-on{user-select:none;-webkit-user-select:none;cursor:grabbing}
 .bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px;position:sticky;top:58px;z-index:40;background:var(--primary-light);border-radius:8px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
 .bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
 .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);scrollbar-width:none}
@@ -1052,8 +1059,12 @@ function filterRows(m,rows){
 }
 
 /* 【build .155】按「列定义 + 方向」比较两行 —— **全工程唯一的排序比较口径**。
-   sortRows（点击列头的手动排序）与 productsSortedByDefault（管理员默认排序）共用本函数，
-   禁止各自复制一份 number/date/text 分支（否则日后口径漂移，同一份数据在两张表里排出来不一致）。
+   由 sortRows（点击列头的手动排序）调用；抽出成独立函数是为了让比较口径成为**可单测的单点**
+   （`tests/product-default-sort.155.test.js §B` 直接对它逐条断言 number/date/text/自定义权重四分支），
+   并防日后有人再写第二份内联比较副本导致口径漂移。
+   【.156 说明】`.155` 里「管理员默认排序」也用它排；`.156` 改成长按拖拽产生**显式名单**后，
+   默认顺序不再按字段比较，故本函数的调用方只剩 sortRows —— 但**保留不删**：
+   它是列头排序的准确口径所在，且 §B 用例持续守着它（删掉等于把守卫一起删掉）。
    入参 r 只要能被 colVal(col,r) 取值即可（订单行是 {order,item,…} 包装；产品行就是产品对象本身）。
    行为与 .154 及以前 sortRows 的内联实现**逐字等价**（含 localeCompare('zh-CN') 与 date 的 -dir/+dir）。 */
 function cmpByColDef(col,dir,a,b){
@@ -1449,40 +1460,50 @@ function noMatchRow(m,colspan){
    空表 / 字段缺失 ⇒ 一律视同「未配置」，各消费方回落自己的既有默认（零回归）。
 ================================================================ */
 var uiDefaults={};
-/* 形状归一（幂等，宽进严出）：非对象/数组 → {}；sort 只保留**合法**条目
-   （key 必须是非空字符串；dir 只认 ±1，其余按升序 1）。非法条目一律**丢弃**而不是抛错
-   —— 本表是「锦上添花」的展示偏好，坏数据不应让页面渲染中断，静默回落既有默认即可。 */
+/* 形状：{order:{表单:[id,id,...]}} —— **显式先后名单**（拖动排序产生）。
+   .156 起由「排序规则 {key,dir}」改为「显式名单」：用户拍板改成长按整行拖拽，
+   手工拖出来的任意顺序无法用「字段+方向」表达，必须记名单。
+   `.155` 曾用 `{sort:{product:{key,dir}}}`，线上实测该键从未被写入（`uiDefaults={}`），
+   故直接切换结构、无需迁移；旧 `sort` 字段被忽略（不保留、不报错）。
+   形状归一（幂等，宽进严出）：非对象/数组 → 空；每个表单必须是**字符串数组**，
+   逐项 String() 化、去空、**去重**（同一 id 只能有一个名次，重复会让排序结果依赖比较顺序）。 */
 function normUiDefaults(v){
-  var out={sort:{}};
+  var out={order:{}};
   if(!v||typeof v!=='object'||Array.isArray(v))return out;
-  var s=v.sort;
-  if(s&&typeof s==='object'&&!Array.isArray(s)){
-    Object.keys(s).forEach(function(k){
-      var e=s[k];
-      if(!e||typeof e!=='object'||Array.isArray(e))return;
-      if(typeof e.key!=='string'||!e.key)return;
-      out.sort[k]={key:e.key,dir:(e.dir===-1?-1:1)};
+  var o=v.order;
+  if(o&&typeof o==='object'&&!Array.isArray(o)){
+    Object.keys(o).forEach(function(k){
+      var arr=o[k];
+      if(!Array.isArray(arr))return;
+      var seen={},clean=[];
+      arr.forEach(function(id){
+        if(id===null||id===undefined)return;
+        var s=String(id);
+        if(!s||seen[s])return;
+        seen[s]=1;clean.push(s);
+      });
+      out.order[k]=clean;
     });
   }
   return out;
 }
 /* 落内存（/api/data 下发或 DB.get 之后调用）—— 深拷贝，避免与 serverData 共享引用 */
 function applyUiDefaults(raw){uiDefaults=normUiDefaults(raw);}
-/* 【唯一取值点】某表单的管理员默认排序 → {key,dir} 或 null（未配置）。
+/* 【唯一取值点】产品主数据的**自定义显示顺序** → id 数组 或 null（未自定义）。
+   返回的数组可能不完整（新产品不在名单里），调用方须把「不在名单的」排末尾。
    禁止调用方各自去读 uiDefaults 内部结构（防日后结构演进时漏改）。 */
-function defaultSortOf(formKey){
-  var e=(uiDefaults&&uiDefaults.sort)?uiDefaults.sort[formKey]:null;
-  return (e&&typeof e.key==='string'&&e.key)?e:null;
+function prodOrderOf(){
+  var e=(uiDefaults&&uiDefaults.order)?uiDefaults.order.product:null;
+  return (Array.isArray(e)&&e.length)?e:null;
 }
-/* 保存（**仅管理员**）：patch 语义 —— 传入 {表单: {key,dir}} 覆盖该表单，传 null 删除该表单。
-   服务端 canWrite 对 uiDefaults 非 admin 恒 403（硬闸），前端 needSysAdmin() 只是体验层。
-   返回 true/false（false 时 DB.set 已提示并回灌内存）。 */
+/* 保存（**仅管理员**）：order 项传数组即覆盖该表单名单，传 null 即删除（恢复录入顺序）。
+   服务端 canWrite 对 uiDefaults 非 admin 恒 403（硬闸），前端 needSysAdmin() 只是体验层。 */
 async function saveUiDefaults(patch){
   var nd=normUiDefaults(uiDefaults);
   Object.keys(patch||{}).forEach(function(k){
     var e=patch[k];
-    if(e===null)delete nd.sort[k];
-    else nd.sort[k]={key:e.key,dir:(e.dir===-1?-1:1)};
+    if(e===null)delete nd.order[k];
+    else nd.order[k]=e;
   });
   var ok=await DB.set('uiDefaults',nd);
   if(ok)uiDefaults=nd;
@@ -2180,48 +2201,56 @@ function sumRowHtml(schema,rows,preTd,rowStyle,labelKey){
 }
 
 /* ================================================================
-   【build .155】产品主数据「管理员默认排序」+ 库存订单「产品座次」
+   【build .156】产品主数据「自定义显示顺序」= 长按整行上下拖拽（仅管理员）
    ----------------------------------------------------------------
-   需求（用户 2026-10-20/21 拍板）：自定义默认排序设**在产品主数据**上，库存订单列表
-   **直接跟随**它的排序。为什么落成「传座次」而不是「传字段名」：
+   演进（用户 2026-10-21 两次拍板）：
+     `.155` 首版做成「点列头排序 → 再点『设为默认排序』按钮固化」两步式，
+     线上实测**不可用** —— `uiDefaults` 恒为 `{}`、操作日志 0 条，证明从未成功保存过。
+     用户随即要求「改成长按整行上下拖拽」⇒ 拖完即生效，没有第二步。
+   口径（三项均由用户选定）：
+     D1 拖动时若当前不是「全部显示」→ **自动切到 1000 条/页**，拖完恢复原每页条数
+     D2 **有筛选时禁止拖拽**（顺序只对筛选结果有意义，与全量名单对不上）
+     D3 **只留拖拽**：原「设为默认排序 / 清除」按钮删除；列头排序仍可临时查看但不固化
+   ----------------------------------------------------------------
+   为什么「传座次」仍然成立（`.155` 的核心结论，`.156` 未变）：
      两张表存在**同名不同义**的列 —— `id` 在产品是「产品编码」、在库存订单是「订单编号」；
      `status` 在产品是「启用/停用」、在库存订单是「执行中/已完成/已取消/已暂停」。
-     若照搬产品那边的 {key,dir} 到订单表按同名找列，会**静默排错**（既不报错、结果也不对）；
-     且产品的「日产能/库存/自定义字段」在库存订单表根本没有对应列。
-   故本组函数只传递**顺序**：先按管理员配置把产品排一遍 → 得到 productId→名次 的映射 →
-   订单行按自己产品的名次排。产品那边无论按什么字段排（含日后新增的自定义字段），
-   库存订单都自动跟随，永不踩同名不同义的坑。
+     若把某一列的名字+方向搬到订单表按同名找列，会**静默排错**（不报错、结果也不对）。
+     故只传递**顺序**：产品排成什么次序 → 订单行按自己产品在其中的名次排。
+     `.156` 只是把「顺序的来源」从「字段规则」换成「手工拖出来的名单」，判定逻辑不变。
 ================================================================ */
 
-/* 【唯一取值点·产品侧】按「管理员默认排序」排好的**产品副本**（不动 products 本身顺序）。
-   renderProducts（产品列表）与 sortInvRowsByProdRank（库存订单座次）**共用本函数**
-   —— 两者看到的顺序必须同源，否则会出现「产品页按日产能排、库存订单却不跟」。
-   降级规则：未配置 / 字段已被删除（fields.product 里找不到该 key）→ 返回原顺序（语义不变）。
+/* 【唯一取值点·产品侧】按「自定义显示顺序」排好的**产品副本**（不动 products 本身顺序）。
+   renderProducts（产品列表）与 sortInvRowsByProdRank（库存订单跟随）**共用本函数**
+   —— 两者看到的顺序必须同源，否则会出现「产品页是这个序、库存订单却不跟」。
+   边界：未自定义 → 原顺序；名单里没有的产品（拖动后新增的）**排末尾**、相互间按录入顺序；
+   名次相同不可能出现（normUiDefaults 已去重）。
    ⚠ 返回的是**副本数组**，元素仍是 products 里的同一批对象引用（故 indexOf 仍可用）。 */
-function productsSortedByDefault(){
+function productsSortedByOrder(){
   const arr=(products||[]).slice();
-  const s=defaultSortOf('product');
-  if(!s)return arr;
-  const fp=(fields&&fields.product)?fields.product:null;
-  if(!fp)return arr;
-  const f=fp.find(x=>x.key===s.key);
-  if(!f)return arr;                    /* 该字段已被「字段设置」删除 → 回落录入顺序，不报错 */
-  const col={key:f.key,type:(f.type==='number'?'number':(f.type==='date'?'date':'text'))};
-  return arr.sort((a,b)=>cmpByColDef(col,s.dir,a,b));
+  const ord=prodOrderOf();
+  if(!ord)return arr;
+  const rank={};
+  ord.forEach((id,i)=>{ rank[String(id)]=i; });
+  const BIG=Number.MAX_SAFE_INTEGER;
+  return arr
+    .map((p,i)=>({p:p,i:i,o:(rank[String(p.id)]!=null?rank[String(p.id)]:BIG)}))
+    .sort((a,b)=>(a.o-b.o)||(a.i-b.i))   /* 名次相同（都= BIG）时按录入顺序，结果稳定 */
+    .map(x=>x.p);
 }
 
-/* 【唯一取值点·订单侧】库存订单默认排序 = 跟随产品座次。
-   边界口径（与用户 .155 拍板一致）：
-     · 未配置默认排序 → **原样返回**（调用方保持 .154 及以前「单据编号升序」，零回归）
+/* 【唯一取值点·订单侧】库存订单默认排序 = 跟随产品显示顺序。
+   边界口径（与用户 .155 拍板一致，.156 沿用）：
+     · 未自定义顺序 → **原样返回**（调用方保持 .154 及以前「单据编号升序」，零回归）
      · 查不到的产品（产品主数据已删的孤儿料号，.155 体检线上为 0）统一**排最后**，相互间保持原序
      · 名次相同 → 按**原下标**升序 ⇒ 结果稳定可预期，不依赖引擎 sort 的稳定性
      · 只读：不改入参、返回新数组（与 .153「禁原地 sort 共享数组」同款纪律）
    注：库存订单恒为 1 行明细（.155 起保存侧强制），故不存在「同一订单多行被打散」的问题；
    整单合并仍由 renderOrderTable 既有的 shouldMerge 分支负责，本函数只管行序。 */
 function sortInvRowsByProdRank(rows){
-  if(!defaultSortOf('product'))return rows;
+  if(!prodOrderOf())return rows;
   const rank={};
-  productsSortedByDefault().forEach((p,i)=>{ if(p&&p.id!=null)rank[String(p.id)]=i; });
+  productsSortedByOrder().forEach((p,i)=>{ if(p&&p.id!=null)rank[String(p.id)]=i; });
   const BIG=Number.MAX_SAFE_INTEGER;
   const dec=rows.map((r,i)=>{
     const pid=String((r&&r.item&&r.item.productId!=null)?r.item.productId:'');
@@ -2232,37 +2261,169 @@ function sortInvRowsByProdRank(rows){
   return dec.map(x=>x.r);
 }
 
-/* 产品字段中文名（提示语用；字段已删除时回落 key 本身） */
-function prodFieldLabelOf(key){
-  const fp=(fields&&fields.product)?fields.product:[];
-  const f=fp.find(x=>x.key===key);
-  return f?f.label:key;
+/* ================================================================
+   长按整行拖拽引擎（Pointer Events 手写，非 HTML5 draggable）
+   ----------------------------------------------------------------
+   为什么不用 `<tr draggable="true">`：Chrome 下 draggable 属性**按下即进入拖拽**，
+   无法表达「长按」语义，且会吞掉行点击（勾选）。故用 pointer 事件自己实现状态机：
+     pointerdown  → 起 500ms 长按计时
+     （计时期间纵向移动 > 8px ⇒ 判定为滚动/点击，立即放弃，不干扰正常操作）
+     计时到点     → 进入拖拽态（.pd-dragging + body 锁选中）
+     pointermove  → elementFromPoint 定位目标行，把拖动行插到它前/后
+     pointerup    → 读 tbody 实际行序 → 存 uiDefaults.order.product → 重绘
+   ⚠ 拖拽态才 preventDefault + 锁 body 选中：普通点击/滚动完全不受影响。
+================================================================ */
+const PD_LONG_PRESS_MS=500;      /* 长按时长（用户要求「长按」，非按下即拖） */
+const PD_MOVE_TOLERANCE=8;       /* 长按期间的容差：超过即视为滚动，放弃拖拽 */
+var _pdDrag=null;                /* {pid,tr,tbody,y0,active,dirty,blocked,restoreSize} */
+var _pdSuppressClick=0;          /* 拖拽刚结束时抑制一次行点击（防误触勾选） */
+
+/* 当前是否「全部显示」（每页条数 ≥ 产品总数）—— D1 的判定 */
+function prodAllShown(){ return pageSizeOf('product')>=(products||[]).length; }
+/* 产品列表是否处于筛选态（判定口径与 filterBar 的「已生效」完全一致，供 D2 禁拖用） */
+function prodFilterActive(){
+  const s=tState('product');
+  return Object.keys(s.filters||{}).some(function(k){
+    const f=s.filters[k];
+    return !!(f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)));
+  });
 }
-/* 【仅管理员】把当前列头排序固化为全公司默认排序（产品主数据 + 库存订单跟随）。
-   双保险：按钮 isSysAdmin() 显隐 + 本函数 needSysAdmin() 守卫（防 F12 绕过）+ 二次 confirm。
-   未手动排过序时无「当前排序」可取 → 明确提示先点列头，不猜、不默认选第一列。 */
-async function setProductDefaultSort(){
-  if(!needSysAdmin())return;
-  const s=tState('product').sort;
-  if(!s||!s.key){alert('请先点击产品列表的「列头」排到想要的顺序（点 1 次升序、2 次降序），再点本按钮固化。');return;}
-  const fp=(fields&&fields.product)?fields.product:[];
-  if(!fp.find(x=>x.key===s.key)){alert('该列已不在产品字段配置中，无法设为默认排序。');return;}
-  const dirTxt=s.dir===-1?'降序':'升序';
-  const label=prodFieldLabelOf(s.key);
-  if(!confirm('把「'+label+' '+dirTxt+'」设为**所有账号**的产品主数据默认排序？\n\n· 库存订单列表将按该顺序跟随（同产品的行聚在一起）\n· 员工仍可临时点列头自行排序，刷新/切页后回到此默认'))return;
-  const ok=await saveUiDefaults({product:{key:s.key,dir:s.dir}});
-  if(!ok)return;                       /* DB.set 已弹失败原因 */
-  logOp('设置','产品主数据','设置产品主数据默认排序：'+label+' '+dirTxt);
+/* 恢复每页条数（拖拽自动切 1000 后回滚）—— 与 pagerSize 同口径写 tblPage + localStorage */
+function prodRestorePageSize(size){
+  if(!size)return;
+  tblPage['product']={page:1,size:size};
+  try{localStorage.setItem(KEY+'pageSize_product',String(size));}catch(_e){}
+}
+
+/* 行按下：起长按计时。仅管理员可拖（D3）；筛选态直接拦（D2，抬起时给一次提示） */
+function prodDragDown(e){
+  if(_pdDrag)return;
+  if(!isSysAdmin())return;                       /* 非管理员一律不响应（不做任何提示，避免骚扰） */
+  if(e.button!=null&&e.button!==0)return;        /* 只响应左键 / 触摸 */
+  const tr=e.currentTarget;
+  if(!tr||!tr.dataset||!tr.dataset.pid)return;
+  const st={pid:tr.dataset.pid,tr:tr,tbody:tr.parentNode,y0:e.clientY,active:false,dirty:false,blocked:false,pressTimer:null,restoreSize:0};
+  _pdDrag=st;
+  document.addEventListener('pointermove',_pdMove);
+  document.addEventListener('pointerup',_pdUp);
+  if(prodFilterActive()){ st.blocked=true; return; }   /* D2：不启动计时，抬起时提示 */
+  st.pressTimer=setTimeout(function(){ prodDragActivate(st); },PD_LONG_PRESS_MS);
+}
+
+function prodDragActivate(st){
+  if(_pdDrag!==st||st.blocked)return;
+  clearTimeout(st.pressTimer);
+  /* D1：不是「全部显示」→ 自动切 1000 条/页并重绘，再按 pid 找回新行继续拖。
+     按 pid 回查而非 querySelector 拼接（产品编码含点/中文，选择器转义易踩坑）。 */
+  if(!prodAllShown()){
+    st.restoreSize=pageSizeOf('product');
+    tblPage['product']={page:1,size:1000};
+    try{localStorage.setItem(KEY+'pageSize_product','1000');}catch(_e){}
+    renderContent();
+    let nt=null;
+    const rows=document.querySelectorAll('#content tr[data-pid]');
+    for(let i=0;i<rows.length;i++){ if(rows[i].dataset.pid===st.pid){nt=rows[i];break;} }
+    if(!nt){ prodDragAbort(); return; }        /* 极端情况（产品被他人删除）→ 安静退出 */
+    st.tr=nt; st.tbody=nt.parentNode;
+  }
+  st.active=true;
+  try{ st.tr.classList.add('pd-dragging'); }catch(_e){}
+  document.body.classList.add('pd-dragging-on');
+  showSaveNotice('拖动中：把这一行拖到目标位置后松手，顺序即保存（全员生效，仅管理员可调）','');
+}
+
+function _pdMove(e){
+  const st=_pdDrag; if(!st)return;
+  if(!st.active){
+    /* 未进入拖拽态：纵向位移超容差 ⇒ 判定为滚动/普通点击，放弃长按 */
+    if(Math.abs(e.clientY-st.y0)>PD_MOVE_TOLERANCE)prodDragAbort();
+    return;
+  }
+  if(e.cancelable)e.preventDefault();
+  const y=e.clientY;
+  const rows=[].slice.call(st.tbody.querySelectorAll('tr[data-pid]'));
+  let target=null,after=false;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    if(r===st.tr)continue;
+    const rect=r.getBoundingClientRect();
+    if(y>=rect.top&&y<=rect.bottom){ target=r; after=(y>rect.top+rect.height/2); break; }
+  }
+  if(!target)return;                        /* 指针在行外（表头/分页区）→ 不动 */
+  if(after){
+    if(st.tr.nextSibling!==target)target.parentNode.insertBefore(st.tr,target.nextSibling);
+  }else{
+    if(target.nextSibling!==st.tr)target.parentNode.insertBefore(st.tr,target);
+  }
+  st.dirty=true;
+}
+
+function _pdUp(){
+  const st=_pdDrag; if(!st)return;
+  if(st.blocked){ prodDragAbort(); pdFilterHint(); return; }
+  if(!st.active){ prodDragAbort(); return; }
+  prodDragFinish(st);
+}
+
+/* 筛选态禁拖的提示（8 秒节流：连点多次只提示一次，不刷屏） */
+function pdFilterHint(){
+  const now=Date.now();
+  if(now-(window.__pdFilterHintTS||0)<8000)return;
+  window.__pdFilterHintTS=now;
+  showSaveNotice('当前列表处于**筛选**状态，顺序调整已停用。请先点筛选栏的「清除筛选」，显示全部产品后再长按拖动。',
+    '<button class="btn btn-sm" onclick="clearProductFilters()">清除筛选</button>');
+  setTimeout(hideSaveNotice,6000);
+}
+function clearProductFilters(){ tState('product').filters={}; hideSaveNotice(); renderContent(); }
+
+function prodDragAbort(){
+  const st=_pdDrag;
+  document.removeEventListener('pointermove',_pdMove);
+  document.removeEventListener('pointerup',_pdUp);
+  if(st){
+    clearTimeout(st.pressTimer);
+    try{ if(st.tr)st.tr.classList.remove('pd-dragging'); }catch(_e){}
+    /* 拖拽自动展开过 → 即使中途放弃也要恢复原每页条数 */
+    if(st.restoreSize)prodRestorePageSize(st.restoreSize);
+  }
+  document.body.classList.remove('pd-dragging-on');
+  _pdDrag=null;
+}
+
+async function prodDragFinish(st){
+  const size=st.restoreSize;
+  document.removeEventListener('pointermove',_pdMove);
+  document.removeEventListener('pointerup',_pdUp);
+  try{ st.tr.classList.remove('pd-dragging'); }catch(_e){}
+  document.body.classList.remove('pd-dragging-on');
+  _pdDrag=null;
+  _pdSuppressClick=Date.now();
+  hideSaveNotice();
+  if(size)prodRestorePageSize(size);
+  if(!st.dirty){ renderContent(); return; }   /* 只按了一下没移动 → 不写盘，仅恢复每页条数 */
+  /* 读 tbody 实际行序。补齐策略：当前 DOM（D1 已保证是全部）+ 按**当前生效顺序**补
+     不在 DOM 里的产品（防御：产品数超过 1000 或并发新增）—— 用录入顺序补会让已有
+     自定义顺序被打乱，故必须用 productsSortedByOrder() 的次序补。 */
+  const ids=[].slice.call(st.tbody.querySelectorAll('tr[data-pid]')).map(r=>r.dataset.pid);
+  const inDom={};
+  ids.forEach(x=>{ inDom[String(x)]=1; });
+  productsSortedByOrder().forEach(p=>{
+    const id=String(p.id);
+    if(!inDom[id]){ ids.push(id); inDom[id]=1; }
+  });
+  const ok=await saveUiDefaults({product:ids});
+  if(!ok)return;                              /* DB.set 已提示失败原因 */
+  logOp('设置','产品主数据','调整产品显示顺序（共 '+ids.length+' 个）');
   renderContent();
 }
-/* 【仅管理员】清除产品默认排序（回落到「录入顺序」，库存订单回落「单据编号升序」） */
-async function clearProductDefaultSort(){
+/* 【仅管理员】恢复录入顺序（清空自定义名单）—— 拖乱后的一键退出，不是 .155 那个「固化」按钮 */
+async function resetProductOrder(){
   if(!needSysAdmin())return;
-  if(!defaultSortOf('product'))return;
-  if(!confirm('清除产品主数据的默认排序？\n\n· 产品列表恢复「录入顺序」\n· 库存订单列表恢复「单据编号升序」'))return;
+  if(!prodOrderOf())return;
+  if(!confirm('恢复产品列表的原始录入顺序？\n\n· 产品列表按录入先后排列\n· 库存订单列表恢复「单据编号升序」'))return;
   const ok=await saveUiDefaults({product:null});
   if(!ok)return;
-  logOp('设置','产品主数据','清除产品主数据默认排序');
+  logOp('设置','产品主数据','恢复产品原始录入顺序');
   renderContent();
 }
 
@@ -2302,15 +2463,17 @@ function guardProductDelByInvOrders(pids){
    产品主数据
 ================================================================ */
 function renderProducts(){
-  /* 【build .155】默认排序状态条（所有人可见，只读）+ 管理员专属「设为默认排序 / 清除」。
+  /* 【build .156】顺序状态条（所有人可见，只读）+ 管理员专属「恢复录入顺序」。
+     `.155` 的「设为默认排序 / 清除」两个按钮按用户拍板（D3 只留拖拽）**已删除**；
+     这里保留的「恢复录入顺序」不是固化按钮，而是拖乱之后的**撤销出口**（无它则无法回到原始序）。
      按钮可见性由 isSysAdmin() 控制，函数内另有 needSysAdmin() 守卫（防 F12 直调）。 */
-  const _ds=defaultSortOf('product');
-  const _dsTxt=_ds?(prodFieldLabelOf(_ds.key)+' '+(_ds.dir===-1?'降序':'升序')):'未设置（录入顺序）';
+  const _ord=prodOrderOf();
+  const _ordTxt=_ord?('自定义（'+_ord.length+' 项）'):'录入顺序';
   let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>产品主数据 <span class="desc">维护产品编码、名称、日产能｜勾选记录后点上方按钮编辑/复制/删除</span> '
     +'<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:10px;white-space:nowrap">'
-      +'<span title="管理员设定的默认排序；库存订单列表按同一顺序跟随。你点列头临时排序后，刷新即回到此默认">默认排序：<b>'+esc(_dsTxt)+'</b></span>'
-      +(isSysAdmin()?'<button class="btn btn-sm" onclick="setProductDefaultSort()" title="把当前列头排序固化为所有账号的默认排序（仅管理员）">设为默认排序</button>':'')
-      +(isSysAdmin()&&_ds?'<button class="btn btn-sm" onclick="clearProductDefaultSort()" title="清除默认排序，回落录入顺序（仅管理员）">清除</button>':'')
+      +'<span title="长按任意一行上下拖动即可调整顺序（仅管理员）。库存订单列表会按同一顺序跟随；点列头排序只是临时查看，刷新后回到此顺序">顺序：<b>'+esc(_ordTxt)+'</b></span>'
+      +(isSysAdmin()?'<span style="font-size:12px;color:var(--muted)">长按整行可上下拖动</span>':'')
+      +(isSysAdmin()&&_ord?'<button class="btn btn-sm" onclick="resetProductOrder()" title="恢复产品原始录入顺序（仅管理员）">恢复录入顺序</button>':'')
     +'</span>'
     +(canWriteForm('product')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="productModal()">新增产品</button>':'')+'</div>';
   if(products.length===0){
@@ -2319,11 +2482,11 @@ function renderProducts(){
     const cols=fields.product;
     TBL_SCHEMAS.product=cols.map(f=>({key:f.key,label:f.label,type:f.type==='number'?'number':(f.type==='date'?'date':'text'),select:f.type==='select',locked:f.locked}));
     TBL_ROWS.product=products;
-    /* 【build .155】管理员默认排序：仅当用户**未手动点击列头排序**时生效（手动排序优先级更高，
-       与订单表 `if(shouldMerge&&!manualSort)` 同款口径）。默认排序先作用于**副本**再进 applyTable，
-       保证「筛选 → 排序 → 分页」的先后不变（分页在下方，排序必须早于分页，否则只排当前页）。 */
+    /* 【build .156】自定义显示顺序：仅当用户**未手动点击列头排序**时生效（列头排序是临时查看，
+       优先级更高）。自定义顺序先作用于**副本**再进 applyTable，保证「筛选 → 排序 → 分页」
+       的先后不变（分页在下方，排序必须早于分页，否则只排当前页）。 */
     let _pBase=products;
-    if(!tState('product').sort&&defaultSortOf('product'))_pBase=productsSortedByDefault();
+    if(!tState('product').sort&&prodOrderOf())_pBase=productsSortedByOrder();
     let shown=applyTable('product',_pBase);
     const pAll=shown;   /* 2026-09-05.112：合计口径=筛选后全量（分页前保存） */
     /* 2026-08-25.68：金蝶式分页（单行模型直接切行） */
@@ -2340,7 +2503,10 @@ function renderProducts(){
     shown.forEach((p)=>{
       const idx=products.indexOf(p);
       const checked=selSet('product').has(String(idx))?'checked':'';
-      html+='<tr onclick="selRowClick(\'product\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' data-sel-id="'+idx+'" data-sel-form="product" onclick="event.stopPropagation();selRowClick(\'product\','+idx+')"></td>';
+      /* 【build .156】行上挂 data-pid + onpointerdown：长按 500ms 进入整行上下拖拽（仅管理员）。
+         拖拽引擎见 prodDragDown / prodDragActivate；非管理员时该 handler 首行直接 return，
+         不影响任何点击/勾选行为（普通操作仍走 onclick → selRowClick）。 */
+      html+='<tr data-pid="'+esc(String(p.id==null?'':p.id))+'" onpointerdown="prodDragDown(event)"'+(isSysAdmin()?' class="pd-draggable"':'')+' onclick="selRowClick(\'product\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' data-sel-id="'+idx+'" data-sel-form="product" onclick="event.stopPropagation();selRowClick(\'product\','+idx+')"></td>';
       cols.forEach(f=>{
         let val=p[f.key];
         if(f.key==='processTplId'){
@@ -3776,7 +3942,7 @@ function renderOrderTable(formKey,typeOrders,prodMap){
        未配置 → 保持 .154 及以前「单据编号升序」原行为（零回归）。
        排序必须留在分页（下方 slicePaged）**之前** —— .80 教训：写在分页后只排当前页。 */
     else if(formKey==='order_inv'){
-      if(defaultSortOf('product'))shown=sortInvRowsByProdRank(shown);
+      if(prodOrderOf())shown=sortInvRowsByProdRank(shown);
       else shown=[...shown].sort((a,b)=>a.order.id.localeCompare(b.order.id,'zh-CN'));
     }
   }
@@ -7609,6 +7775,10 @@ function selCount(m){return selSet(m).size;}
 function clearSel(m){if(selRows[m])selRows[m].clear();}
 /* 点击表格任意位置切换该行选中状态（复选框点击需 stopPropagation 避免双重切换） */
 function selRowClick(m,id){
+  /* 【build .156】产品行拖拽刚结束时抑制一次点击：长按拖动后松手浏览器仍会派发 click，
+     不抑制就会「拖完顺序变了、还顺带把该行勾选/取消」，用户会觉得莫名其妙。
+     只抑制产品表、且窗口 300ms（一次手势内），其它表单与正常点击完全不受影响。 */
+  if(m==='product'&&Date.now()-(_pdSuppressClick||0)<300)return;
   id=String(id);
   const s=selSet(m);
   if(s.has(id))s.delete(id);else s.add(id);
@@ -8213,7 +8383,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-21.155</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-21.156</div>
 </body>
 </html>
 
