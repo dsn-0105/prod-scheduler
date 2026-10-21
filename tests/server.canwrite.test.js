@@ -284,3 +284,32 @@ test('G22-7 旧签名兼容：不传 ctx 时按模块级 data 判定（不抛错
   assert.strictEqual(canWrite(U('zongjingli'), 'transfers'), false);
   assert.strictEqual(canWrite(U('admin'), 'anything'), true);
 });
+
+/* ================================================================
+   G22-8【build .155】uiDefaults 仅管理员可写
+   ----------------------------------------------------------------
+   背景：.155 新增全局展示偏好表 `uiDefaults`（产品主数据默认排序 → 库存订单跟随），
+   用户拍板「只能由管理员调整」。前端按钮显隐 + needSysAdmin() 只是体验层，
+   **真正的防线在这一层** —— F12 直调 /api/save 或 /api/tx 必须被挡。
+   ⚠ 与 G22-6 的区别（不可混为一谈）：meta/tblLayout/fieldsAudit/fieldsDraft 按 D3
+     对 staff **保持放行**（那是「个人偏好/管理态数据」的历史口径）；
+     uiDefaults 是**全公司唯一一份**的管理态配置，改它会影响所有人，故单独收紧为 admin-only。
+   ================================================================ */
+test('G22-8【.155】uiDefaults 仅 admin 可写：staff 一律 false（即便 perms 显式给了 true）', () => {
+  const d = ctxData(PRODS, [LOG_A]);
+  assert.strictEqual(canWrite(U('admin'), 'uiDefaults', { value: { sort: {} }, data: d }), true,
+    'admin 应放行（函数首行 role==="admin" 短路）');
+  assert.strictEqual(canWrite(null, 'uiDefaults', { value: { sort: {} }, data: d }), false,
+    '未登录必须拒绝');
+  ['pmc', 'chejian', 'zongjingli'].forEach(who => {
+    assert.strictEqual(canWrite(U(who), 'uiDefaults', { value: { sort: {} }, data: d }), false,
+      who + ' 必须被拒（全局展示偏好只能管理员改）');
+  });
+  /* 反潮汐守卫：即便日后有人在员工面板给该员工显式配上 perms.uiDefaults=true，
+     也必须仍然 false —— 本表不是「按表单授权」的业务表，权限不随 perms 走。
+     若把 canWrite 的 uiDefaults 分支改回 `return p[key]===true`，本断言立即变红。 */
+  const su = U('pmc');
+  su.perms = Object.assign({}, su.perms, { uiDefaults: true });
+  assert.strictEqual(canWrite(su, 'uiDefaults', { value: {}, data: d }), false,
+    'perms.uiDefaults=true 也不得放行（硬闸优先于 perms）');
+});
