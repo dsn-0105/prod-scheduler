@@ -2857,8 +2857,8 @@ function partModal(idx,prefill){
     {key:'spec',label:'规格',type:'text'},
     {key:'model',label:'型号',type:'text'},
     {key:'unit',label:'单位',type:'text',required:true},
-    {key:'stockMax',label:'最大库存量',type:'number',note:'结余进度的分母'},
-    {key:'stockMin',label:'最小库存量',type:'number',note:'结余低于此值显示黄色警示'}
+    {key:'stockMax',label:'最大库存量',type:'number',note:'结余进度的分母；不得为负数（0 = 不设限制）'},
+    {key:'stockMin',label:'最小库存量',type:'number',note:'结余低于此值显示黄色警示；不得为负数（0 = 不设限制）'}
   ];
   let body='<div class="form-row">';
   F.forEach(function(f,i){
@@ -2906,6 +2906,23 @@ async function savePart(idx){
   if(!p.id){alert('请输入或填写零部件「编码」');return;}
   if(!p.name){alert('请填写零部件「名称」');return;}
   if(!p.unit){alert('请填写零部件「单位」');return;}
+  /* 【build .159】最大 / 最小库存量禁止负数。
+     背景（QA 实测）：弹窗输入框虽写了 min="0"，但粘贴 / F12 改 DOM 能绕过 → 存成 -5 / -9；
+     后果是静默错误显示：`partBalPctOf` 分母为负 → 结余进度恒 0%，`invStockLevel` 四档全绿，用户看不出异常。
+     口径（用户明确指示）：**只拦截 + 明确提示，绝不静默改用户输入**（不做四舍五入 / 自动归零 / 取绝对值）。
+     · **只拦负数**：0 合法 = 不设限制（`invStockLevel` / `partBalPctOf` 已按 0 处理）；
+     · 校验放在**任何数组改动之前**（在 parts[idx]=p / parts.push 之前，被拦时内存与服务器一字不动）；
+     · **存量数据不动**：历史已存成负数的记录**不回填、不迁移**；编辑这类记录时若被本条拦下，
+       属**期望行为**——提示里带出当前值，引导他顺便改成 0 或正数；
+     · 刻意**不做**「最小 > 最大」的拦截（用户本次未要求，已作为建议另行上报，不做隐性口径扩张）。 */
+  if(p.stockMax<0){
+    alert('最大库存量不能为负数（当前「'+String(elv('stockMax')).trim()+'」），请填写 0 或正整数。');
+    return;
+  }
+  if(p.stockMin<0){
+    alert('最小库存量不能为负数（当前「'+String(elv('stockMin')).trim()+'」），请填写 0 或正整数。');
+    return;
+  }
   const dup=parts.some(function(x,i){return i!==idx&&String(x&&x.id!=null?x.id:'').trim()===p.id;});
   if(dup){alert('零部件编码「'+p.id+'」已存在，编码不能重复');return;}
   if((products||[]).some(function(x){return String(x&&x.id!=null?x.id:'').trim()===p.id;})){
@@ -2954,6 +2971,8 @@ function copyPart(i){
      · 台账记录 partLogs 一条/零件：编号 PTH-…、时间、类型 in、零件四项、数量、前后库存、操作人
      · **整批校验**：任一填写值非法 → 整批拒绝、库存一字不改（禁止部分提交，对齐 doReturnStock 的
        做法，规避「填三行、只成功两行」的老问题 D7）；全部留空/填 0 → 提示「请至少填写一个」
+     · 【build .159】「入库数量」**仅限正整数**（零件按「件」计）：小数一律拦截并整批退回，不静默取整。
+       另：最大 / 最小库存量**不得为负数**（硬闸在 savePart，输入框 min=0 只是体验层）。
      · 一次 DB.tx 提交 parts + partLogs + logs；失败按 DB.tx 既有约定：内存回灌真值、不清勾选
    ================================================================ */
 var __piIdxs=null;   /* 本次入库弹窗中参与的行下标（parts 下标，非分页行号） */
@@ -2978,10 +2997,10 @@ function openPartIn(){
     rows+='<tr><td style="font-weight:600">'+esc(p.id)+'</td><td>'+esc(p.name)+'</td><td>'+esc(p.spec||'')+'</td>'
       +'<td>'+esc(p.unit||'')+'</td>'
       +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+money(num(p.stock))+'</td>'
-      +'<td><input type="number" id="pi_qty_'+i+'" min="0" step="1" value="" placeholder="留空=不入库" style="width:120px"></td></tr>';
+      +'<td><input type="number" id="pi_qty_'+i+'" min="0" step="1" value="" placeholder="留空=不入库" title="仅限正整数（件）：填小数会被拦下；留空或填 0 表示该行本次不入库" style="width:120px"></td></tr>';
   });
-  const body='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">已选 '+idxs.length+' 个零部件。填写本次入库数量（留空或填 0 表示该零件本次不入库）；确认后累加「库存」并写入「零部件台账」。</div>'
-    +'<div class="table-wrap" style="max-height:46vh"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>单位</th><th>当前库存</th><th>本次入库数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  const body='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">已选 '+idxs.length+' 个零部件。填写本次入库数量（<b>仅限正整数（件）</b>，填小数会被拦下；留空或填 0 表示该零件本次不入库）；确认后累加「库存」并写入「零部件台账」。</div>'
+    +'<div class="table-wrap" style="max-height:46vh"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>单位</th><th>当前库存</th><th title="仅限正整数（件）">本次入库数量（正整数·件）</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   showModal('零部件入库',body,
     '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pi_confirm" onclick="doPartIn()">确认入库</button>');
 }
@@ -3013,10 +3032,18 @@ async function doPartIn(){
       const q=Number(raw);
       if(!isFinite(q)){alert('入库数量「'+raw+'」不是有效数字，本次入库未提交（所有零件库存均未变动）。');return;}   /* 出口③ */
       if(q<0){alert('入库数量不能为负数（第 '+(k+1)+' 行为「'+raw+'」），本次入库未提交（所有零件库存均未变动）。');return;}   /* 出口④ */
+      /* 【build .159】入库数量必须是正整数：零件按「件」计，小数没有业务意义（.158 实测填 0.5 → 库存 10 变 10.5）。
+         口径（用户明确指示）：**一律拦截 + 明确提示**，绝不静默四舍五入 / 取整 / 归零 ——
+         静默改用户输入比报错更危险（用户会以为 0.5 件已按 1 件入库，账实从此对不上）。
+         · 放在 `<0` 之后：负数仍报「不能为负数」（该提示更贴近用户意图，且既有口径/用例不变）；
+         · 仍是**整批拒绝**（与上一条同属校验阶段，累加在 `plan` 之后统一进行，任何一行非法则一律不动库存）；
+         · `q===0` 仍走 continue（填 0 = 该行不入库，与留空同义，不受本校验影响）。
+         · 说明：`"1e3"` 这类科学计数输入 Number 后 = 1000，是整数 → 放行（number 输入框本就允许该记法，属有意行为）。 */
+      if(!Number.isInteger(q)){alert('入库数量必须是正整数（第 '+(k+1)+' 行为「'+raw+'」），本次入库未提交（所有零件库存均未变动）。');return;}   /* 出口⑤ */
       if(q===0)continue;                         /* 填 0 = 本行不入库（与留空同义） */
       plan.push({i:i,qty:q});
     }
-    if(plan.length===0){alert('请至少填写一个入库数量');return;}                /* 出口⑤ */
+    if(plan.length===0){alert('请至少填写一个入库数量');return;}                /* 出口⑥ */
     /* ② 全部校验通过后才动库存：逐行累加 + 逐行生成台账流水 */
     const ts=logTimeStr(new Date());             /* 固定格式 'YYYY-MM-DD HH:mm:ss'（与操作日志同源） */
     /* 操作人取值与 applyTransfers 写台账的方式**同源**：姓名优先，回退工号/用户名，未登录为「未知」 */
@@ -3037,7 +3064,7 @@ async function doPartIn(){
     pushLogEntry(makeLogEntry('入库','零部件台账','入库 '+plan.length+' 个零部件，共 '+totalQty+' 件'));
     /* ③ 一次原子提交（parts + partLogs + logs）。失败 → DB.tx 已回灌服务器真值，不改内存态、不清勾选 */
     const ok=await DB.tx([{key:'parts',value:parts},{key:'partLogs',value:partLogs},{key:'logs',value:logs}]);
-    if(!ok)return;                                                            /* 出口⑥：事务失败（弹窗不关、勾选不清，可原样重试） */
+    if(!ok)return;                                                            /* 出口⑦：事务失败（弹窗不关、勾选不清，可原样重试） */
     /* 成功收尾：只有当「当前弹窗/批次仍是本次提交的那一个」时才关闭并清勾选。
        提交在途期间用户可能又点了「入库」打开新弹窗（__piIdxs 已被换成新数组）——
        此时绝不能关窗、不能清空批次，否则用户刚填的数量会静默丢失（P2）。
@@ -3049,7 +3076,7 @@ async function doPartIn(){
     }
     renderContent();
   }finally{
-    /* 唯一解锁点：覆盖上面 6 条早退 + 成功 + 异常（抛错也不会把按钮锁死） */
+    /* 唯一解锁点：覆盖上面 7 条早退 + 成功 + 异常（抛错也不会把按钮锁死） */
     __piBusy=false;
     if(cbtn){cbtn.disabled=false;cbtn.innerHTML=cbtnTxt;}
   }
@@ -8947,7 +8974,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-31.158</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-31.159</div>
 </body>
 </html>
 

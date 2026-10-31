@@ -1,7 +1,7 @@
 'use strict';
 /* ================================================================
    tests/qa.parts-ledger.independent.test.js
-   —— QA 独立验证：零部件数据 + 零部件台账（build 2026-10-31.158）
+   —— QA 独立验证：零部件数据 + 零部件台账（build 2026-10-31.158 起，随版本推进同步至 .159）
    ================================================================
    定位：**独立复验**，不是 tests/parts.158.test.js 的复读机。
      · 不采信工程师自述，不复用他的断言写法定式；
@@ -22,9 +22,18 @@ const path = require('node:path');
 
 const { createApp, ROOT } = require('./harness/sandbox');
 
-/* ---------------- 权威版本号（本文件手写，不从 index.html 反推） ---------------- */
-const BUILD = '2026-10-31.158';
-const PREV = '2026-10-23.157';
+/* ---------------- 权威版本号（本文件手写，不从 index.html 反推） ----------------
+   【build .159 同步说明】本文件的 BUILD/PREV 是**独立的字面量副本**（防「测了个寂寞」），
+   每推进一版必须手工前移这两行 —— 下面的 §F1~§F6 再用它们去反查 index.html / build.js /
+   guide.js / README / 其它测试文件的同步状态。故这里是**唯一**需要手改的地方，其余一律派生：
+     · BUILD_NO   = BUILD 的 `.NNN` 段（guide.js 与注释里只许用「build .NNN」短形态）；
+     · BUILD_DATE = BUILD 的日期段（guide.js 文首「更新：YYYY-MM-DD（build .NNN）」）。
+   刻意**不**把 `.159` / `2026-10-31` 分散写死在断言里 —— .148 就因清单/计数不同步假失败过一次。 */
+const BUILD = '2026-10-31.159';
+const PREV = '2026-10-31.158';
+const BUILD_NO = String(BUILD).split('.')[1];       /* '159' */
+const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-10-31' */
+const PREV_NO = String(PREV).split('.')[1];         /* '158' */
 
 const readRel = function (rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); };
 const INDEX_SRC = readRel('index.html');
@@ -881,14 +890,19 @@ function lockSnapshot(app) {
   const b = confirmBtn(app);
   return { busy: app.run('__piBusy'), disabled: b.disabled, label: b.innerHTML };
 }
+/* 已跑过的解锁探针（C13 用它把「早退条数」与「逐条测到」绑成同一件事） */
+const UNLOCK_PROBES = [];
 function assertUnlocked(app, ctx) {
+  UNLOCK_PROBES.push(ctx);
   const s = lockSnapshot(app);
   assert.equal(s.busy, false, '[' + ctx + '] __piBusy 必须已释放（否则入库按钮永久卡死）');
   assert.equal(s.disabled, false, '[' + ctx + '] 确认按钮必须恢复可点');
   assert.notEqual(s.label, '入库中…', '[' + ctx + '] 按钮文案必须还原');
 }
 
-test('C13 提交重入锁生命周期：6 条早退 + 成功 + 抛异常，8 条路径全部解锁且按钮还原', async function () {
+test('C13 提交重入锁生命周期：7 条早退 + 成功 + 2 类异常，10 条路径全部解锁且按钮还原', async function () {
+  UNLOCK_PROBES.length = 0;   /* 本条自成一个对账单元（§G6 也会调 assertUnlocked，不能串味） */
+
   /* ① 无进行中批次 */
   let app = mkApp({ selRows: {} });
   installDom(app, {});
@@ -908,8 +922,14 @@ test('C13 提交重入锁生命周期：6 条早退 + 成功 + 抛异常，8 条
   assert.equal(app.run('parts[0].stock'), 10, '无权限时不得改库存');
   app.dispose();
 
-  /* ③ 非数字 ④ 负数 ⑤ 无数量 */
-  for (const [raw, label] of [['abc', '出口③非数字'], ['-1', '出口④负数'], ['0', '出口⑤无数量']]) {
+  /* ③ 非数字 ④ 负数 ⑤ 非整数（.159 新增） ⑥ 无数量（填 0 / 全留空）
+     注意 ⑤ 与 ⑥ 的先后：`0.5` 撞 ⑤（正整数闸），`0` 过闸后走 continue、plan 为空 → 撞 ⑥。 */
+  for (const [raw, label] of [
+    ['abc', '出口③非数字'],
+    ['-1', '出口④负数'],
+    ['0.5', '出口⑤非整数（.159 新增整数闸）'],
+    ['0', '出口⑥无数量']
+  ]) {
     app = mkApp({ selRows: { parts: new Set(['0']) } });
     installDom(app, { pi_qty_0: raw });
     await app.run('openPartIn()');
@@ -919,13 +939,14 @@ test('C13 提交重入锁生命周期：6 条早退 + 成功 + 抛异常，8 条
     app.dispose();
   }
 
+  /* ⑦ 事务失败 */
   /* ⑥ 事务失败 */
   app = mkApp({ selRows: { parts: new Set(['0']) } });
   installDom(app, { pi_qty_0: '5' });
   await app.run('openPartIn()');
   app.recorder.failNext('tx', 'boom');
   await app.run('doPartIn()');
-  assertUnlocked(app, '出口⑥事务失败');
+  assertUnlocked(app, '出口⑦事务失败');
   /* 失败后可原样重试：说明锁没卡死（第二次能真的提交） */
   await app.run('doPartIn()');
   assert.equal(app.recorder.txCount(), 2, '失败后应能再次提交（锁已释放）');
@@ -969,15 +990,29 @@ test('C13 提交重入锁生命周期：6 条早退 + 成功 + 抛异常，8 条
   /* 顺序守卫：重入判断必须在「占锁」之前 —— 否则该 return 会带着已置位的锁退出，永久卡死 */
   assert.ok(fn.indexOf('if(__piBusy)return;') < fn.indexOf('__piBusy=true'),
     '重入判断必须写在占锁之前（若占锁在前，该 return 会漏解锁 → 按钮永久卡死）');
-  /* 早退条数核对（对账工程师 C15 的「6 条」口径）：
-     try 内 `return;` 共 7 处，其中 1 处是 plan.forEach 回调里的防御 `if(!p)return;`（不涉及锁），
-     故「会影响锁的函数级早退」= 7 − 1 = 6：①无批次 ②无权限 ③非数字 ④负数 ⑤无数量 ⑥事务失败。 */
+  /* 早退条数核对 —— **计数规则**（.159 复核重写，务必先说清「数什么」，否则下一个人只会跟着改数字）：
+       统计范围 = `stripComments(doPartIn)` 里 `try{` 与 `}finally` 之间的 `return;`。
+       ① 先全部数出 = 8 处（.159）；
+       ② 减去 **plan.forEach 回调内**的防御性 `if(!p)return;`（1 处，与锁无关）；
+       ③ 「占锁前的重入 return」`if(__piBusy)return;` **本来就在 try 之外**，天然不计入；
+       ⇒ 会影响锁的函数级早退 = 8 − 1 = **7 条**：
+          ①无批次 ②无权限 ③非数字 ④负数 ⑤非整数（.159 新增） ⑥无数量 ⑦事务失败。
+       关键纪律：**改这个数字必须同时补一条逐条用例**（下面的 UNLOCK_PROBES 对账就是为此）——
+       只把 6 改成 7 而不新增「出口⑤」的解锁探针，等于把「7 条都测到」偷偷降级成「数对了但有一条没测」。 */
   const tryBlock = fn.slice(fn.indexOf('try{'), fn.indexOf('}finally'));
   const allReturns = countOcc(tryBlock, 'return;');
   const callbackReturns = countOcc(tryBlock, 'if(!p)return;');
   assert.equal(callbackReturns, 1, 'forEach 回调里的防御性 return 应恰 1 处（用于下面的对账）');
-  assert.equal(allReturns - callbackReturns, 6,
-    'try 内「函数级早退」必须恰 6 条（若新增出口，须同步更新本断言与 C15 的逐条用例）；实际 ' + (allReturns - callbackReturns));
+  assert.equal(allReturns - callbackReturns, 7,
+    'try 内「函数级早退」必须恰 7 条（若新增出口，须**同时**更新本断言、下面 7 条探针、与 C15 的逐条用例）；实际 ' +
+    (allReturns - callbackReturns));
+  /* 逐条对账：计数与「真的逐条跑过」必须是同一件事，不能只改数字 */
+  const exitProbes = UNLOCK_PROBES.filter(function (c) { return /^出口/.test(c); });
+  assert.equal(exitProbes.length, 7, '实际跑过的早退探针必须也是 7 条，实际: ' + JSON.stringify(exitProbes));
+  ['①', '②', '③', '④', '⑤', '⑥', '⑦'].forEach(function (mark) {
+    assert.ok(exitProbes.some(function (c) { return c.indexOf(mark) === 2; }),
+      '出口' + mark + ' 必须有独立的解锁探针（不能拿数字凑数）；实际: ' + JSON.stringify(exitProbes));
+  });
   assert.equal(countOcc(stripComments(extractFn(INDEX_SRC, 'openPartIn')), '__piBusy'), 0,
     'openPartIn 不得被上一次的残留锁挡住（打开弹窗不应受提交态影响）');
 });
@@ -1293,9 +1328,21 @@ test('R1 菜单位置：零部件数据紧随产品主数据、零部件台账�
 
 /* ================================================================
    §F 版本水印 8 锚点（缺一即 FAIL）
+   ================================================================
+   .159 QA 复核补注（「锚点到底几处」已经坑过两次，一次说清楚，别再浮）：
+     · ①~⑧ 是**外部锚点**：index.html / build.js / 两个 independent / guide.js / README / layout；
+     · 本文件自身的 `const BUILD/PREV`（上面那两行）是**第 9 处** —— 独立副本，故意留着手改；
+     · `tests/parts.<NNN>.test.js` 这类 per-version 用例**不再是锚点**：
+       .159 已把 `parts.159.test.js` C7 与 `parts.158.test.js` F1 改成**从 build.BUILD 派生**
+       （前者吃 `buildMarkRe(build.BUILD)`，后者吃「日期段 + .NNN 段」并限定在文首）。
+       它们不再持有字面量 ⇒ **下一版推进无需手改它们**，这是刻意的「一劳永逸」形态。
+     · ⇒ **推进一版要手改的测试文件 = 5 个**（build.js + qa.ppshift + qa.prodplan-query +
+       layout.scoped.independent + 本文件），外加 3 个产出入水口（index.html / guide.js / README）。
+     · 谁再往任何 `tests/*.test.js` 里抄回版本字面量，会被
+       `tests/qa.parts-ledger.validate.159.test.js §D3` 的**禁止持有**扫描当场抓住。
    ================================================================ */
 
-test('F1 锚点① index.html 权威水印 >build 2026-10-31.158< 恰 1 处', function () {
+test('F1 锚点① index.html 权威水印恰 1 处（当前 build ' + BUILD + '；上一版 ' + PREV + ' 应 0 处）', function () {
   assert.equal(countOcc(INDEX_SRC, '>build ' + BUILD + '<'), 1,
     '权威水印必须恰 1 处（deploy.sh 按此提取版本）');
   assert.equal(countOcc(INDEX_SRC, '>build ' + PREV + '<'), 0, '上一版本水印不得残留');
@@ -1317,27 +1364,35 @@ test('F3 锚点③④⑤：两个 independent 测试文件的硬编码字面量�
   assert.ok(PPSHIFT_SRC.indexOf("assert.equal(build.PREV, '" + PREV + "'") >= 0, '③ qa.ppshift-advance §E2 PREV');
   assert.ok(PRODPLAN_QUERY_SRC.indexOf("assert.equal(build.BUILD, '" + BUILD + "'") >= 0, '④ qa.prodplan-query §E2 BUILD');
   assert.ok(PRODPLAN_QUERY_SRC.indexOf("assert.equal(build.PREV, '" + PREV + "'") >= 0, '④ qa.prodplan-query §E2 PREV');
-  assert.ok(PRODPLAN_QUERY_SRC.indexOf('2026-10-31（build .158）') >= 0, '⑤ qa.prodplan-query §E4 guide 版本行');
+  assert.ok(PRODPLAN_QUERY_SRC.indexOf(BUILD_DATE + '（build .' + BUILD_NO + '）') >= 0,
+    '⑤ qa.prodplan-query §E4 guide 版本行（应为 ' + BUILD_DATE + '（build .' + BUILD_NO + '））');
 });
 
 test('F4 锚点⑥⑦：guide.js 文首「更新」行 + README 当前版本', function () {
   const head = GUIDE_SRC.split('\n').slice(0, 8).join('\n');
-  assert.ok(head.indexOf('更新：2026-10-31（build .158）') >= 0, '⑥ guide.js 文首更新行（前 8 行内）');
+  assert.ok(head.indexOf('更新：' + BUILD_DATE + '（build .' + BUILD_NO + '）') >= 0,
+    '⑥ guide.js 文首更新行（前 8 行内，应为 更新：' + BUILD_DATE + '（build .' + BUILD_NO + '））');
   assert.ok(README_SRC.indexOf('当前版本：`build ' + BUILD + '`') >= 0, '⑦ README.md 当前版本');
 });
 
 test('F5 锚点⑧ layout.scoped.independent §C5 已同步', function () {
-  assert.ok(LAYOUT_INDEP_SRC.indexOf('>build 2026-10-31\\.158<') >= 0, '⑧ §C5 水印断言');
-  assert.ok(LAYOUT_INDEP_SRC.indexOf("BUILD.BUILD, '2026-10-31.158'") >= 0, '⑧ §C5 BUILD 值');
-  assert.ok(LAYOUT_INDEP_SRC.indexOf("BUILD.PREV, '2026-10-23.157'") >= 0, '⑧ §C5 PREV 值');
+  assert.ok(LAYOUT_INDEP_SRC.indexOf('>build ' + String(BUILD).replace(/\./g, '\\.') + '<') >= 0,
+    '⑧ §C5 水印断言（应为 >build ' + BUILD + '< 的转义正则）');
+  assert.ok(LAYOUT_INDEP_SRC.indexOf("BUILD.BUILD, '" + BUILD + "'") >= 0, '⑧ §C5 BUILD 值');
+  assert.ok(LAYOUT_INDEP_SRC.indexOf("BUILD.PREV, '" + PREV + "'") >= 0, '⑧ §C5 PREV 值');
 });
 
-test('F6 完整版本号除权威水印外不得出现在注释里（只许【build .158】）', function () {
+test('F6 完整版本号除权威水印外不得出现在注释里（只许【build .NNN】短形态）', function () {
   assert.equal(countOcc(INDEX_SRC, BUILD), 1, 'index.html 中完整版本号 ' + BUILD + ' 必须恰 1 处（即水印）');
   assert.equal(countOcc(INDEX_SRC, 'build ' + BUILD), 1, '「build <完整版本号>」也只许 1 处');
-  assert.equal(countOcc(GUIDE_SRC, BUILD), 0, 'guide.js 正文不得写完整版本号（只许 build .158）');
-  assert.ok(countOcc(INDEX_SRC, 'build .158') >= 10,
-    '注释里应统一用【build .158】形态（实际 ' + countOcc(INDEX_SRC, 'build .158') + ' 处）');
+  assert.equal(countOcc(GUIDE_SRC, BUILD), 0, 'guide.js 正文不得写完整版本号（只许 build .' + BUILD_NO + '）');
+  /* 注释形态守卫分两段，各自的意义不同（别再合并成一个 >= 10 的数字）：
+       · 历史注释里【build .<PREV>】应当很多（上一版的功能注释），说明旧注释没被批量改写；
+       · 本次新增的【build .<BUILD_NO>】至少 3 处（doPartIn 整数闸 / savePart 两条硬闸 / 入库口径注释）。 */
+  assert.ok(countOcc(INDEX_SRC, 'build .' + PREV_NO) >= 10,
+    '历史注释应保留【build .' + PREV_NO + '】形态（实际 ' + countOcc(INDEX_SRC, 'build .' + PREV_NO) + ' 处）');
+  assert.ok(countOcc(INDEX_SRC, 'build .' + BUILD_NO) >= 3,
+    '本版新增注释应有【build .' + BUILD_NO + '】标记（实际 ' + countOcc(INDEX_SRC, 'build .' + BUILD_NO) + ' 处，至少 3）');
 });
 
 /* ================================================================
@@ -1448,7 +1503,7 @@ test('G5 变异：删掉 doPartIn 的重入判断 → C12（双击只提交 1 �
   mutantApp.dispose();
 });
 
-test('G6 变异：把 finally 里的解锁改成空操作 → C13（8 条出口全解锁）必须红', async function () {  const mutant = applyMutation(INDEX_SRC, M5_FROM, M5_TO, 'G6 删解锁');
+test('G6 变异：把 finally 里的解锁改成空操作 → C13（10 条路径全解锁）必须红', async function () {  const mutant = applyMutation(INDEX_SRC, M5_FROM, M5_TO, 'G6 删解锁');
   /* ① 变异生效：一次失败后 __piBusy 永久为 true（按钮卡死） */
   const probeApp = mkApp({ selRows: { parts: new Set(['0']) } }, { indexHtml: mutant });
   installDom(probeApp, { pi_qty_0: '5' });
@@ -1463,7 +1518,7 @@ test('G6 变异：把 finally 里的解锁改成空操作 → C13（8 条出口�
   await mutantApp.run('openPartIn()');
   mutantApp.recorder.failNext('tx', 'boom');
   await mutantApp.run('doPartIn()');
-  assert.throws(function () { assertUnlocked(mutantApp, '出口⑥事务失败'); },
+  assert.throws(function () { assertUnlocked(mutantApp, '出口⑦事务失败（G6 变异体）'); },
     /必须已释放|永久卡死/, 'C13 的解锁断言在 finally 解锁被删后必须报红');
   mutantApp.dispose();
 });

@@ -607,7 +607,19 @@ test('E8 版本水印：.158 恰 1 处，且注释里不得写出完整版本号
    ================================================================ */
 
 test('F1 guide.js：文首版本行 + 两个新小节 + 六项口径都讲到了', function () {
-  assert.ok(GUIDE_SRC.indexOf('更新：2026-10-31（build .158）') >= 0, '文首版本行');
+  /* 文首版本行随每次版本推进。.159 起改为**从单一来源 build.BUILD 推导**，不再手写字面量，
+     但 QA .159 评审指出的两处约束**必须一并钉住**（否则「免手改」会把校验力一起免掉）：
+       1) **日期也必须钉**：只取 `.NNN` 段时，把文首写成 `更新：2026-11-15（build .159）`
+          （日期错、号对）仍会通过 —— 故同时取日期段 DATE 拼出整行；
+       2) **位置也必须钉**：`GUIDE_SRC.indexOf(...)` 在正文任意位置命中都算，故限定在文首
+          前 800 字符（`HEAD`）内找，并额外断言 `更新：` 全篇恰 1 处（防在别处再写一条版本行）。
+     两个约束都由 BUILD 推出 → 仍然免逐版手改，同时保留判别力。 */
+  const BV = String(build.BUILD).split('.');
+  const DATE = BV[0], NO = BV[1];
+  const HEAD = GUIDE_SRC.slice(0, 800);
+  assert.ok(HEAD.indexOf('更新：' + DATE + '（build .' + NO + '）') >= 0,
+    '文首（前 800 字符内）必须是「更新：' + DATE + '（build .' + NO + '）」——日期与位置都要对');
+  assert.equal(countOf(GUIDE_SRC, '更新：'), 1, '版本行「更新：」全篇恰 1 处（不得在正文另写一条）');
   assert.equal(countOf(GUIDE_SRC, '### 零部件数据（.158）'), 1, '零部件数据小节恰 1 处');
   assert.equal(countOf(GUIDE_SRC, '### 零部件台账（.158）'), 1, '零部件台账小节恰 1 处');
   assert.ok(GUIDE_SRC.indexOf('相互独立') >= 0, '口径：不与产品库存联动');
