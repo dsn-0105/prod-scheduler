@@ -646,7 +646,8 @@ function mkFakeServerApp(initialParts, opts) {
     },
     revs: { parts: 0, partLogs: 0, logs: 0 },
     forced: [],           /* 依次强制返回的状态码 */
-    txBodies: []
+    txBodies: [],
+    txGate: null          /* 设成 Promise 即可把 /api/tx 挂在途中（稳定的「提交在途」窗口） */
   };
   const app = createApp(Object.assign({ installRecorder: false, quietConsole: true }, opts || {}));
   app.fakeServer = state;
@@ -761,11 +762,16 @@ test('C12 真实 DB.tx：双击「确认入库」只提交 1 次（提交重入�
 /* ---- 锁的边界（P2 未修）：提交在途时再次「入库」→ 第一条提交的收尾会关掉新弹窗并清空批次 ---- */
 /* C13b 的行为探针（§G7 变异注入复用） */
 async function probeReopenDuringFlight(app, dom) {
+  /* 闸门：把批次 A 的事务挂在途中，保证下面「在途期间」的一切操作都在真实窗口里发生 */
+  let release = null;
+  app.fakeServer.txGate = new Promise(function (r) { release = r; });
+
   /* 批次 A：勾 X1，填 5，点确认（不 await → 提交在途） */
   app.setGlobal('selRows', { parts: new Set(['0']) });
   await app.run('openPartIn()');
   dom.values['pi_qty_0'] = '5';
   const inflight = app.run('doPartIn()');
+  assert.equal(app.run('__piBusy'), true, '前置：批次 A 提交确实在途（__piBusy=true）');
 
   /* 用户以为没反应，改为勾 X2 再点「入库」→ 打开新弹窗（批次 B），并填 7 */
   app.setGlobal('selRows', { parts: new Set(['1']) });
@@ -774,7 +780,9 @@ async function probeReopenDuringFlight(app, dom) {
   const openWhileBusy = app.sandbox.document.getElementById('modalBg').classList.contains('show');
   const idxsOfB = JSON.stringify(app.run('__piIdxs'));
 
-  await inflight;   /* 批次 A 提交完成 */
+  release();                        /* 放行批次 A 的事务 */
+  app.fakeServer.txGate = null;
+  await inflight;                   /* 批次 A 提交完成 */
 
   /* ① openPartIn 不被锁拦：提交进行中照样能打开弹窗（C 组第 2 条） */
   assert.equal(openWhileBusy, true, '提交进行中「入库」按钮必须仍能打开弹窗（锁只拦提交，不拦打开）');
@@ -804,6 +812,58 @@ const TWO_PARTS = function () {
     { id: 'X2', name: '件2', spec: '', model: '', unit: '个', stockMax: 100, stockMin: 0, stock: 3, used: 0 }
   ];
 };
+
+test('C13c 残留窗口自愈：在途期间开新窗后「立刻」点确认被锁静默忽略，再点一次即成功', async function () {
+  /* 工程师 P2 采用方案②（批次归属守卫）后留下的窄窗口：在途期间开新窗 + 立刻点确认
+     → 该次点击被 __piBusy 静默忽略（不报错、不关窗、不丢输入），用户再点一次就成功。 */
+  const app = mkFakeServerApp(TWO_PARTS());
+  const dom = installDom(app, {});
+  let release = null;
+  app.fakeServer.txGate = new Promise(function (r) { release = r; });
+
+  /* 批次 A：勾 X1 填 5，点确认（挂在途中） */
+  app.setGlobal('selRows', { parts: new Set(['0']) });
+  await app.run('openPartIn()');
+  dom.values['pi_qty_0'] = '5';
+  const inflightA = app.run('doPartIn()');
+
+  /* 批次 B：勾 X2 开新窗填 7，并**立刻**点确认（此时 A 仍在途） */
+  app.setGlobal('selRows', { parts: new Set(['1']) });
+  await app.run('openPartIn()');
+  dom.values['pi_qty_1'] = '7';
+  const ignored = app.run('doPartIn()');       /* 应被 __piBusy 静默忽略 */
+  await ignored;                               /* 立即 resolve（什么都没做） */
+
+  /* 被忽略的这次点击：不得发事务、不得提示、不得关窗、不得动输入 */
+  assert.equal(app.run('__piBusy'), true, '前置：批次 A 仍在途');
+  assert.equal(app.fakeServer.txBodies.length, 1, '第二次点击必须被静默忽略（只有批次 A 那 1 次事务）');
+  assert.equal(app.alerts.length, 0, '静默忽略：不得有任何 alert: ' + JSON.stringify(app.alerts));
+  assert.equal(app.sandbox.document.getElementById('modalBg').classList.contains('show'), true, '弹窗必须还在');
+  assert.equal(dom.values['pi_qty_1'], '7', '用户填的数量必须还在');
+  assert.equal(JSON.stringify(app.run('__piIdxs')), '[1]', '批次仍是 B');
+  assert.equal(app.run('parts[1].stock'), 3, 'B 尚未提交');
+
+  /* 放行 A：A 只提交自己的那一次，且不得收尾掉 B 的弹窗/批次 */
+  release();
+  app.fakeServer.txGate = null;
+  await inflightA;
+  assert.equal(app.run('parts[0].stock'), 15, 'A 已入库（10 + 5）');
+  assert.equal(app.run('partLogs.length'), 1, '台账只有 A 的 1 条');
+  assert.equal(app.sandbox.document.getElementById('modalBg').classList.contains('show'), true, 'A 收尾不得关闭 B 的弹窗');
+  assert.equal(JSON.stringify(app.run('__piIdxs')), '[1]', 'A 收尾不得置空 B 的批次');
+  assert.equal(app.run('__piBusy'), false, 'A 完成后锁已释放');
+  assert.equal(confirmBtn(app).disabled, false, 'A 完成后确认按钮恢复可点');
+  assert.equal(dom.values['pi_qty_1'], '7', '用户填的数量仍在（自愈前提）');
+
+  /* 用户再点一次 → 成功（自愈闭环） */
+  await app.run('doPartIn()');
+  assert.equal(app.run('parts[1].stock'), 10, '第二次真点：X2 = 3 + 7');
+  assert.equal(app.fakeServer.txBodies.length, 2, '共 2 次事务（A + B）');
+  assert.equal(app.run('partLogs.length'), 2, '台账 2 条');
+  assert.equal(app.alerts.length, 0, '全程无任何 alert');
+  assert.equal(app.run('__piBusy'), false, '结束后解锁');
+  app.dispose();
+});
 
 test('C13b [P2·.158 已修] 提交在途时再开入库弹窗：新弹窗与新批次都不得被上一条提交收尾掉',
   /* 修复方式（工程师 .158 同轮内修）：doPartIn 开头记 `const myIdx=__piIdxs` 作批次归属快照，
@@ -1408,20 +1468,29 @@ test('G6 变异：把 finally 里的解锁改成空操作 → C13（8 条出口�
   mutantApp.dispose();
 });
 
-/* ---- G7：对 P2「批次归属快照」修复做变异自证 ---- */
+/* ---- G7：对 P2「批次归属快照」修复做变异自证（两种等价破法各证一次） ---- */
 const M6_FROM = '    if(__piIdxs===myIdx){\n      __piIdxs=null;\n      closeModal();\n      clearSel(\'parts\');\n    }';
 const M6_TO = '    __piIdxs=null;\n    closeModal();\n    clearSel(\'parts\');';
+const M7_FROM = '    if(__piIdxs===myIdx){';
+const M7_TO = '    if(true){';
 
-test('G7 变异：收尾改回无条件 closeModal/清批次（退回 P2 缺陷）→ C13b 必须红', async function () {
-  const mutant = applyMutation(INDEX_SRC, M6_FROM, M6_TO, 'G7 收尾去掉批次归属判断');
-  const app = mkFakeServerApp(TWO_PARTS(), { indexHtml: mutant });
-  const dom = installDom(app, {});
-  let err = null;
-  try { await probeReopenDuringFlight(app, dom); } catch (e) { err = e; }
-  assert.ok(err && /不得关闭|不得被上一条提交置 null|数量必须还在/.test(String(err.message)),
-    'C13b 在「批次归属判断」被删后必须报红，实际: ' + (err ? err.message : '（没有报错）'));
-  /* 注入生效的独立证据：变异体确实把在途期间新开的弹窗关掉了 */
-  assert.equal(app.sandbox.document.getElementById('modalBg').classList.contains('show'), false,
-    '变异体必须表现出「新弹窗被关」（证明注入生效）');
-  app.dispose();
+test('G7 变异：破掉批次归属判断（两种等价破法）→ C13b 必须红', async function () {
+  const cases = [
+    { label: 'G7a 收尾改回无条件（整体还原旧写法）', from: M6_FROM, to: M6_TO },
+    { label: 'G7b 守卫条件改成 if(true)', from: M7_FROM, to: M7_TO }
+  ];
+  for (const c of cases) {
+    /* 命中数必须恰 1，否则 applyMutation 直接抛错（不静默通过） */
+    const mutant = applyMutation(INDEX_SRC, c.from, c.to, c.label);
+    const app = mkFakeServerApp(TWO_PARTS(), { indexHtml: mutant });
+    const dom = installDom(app, {});
+    let err = null;
+    try { await probeReopenDuringFlight(app, dom); } catch (e) { err = e; }
+    assert.ok(err && /不得关闭|不得被上一条提交置 null|数量必须还在/.test(String(err.message)),
+      '[' + c.label + '] C13b 必须报红，实际: ' + (err ? err.message : '（没有报错）'));
+    /* 注入生效的独立证据：变异体确实把在途期间新开的弹窗关掉了 */
+    assert.equal(app.sandbox.document.getElementById('modalBg').classList.contains('show'), false,
+      '[' + c.label + '] 变异体必须表现出「新弹窗被关」（证明注入生效）');
+    app.dispose();
+  }
 });

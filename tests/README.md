@@ -59,7 +59,7 @@ tests/
 ├── projection.sync.test.js    投影与回写：订单状态机 / 库存同步 / 入库回写（纯重算 vs 兼容包装）
 ├── import.idempotent.test.js  金蝶导入：幂等（重复导入不增生）/ 决策分支 / 导入口径（.130：已交付不落库、不写 directDelivered）
 ├── parts.158.test.js          零部件数据 / 零部件台账（结余单源 / 编码唯一 / 入库整批 + 重入锁 / 批次归属 / 顺序键 / 静态守卫）
-├── qa.parts-ledger.independent.test.js  零部件独立验证（QA 侧 51 条：口径 / 真实 DB.tx 双击 / 变异注入基础设施 / 八锚点）
+├── qa.parts-ledger.independent.test.js  零部件独立验证（QA 侧 53 条：口径 / 真实 DB.tx 双击 / 在途重开自愈 / 变异注入基础设施 / 八锚点）
 ├── server.tx.test.js          /api/tx 原子性、回滚、权限（服务端）
 ├── server.canwrite.test.js    canWrite 权限规则 / D1 修复回归（服务端）
 ├── e2e-http.verify.js         真机 HTTP 端到端验收脚本（T03 判据⑥，手动执行）
