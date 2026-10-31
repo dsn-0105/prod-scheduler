@@ -58,6 +58,8 @@ tests/
 ├── transfer.return-cap.test.js 「退回库存」上限口径（.129 = saleMaxCallable）：四类场景 / 单一来源委托 / 退回后不变量
 ├── projection.sync.test.js    投影与回写：订单状态机 / 库存同步 / 入库回写（纯重算 vs 兼容包装）
 ├── import.idempotent.test.js  金蝶导入：幂等（重复导入不增生）/ 决策分支 / 导入口径（.130：已交付不落库、不写 directDelivered）
+├── parts.158.test.js          零部件数据 / 零部件台账（结余单源 / 编码唯一 / 入库整批 + 重入锁 / 批次归属 / 顺序键 / 静态守卫）
+├── qa.parts-ledger.independent.test.js  零部件独立验证（QA 侧 51 条：口径 / 真实 DB.tx 双击 / 变异注入基础设施 / 八锚点）
 ├── server.tx.test.js          /api/tx 原子性、回滚、权限（服务端）
 ├── server.canwrite.test.js    canWrite 权限规则 / D1 修复回归（服务端）
 ├── e2e-http.verify.js         真机 HTTP 端到端验收脚本（T03 判据⑥，手动执行）
@@ -68,7 +70,8 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test tests/*.test.js` → **121 用例全绿，0 失败**。
+> **当前规模**：`node --test tests/*.test.js` → **829 tests / 827 pass / 0 fail / 2 skipped（既有 skip）**（`2026-10-31.158` 实测；`.157` 时为 739/737）。
+> ⚠ 本条数字**只在收尾时手写更新**（变化频繁，不做断言），跑回归请用**显式文件列表**，勿用 `node --test tests/` 目录形式（会扫入 `_diag/before*` 造成假失败）。
 >
 > **三个「黄金样例」文件的存在理由**（不是凑覆盖率）：
 > - `transfer.helpers.test.js` —— `trRevType`/`trSide` 是调拨方向模型（.115）的**唯一口径来源**；
