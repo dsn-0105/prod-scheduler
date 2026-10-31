@@ -520,7 +520,7 @@ const DB={
    serverData / serverRevs 缓存，而调用方对业务内存的「乐观变更」并未回滚 —— 页面会停在算错的值上，
    必须 F5 才复原（且失败后若用户继续点保存，会把脏值写回服务器）。
    本函数按 initApp 的同一批 key（products/orders/deliveries/productionPlans/productionReports/
-   processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout/uiDefaults）
+   processTemplates/logs/transfers/fields/fieldsAudit/fieldsDraft/meta/tblLayout/uiDefaults/parts/partLogs）
    从 serverData（pullAll 后 = 服务器真值）复位这批全局量。
    刻意不做（与 initApp 的区别）：不 seed()、不跑 migrate*()、不 syncStockFromInvOrders()
      —— 失败回灌只做「值复位」，不得触发任何写盘 / 迁移 / 派生投影副作用。
@@ -542,6 +542,9 @@ function rehydrateFromServer(){
   if(serverData.meta!==undefined)meta=serverData.meta;
   if(serverData.tblLayout!==undefined)applyServerLayout(serverData.tblLayout);   /* .152：v2 分片 → 取本人分片并深拷贝 */
   if(serverData.uiDefaults!==undefined)applyUiDefaults(serverData.uiDefaults);   /* .155：全局展示偏好（产品默认排序等） */
+  /* 【build .158】零部件两表：写失败回灌时同样必须复位，否则「入库失败」后页面仍停在乐观加过的库存上 */
+  if(serverData.parts!==undefined)parts=serverData.parts;
+  if(serverData.partLogs!==undefined)partLogs=serverData.partLogs;
 }
 /* ---- 实时同步：轮询版本号，有变化自动拉取刷新 ---- */
 async function pollRevs(){
@@ -616,7 +619,11 @@ function logout(){
 /* ---- 权限：按表单控制写权限（管理员全放行；员工按 perms 逐表单） ---- */
 let currentUser=null;
 function formToKey(formKey){
-  const m={product:'products',order_frame:'saleOrders',order_inv:'invOrders',delivery:'deliveries',prodPlan:'dailyPlans',processTpl:'processTemplates',fields:'fields',report:'report',logs:'logs',transfers:'transfers'};   /* .118：订单权限点拆分——销售订单(金蝶导入/调用库存)与库存订单(生成交付计划)分人管控｜.122：日排产模块移除；dailyPlans=排产计划(prodPlan)权限点 */
+  const m={product:'products',order_frame:'saleOrders',order_inv:'invOrders',delivery:'deliveries',prodPlan:'dailyPlans',processTpl:'processTemplates',fields:'fields',report:'report',logs:'logs',transfers:'transfers',
+    /* 【build .158】零部件：一张数据表 + 一张台账表归到**同一权限点** parts。
+       台账是「入库」动作的流水，写台账必然同时写零部件库存 —— 拆成两个权限点只会
+       制造「能入库却写不进台账」的半权限状态（服务端 canWrite 同口径）。 */
+    parts:'parts',partLogs:'parts'};   /* .118：订单权限点拆分——销售订单(金蝶导入/调用库存)与库存订单(生成交付计划)分人管控｜.122：日排产模块移除；dailyPlans=排产计划(prodPlan)权限点 */
   return m[formKey]||formKey;
 }
 function canWriteKey(k){
@@ -640,7 +647,10 @@ const FORM_ACTS={
   order_frame:{saleDeliver:'交付登记',saleReturn:'退货',kingdeeImport:'导入金蝶订单',saleCall:'调用库存',saleReturnStock:'退回库存'},
   order_inv:{invGenDelivery:'生成交付计划',invCall:'调用库存（改装/移库补库）',invAdjust:'库存调整（盘盈/盘亏）'},   /* .143：invAdjust=库存调整（盘盈/盘亏），默认归 PMC */
   delivery:{delPushPlan:'下推排产计划'},
-  prodPlan:{ppEdit:'编辑排产/物料齐套',ppLaunch:'投产/反投产',ppShift:'延后/提前计划日期',ppReport:'报工',ppReportEdit:'编辑/删除报工明细',ppDel:'删除排产'}
+  prodPlan:{ppEdit:'编辑排产/物料齐套',ppLaunch:'投产/反投产',ppShift:'延后/提前计划日期',ppReport:'报工',ppReportEdit:'编辑/删除报工明细',ppDel:'删除排产'},
+  /* 【build .158】零部件「入库」为按钮级动作（写库存 + 写台账）。默认随表单写权限全开（canAct 的
+     「acts 未配置→放行」宽松期口径不变），管理员可在员工面板单独收掉入库权。 */
+  parts:{partIn:'入库'}
 };
 function canAct(key){
   if(!currentUser)return false;
@@ -914,6 +924,10 @@ const FORM_META={
 ================================================================ */
 const NAV=[
   {id:'product',label:'产品主数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4 8 4 8-4zM4 7v10l8 4 8-4V7"/></svg>'},
+  /* 【build .158】零部件数据（用户 2026-10-31 需求）：独立的物料库存账，紧邻「产品主数据」——
+     两者是并列的主数据表（产品=成品、零部件=物料），放一起符合用户的查找直觉；
+     编码互斥的口径也因此在界面上相邻可见（保存时会跨表查重）。 */
+  {id:'parts',label:'零部件数据',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'},
   {id:'order',label:'订单管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'},
   /* 2026-08-25.65：库存订单从订单管理独立为「库存管理」页签（完整承载 order_inv 模块） */
   {id:'inv',label:'库存管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 8l9 5 9-5"/></svg>'},
@@ -924,6 +938,9 @@ const NAV=[
   /* 2026-08-25.69：使用说明（系统内帮助文档，全员可见） */
   {id:'guide',label:'使用说明',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>'},
   {id:'transfers',label:'调拨台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4M7 4L3 8M7 4l4 4M17 8v12M17 20l4-4M17 20l-4-4"/></svg>'},
+  /* 【build .158】零部件台账：紧邻「调拨台账」——同为用户口中的「台账」类只读流水页
+     （用户第 1 条选择「要记录入库流水」⇒ 另起一页仿调拨台账展示每次入库）。 */
+  {id:'partLogs',label:'零部件台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11"/><circle cx="4.5" cy="5" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="4.5" cy="19" r="1.5"/></svg>'},
   {id:'users',label:'员工管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>'}
 ];
 
@@ -933,6 +950,12 @@ const NAV=[
 let products=[],orders=[],deliveries=[],productionPlans=[],productionReports=[],processTemplates=[];
 
 let transfers=[];
+/* 【build .158】零部件数据 + 零部件台账（用户 2026-10-31 新增需求）
+   parts    = 零部件库存主数据 {id,name,spec,model,unit,stockMax,stockMin,stock,used}
+   partLogs = 入库流水台账 {id,ts,type,partId,partName,spec,model,unit,qty,stockBefore,stockAfter,remark,user}
+   两表与产品/订单/排产**无任何写入关系**：零部件库存只由「入库」累加（用户口径：
+   结余=库存−已占用，公式唯一入口 partBalanceOf；已占用本期恒 0，为后续功能预留字段）。 */
+let parts=[],partLogs=[];
 let fields=JSON.parse(JSON.stringify(defaultFields));
 let meta={seq:0};
 let activeTab='order';   /* 2026-10-14.148：默认首屏由已下线的仪表盘页改为「订单管理」 */
@@ -1088,7 +1111,7 @@ function applyTable(m,rows){return sortRows(m,filterRows(m,rows));}
 var tblPage={};   // tblPage[formKey]={page,size,total,maxPage,groupCount}
 const PAGE_SIZES=[10,100,1000];
 /* 2026-08-25.68：启用分页的表单；组模型（rowspan 合并）用 groupKey 整组不拆，单行模型直接切行 */
-const PAGED_FORMS={order_frame:1,order_inv:1,product:1,delivery:1,prodPlan:1,transfers:1,logs:1};
+const PAGED_FORMS={order_frame:1,order_inv:1,product:1,delivery:1,prodPlan:1,transfers:1,logs:1,parts:1,partLogs:1};
 const PAGED_GROUP_LABEL={order_frame:'张',order_inv:'张',delivery:'张',prodPlan:'张'};
 function pageSizeOf(m){
   const t=tblPage[m];
@@ -1298,7 +1321,7 @@ document.addEventListener('mouseup',function(e){
 
 /* 2026-08-25.42~.46：金蝶式增强筛选（对齐金蝶表单筛选框）——2026-08-25.46 起全量启用（product/订单/备货/包装/交付/排产/报表/日志）；
    口径：文本列 8 模式文本交互 + 日期列 8 快捷模式 + select 类列复选多选 + 数字列原 4 模式；ppOpenFilter（排产计划独立体系）不受影响 */
-const ENHANCED_FILT_MODES={product:true,order_frame:true,order_inv:true,delivery:true,prodPlan:true,report:true,logs:true,transfers:true};
+const ENHANCED_FILT_MODES={product:true,order_frame:true,order_inv:true,delivery:true,prodPlan:true,report:true,logs:true,transfers:true,parts:true,partLogs:true};
 const ENH_FILT_MODES_LIST=[['contains','包含'],['not_contains','不包含'],['eq','等于'],['neq','不等于'],['startswith','以…开始'],['endswith','以…结束'],['is_empty','为空'],['not_empty','不为空']];
 /* 2026-08-25.43：日期列金蝶快捷模式（今天/本周/本月/上月/过去一月/过去三月/从…到…/等于） */
 const ENH_DATE_MODES_LIST=[['today','今天'],['this_week','本周'],['this_month','本月'],['last_month','上月'],['last_1m','过去一个月'],['last_3m','过去三个月'],['range','从…到…'],['eq','等于']];
@@ -1488,6 +1511,12 @@ function applyUiDefaults(raw){uiDefaults=normUiDefaults(raw);}
    禁止调用方各自去读 uiDefaults 内部结构（防日后结构演进时漏改）。 */
 function prodOrderOf(){
   var e=(uiDefaults&&uiDefaults.order)?uiDefaults.order.product:null;
+  return (Array.isArray(e)&&e.length)?e:null;
+}
+/* 【build .158】【唯一取值点·零部件侧】零部件数据的自定义显示顺序 → id 数组 或 null。
+   与 prodOrderOf 分开取值（uiDefaults.order.parts），两张表的名单**互不污染**。 */
+function partsOrderOf(){
+  var e=(uiDefaults&&uiDefaults.order)?uiDefaults.order.parts:null;
   return (Array.isArray(e)&&e.length)?e:null;
 }
 /* 保存（**仅管理员**）：order 项传数组即覆盖该表单名单，传 null 即删除（恢复录入顺序）。
@@ -1959,6 +1988,7 @@ function renderContent(){
   }
   switch(activeTab){
     case 'product':c.innerHTML=renderProducts();break;
+    case 'parts':c.innerHTML=renderParts();break;   /* 【build .158】零部件数据 */
     case 'order':c.innerHTML=renderOrders();break;
     case 'inv':c.innerHTML=renderInvOrders();break;   /* 2026-08-25.65：库存管理独立页签 */
     case 'prodPlan':c.innerHTML=renderProdPlan();break;
@@ -1967,6 +1997,7 @@ function renderContent(){
     case 'logs':c.innerHTML=renderLogs();break;
     case 'guide':c.innerHTML=renderGuide();break;   /* 2026-08-25.69：使用说明 */
     case 'transfers':c.innerHTML=renderTransfers();break;
+    case 'partLogs':c.innerHTML=renderPartLogs();break;   /* 【build .158】零部件台账（只读流水） */
     case 'users':c.innerHTML=renderUsers();break;
     default:c.innerHTML='<div class="empty">未知模块</div>';
   }
@@ -1987,7 +2018,7 @@ function renderContent(){
     restoreTableScroll(scRecs);
   }
   /* 渲染后同步选中态：恢复复选框勾选与选中行高亮（row-sel，含 rowspan 合并组） */
-  ['product','order_frame','order_inv','delivery','prodPlan'].forEach(function(m){
+  ['product','order_frame','order_inv','delivery','prodPlan','parts'].forEach(function(m){
     if(document.querySelector('#content input[data-sel-form="'+m+'"]'))updateSelUI(m);
   });
   /* 布局完成后再次校正（字体/图片等加载可能改变表格宽度，避免滚动条不出现或错位） */
@@ -2214,15 +2245,13 @@ function sumRowHtml(schema,rows,preTd,rowStyle,labelKey){
      `.156` 只是把「顺序的来源」从「字段规则」换成「手工拖出来的名单」，判定逻辑不变。
 ================================================================ */
 
-/* 【唯一取值点·产品侧】按「自定义显示顺序」排好的**产品副本**（不动 products 本身顺序）。
-   renderProducts（产品列表）与 sortInvRowsByProdRank（库存订单跟随）**共用本函数**
-   —— 两者看到的顺序必须同源，否则会出现「产品页是这个序、库存订单却不跟」。
-   边界：未自定义 → 原顺序；名单里没有的产品（拖动后新增的）**排末尾**、相互间按录入顺序；
+/* 【.158 抽取】按名单排序的**唯一实现**（产品 / 零部件共用；两张表的顺序语义必须完全一致，
+   否则「拖动时按一个序排、保存时按另一个序补」会把名单打乱）。ord 为 null 时返回原顺序副本。
+   边界（.156 沿用）：未自定义 → 原顺序；名单里没有的（拖动后新增的）**排末尾**、相互间按录入顺序；
    名次相同不可能出现（normUiDefaults 已去重）。
-   ⚠ 返回的是**副本数组**，元素仍是 products 里的同一批对象引用（故 indexOf 仍可用）。 */
-function productsSortedByOrder(){
-  const arr=(products||[]).slice();
-  const ord=prodOrderOf();
+   ⚠ 返回的是**副本数组**，元素仍是原数组里的同一批对象引用（故 indexOf 仍可用）。 */
+function sortedByOrderOf(list,ord){
+  const arr=(list||[]).slice();
   if(!ord)return arr;
   const rank={};
   ord.forEach((id,i)=>{ rank[String(id)]=i; });
@@ -2231,6 +2260,16 @@ function productsSortedByOrder(){
     .map((p,i)=>({p:p,i:i,o:(rank[String(p.id)]!=null?rank[String(p.id)]:BIG)}))
     .sort((a,b)=>(a.o-b.o)||(a.i-b.i))   /* 名次相同（都= BIG）时按录入顺序，结果稳定 */
     .map(x=>x.p);
+}
+/* 【唯一取值点·产品侧】按「自定义显示顺序」排好的**产品副本**（不动 products 本身顺序）。
+   renderProducts（产品列表）与 sortInvRowsByProdRank（库存订单跟随）**共用本函数**
+   —— 两者看到的顺序必须同源，否则会出现「产品页是这个序、库存订单却不跟」。 */
+function productsSortedByOrder(){
+  return sortedByOrderOf(products,prodOrderOf());
+}
+/* 【build .158】零部件按自定义显示顺序排好的副本（薄封装，排序逻辑与产品同源）。 */
+function partsSortedByOrder(){
+  return sortedByOrderOf(parts,partsOrderOf());
 }
 
 /* 【唯一取值点·订单侧】库存订单默认排序 = 跟随产品显示顺序。
@@ -2264,40 +2303,72 @@ function sortInvRowsByProdRank(rows){
      （计时期间纵向移动 > 8px ⇒ 判定为滚动/点击，立即放弃，不干扰正常操作）
      计时到点     → 进入拖拽态（.pd-dragging + body 锁选中）
      pointermove  → elementFromPoint 定位目标行，把拖动行插到它前/后
-     pointerup    → 读 tbody 实际行序 → 存 uiDefaults.order.product → 重绘
+     pointerup    → 读 tbody 实际行序 → 存 uiDefaults.order[表单]（.158 起按表单分键：product / parts）→ 重绘
    ⚠ 拖拽态才 preventDefault + 锁 body 选中：普通点击/滚动完全不受影响。
 ================================================================ */
 const PD_LONG_PRESS_MS=500;      /* 长按时长（用户要求「长按」，非按下即拖） */
 const PD_MOVE_TOLERANCE=8;       /* 长按期间的容差：超过即视为滚动，放弃拖拽 */
-var _pdDrag=null;                /* {pid,tr,tbody,y0,active,dirty,blocked,restoreSize} */
+var _pdDrag=null;                /* {form,pid,tr,tbody,y0,active,dirty,blocked,restoreSize} */
 var _pdSuppressClick=0;          /* 拖拽刚结束时抑制一次行点击（防误触勾选） */
+/* 【build .158】最近一次拖拽的表单键（'product' / 'parts'）。
+   为什么需要它：`_pdDrag` 在收尾步骤之前就被清空（prodDragFinish 里先置 null 再恢复每页条数），
+   而 pdFilterHint 又是在 prodDragAbort 之后才调用 —— 这两处都读不到拖拽状态了。
+   用「最近一次」既让既有两处调用点保持单参形态零改动（prodRestorePageSize(size)），
+   也不会串到别的表：每次 pointerdown 都会按 dataset.pdform 重设。 */
+var _pdLastForm='product';
+/* 拖拽引擎的表单元数据（.158）：把「行数组 / 名单取值点 / 排序副本 / 日志目标」集中一处，
+   引擎各函数只认 form 键，避免在 8 个函数里各写一份 if(form==='parts') 分支。 */
+const PD_FORMS={
+  product:{label:'产品主数据',short:'产品',target:'产品主数据',orderLog:'调整产品显示顺序',
+    rows:function(){return products;},orderOf:prodOrderOf,sorted:productsSortedByOrder,
+    resetNote:'· 产品列表按录入先后排列\n· 库存订单列表恢复「单据编号升序」'},
+  parts:{label:'零部件数据',short:'零部件',target:'零部件数据',orderLog:'调整零部件显示顺序',
+    rows:function(){return parts;},orderOf:partsOrderOf,sorted:partsSortedByOrder,
+    resetNote:'· 零部件列表按录入先后排列（不影响产品主数据与库存订单）'}
+};
+function pdMeta(form){return PD_FORMS[form]||PD_FORMS.product;}
+/* 当前拖拽表单：优先取进行中的拖拽状态，其次取最近一次拖拽的表单，兜底 product（保持 .156 行为）。 */
+function _pdFormOf(){return (_pdDrag&&_pdDrag.form)||_pdLastForm||'product';}
 
-/* 当前是否「全部显示」（每页条数 ≥ 产品总数）—— D1 的判定 */
-function prodAllShown(){ return pageSizeOf('product')>=(products||[]).length; }
-/* 产品列表是否处于筛选态（判定口径与 filterBar 的「已生效」完全一致，供 D2 禁拖用） */
-function prodFilterActive(){
-  const s=tState('product');
+/* 当前是否「全部显示」（每页条数 ≥ 行数）—— D1 的判定
+   【build .158】参数化：不传 form 时取「当前拖拽的表单」（_pdFormOf），故既有调用点零改动，
+   零部件表与产品表走同一份判定（含「分页条数 ≥ 行数」这个唯一的「全部显示」定义）。 */
+function prodAllShown(form){
+  form=form||_pdFormOf();
+  return pageSizeOf(form)>=(pdMeta(form).rows()||[]).length;
+}
+/* 列表是否处于筛选态（判定口径与 filterBar 的「已生效」完全一致，供 D2 禁拖用）
+   【build .158】参数化，缺省=当前拖拽的表单（与 prodAllShown 同口径）。 */
+function prodFilterActive(form){
+  form=form||_pdFormOf();
+  const s=tState(form);
   return Object.keys(s.filters||{}).some(function(k){
     const f=s.filters[k];
     return !!(f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)));
   });
 }
-/* 恢复每页条数（拖拽自动切 1000 后回滚）—— 与 pagerSize 同口径写 tblPage + localStorage */
-function prodRestorePageSize(size){
+/* 恢复每页条数（拖拽自动切 1000 后回滚）—— 与 pagerSize 同口径写 tblPage + localStorage
+   【build .158】参数化：缺省取「最近一次拖拽的表单」_pdLastForm（收尾时 _pdDrag 已被清空）。 */
+function prodRestorePageSize(size,form){
   if(!size)return;
-  tblPage['product']={page:1,size:size};
-  try{localStorage.setItem(KEY+'pageSize_product',String(size));}catch(_e){}
+  form=form||_pdLastForm||'product';
+  tblPage[form]={page:1,size:size};
+  try{localStorage.setItem(KEY+'pageSize_'+form,String(size));}catch(_e){}
 }
 
-/* 行按下：起长按计时。仅管理员可拖（D3）；筛选态直接拦（D2，抬起时给一次提示） */
+/* 行按下：起长按计时。仅管理员可拖（D3）；筛选态直接拦（D2，抬起时给一次提示）
+   【build .158】从行的 `data-pdform` 读模块键（缺省 product）→ 同一引擎服务「产品主数据」与
+   「零部件数据」两张表；`_pdMove` 的 `tr[data-pid]` 选择器与长按门槛完全不变。 */
 function prodDragDown(e){
   if(_pdDrag)return;
   if(!isSysAdmin())return;                       /* 非管理员一律不响应（不做任何提示，避免骚扰） */
   if(e.button!=null&&e.button!==0)return;        /* 只响应左键 / 触摸 */
   const tr=e.currentTarget;
   if(!tr||!tr.dataset||!tr.dataset.pid)return;
-  const st={pid:tr.dataset.pid,tr:tr,tbody:tr.parentNode,y0:e.clientY,active:false,dirty:false,blocked:false,pressTimer:null,restoreSize:0};
+  const form=(tr.dataset.pdform||'product');
+  const st={form:form,pid:tr.dataset.pid,tr:tr,tbody:tr.parentNode,y0:e.clientY,active:false,dirty:false,blocked:false,pressTimer:null,restoreSize:0};
   _pdDrag=st;
+  _pdLastForm=form;
   document.addEventListener('pointermove',_pdMove);
   document.addEventListener('pointerup',_pdUp);
   if(prodFilterActive()){ st.blocked=true; return; }   /* D2：不启动计时，抬起时提示 */
@@ -2307,17 +2378,18 @@ function prodDragDown(e){
 function prodDragActivate(st){
   if(_pdDrag!==st||st.blocked)return;
   clearTimeout(st.pressTimer);
+  const fm=st.form||'product';
   /* D1：不是「全部显示」→ 自动切 1000 条/页并重绘，再按 pid 找回新行继续拖。
      按 pid 回查而非 querySelector 拼接（产品编码含点/中文，选择器转义易踩坑）。 */
-  if(!prodAllShown()){
-    st.restoreSize=pageSizeOf('product');
-    tblPage['product']={page:1,size:1000};
-    try{localStorage.setItem(KEY+'pageSize_product','1000');}catch(_e){}
+  if(!prodAllShown(fm)){
+    st.restoreSize=pageSizeOf(fm);
+    tblPage[fm]={page:1,size:1000};
+    try{localStorage.setItem(KEY+'pageSize_'+fm,'1000');}catch(_e){}
     renderContent();
     let nt=null;
     const rows=document.querySelectorAll('#content tr[data-pid]');
     for(let i=0;i<rows.length;i++){ if(rows[i].dataset.pid===st.pid){nt=rows[i];break;} }
-    if(!nt){ prodDragAbort(); return; }        /* 极端情况（产品被他人删除）→ 安静退出 */
+    if(!nt){ prodDragAbort(); return; }        /* 极端情况（行被他人删除）→ 安静退出 */
     st.tr=nt; st.tbody=nt.parentNode;
   }
   st.active=true;
@@ -2359,16 +2431,23 @@ function _pdUp(){
   prodDragFinish(st);
 }
 
-/* 筛选态禁拖的提示（8 秒节流：连点多次只提示一次，不刷屏） */
+/* 筛选态禁拖的提示（8 秒节流：连点多次只提示一次，不刷屏）
+   【build .158】按拖拽表单给出对应的「清除筛选」按钮（产品 → clearProductFilters，
+   零部件 → clearPartFilters），提示文案里的表名也随之切换。 */
 function pdFilterHint(){
   const now=Date.now();
   if(now-(window.__pdFilterHintTS||0)<8000)return;
   window.__pdFilterHintTS=now;
-  showSaveNotice('当前列表处于**筛选**状态，顺序调整已停用。请先点筛选栏的「清除筛选」，显示全部产品后再长按拖动。',
-    '<button class="btn btn-sm" onclick="clearProductFilters()">清除筛选</button>');
+  const fm=_pdLastForm||'product';
+  const label=pdMeta(fm).short;
+  const clearCall=fm==='parts'?'clearPartFilters()':'clearProductFilters()';
+  showSaveNotice('当前列表处于**筛选**状态，顺序调整已停用。请先点筛选栏的「清除筛选」，显示全部'+label+'后再长按拖动。',
+    '<button class="btn btn-sm" onclick="'+clearCall+'">清除筛选</button>');
   setTimeout(hideSaveNotice,6000);
 }
 function clearProductFilters(){ tState('product').filters={}; hideSaveNotice(); renderContent(); }
+/* 【build .158】零部件表的同款「清除筛选」（供筛选态禁拖提示的按钮调用） */
+function clearPartFilters(){ tState('parts').filters={}; hideSaveNotice(); renderContent(); }
 
 function prodDragAbort(){
   const st=_pdDrag;
@@ -2386,6 +2465,8 @@ function prodDragAbort(){
 
 async function prodDragFinish(st){
   const size=st.restoreSize;
+  const form=st.form||'product';
+  const meta=pdMeta(form);
   document.removeEventListener('pointermove',_pdMove);
   document.removeEventListener('pointerup',_pdUp);
   try{ st.tr.classList.remove('pd-dragging'); }catch(_e){}
@@ -2396,29 +2477,47 @@ async function prodDragFinish(st){
   if(size)prodRestorePageSize(size);
   if(!st.dirty){ renderContent(); return; }   /* 只按了一下没移动 → 不写盘，仅恢复每页条数 */
   /* 读 tbody 实际行序。补齐策略：当前 DOM（D1 已保证是全部）+ 按**当前生效顺序**补
-     不在 DOM 里的产品（防御：产品数超过 1000 或并发新增）—— 用录入顺序补会让已有
-     自定义顺序被打乱，故必须用 productsSortedByOrder() 的次序补。 */
+     不在 DOM 里的行（防御：行数超过 1000 或并发新增）—— 用录入顺序补会让已有
+     自定义顺序被打乱，故必须用 meta.sorted()（= 该表 productsSortedByOrder / partsSortedByOrder）的次序补。 */
   const ids=[].slice.call(st.tbody.querySelectorAll('tr[data-pid]')).map(r=>r.dataset.pid);
   const inDom={};
   ids.forEach(x=>{ inDom[String(x)]=1; });
-  productsSortedByOrder().forEach(p=>{
+  meta.sorted().forEach(p=>{
     const id=String(p.id);
     if(!inDom[id]){ ids.push(id); inDom[id]=1; }
   });
-  const ok=await saveUiDefaults({product:ids});
+  /* .158：名单按表单分开存（uiDefaults.order[form]），两张表互不覆盖 */
+  const patch={};
+  patch[form]=ids;
+  const ok=await saveUiDefaults(patch);
   if(!ok)return;                              /* DB.set 已提示失败原因 */
-  logOp('设置','产品主数据','调整产品显示顺序（共 '+ids.length+' 个）');
+  logOp('设置',meta.target,meta.orderLog+'（共 '+ids.length+' 个）');
   renderContent();
 }
-/* 【仅管理员】恢复录入顺序（清空自定义名单）—— 拖乱后的一键退出，不是 .155 那个「固化」按钮 */
+/* 【仅管理员】恢复录入顺序（清空自定义名单）—— 拖乱后的一键退出，不是 .155 那个「固化」按钮
+   【build .158】参数化：产品与零部件共用同一份清理逻辑（各自的 confirm 文案与日志由 PD_FORMS 提供），
+   下方两个薄封装保留原函数名，既有 onclick 与测试锚点零改动。 */
+async function resetFormOrder(form){
+  const fm=form||'product';
+  const meta=pdMeta(fm);
+  if(!needSysAdmin())return;
+  if(!meta.orderOf())return;
+  if(!confirm('恢复'+meta.label+'列表的原始录入顺序？\n\n'+meta.resetNote))return;
+  const patch={};
+  patch[fm]=null;
+  const ok=await saveUiDefaults(patch);
+  if(!ok)return;
+  logOp('设置',meta.target,'恢复'+meta.short+'原始录入顺序');
+  renderContent();
+}
 async function resetProductOrder(){
   if(!needSysAdmin())return;
-  if(!prodOrderOf())return;
-  if(!confirm('恢复产品列表的原始录入顺序？\n\n· 产品列表按录入先后排列\n· 库存订单列表恢复「单据编号升序」'))return;
-  const ok=await saveUiDefaults({product:null});
-  if(!ok)return;
-  logOp('设置','产品主数据','恢复产品原始录入顺序');
-  renderContent();
+  return resetFormOrder('product');
+}
+/* 【build .158】零部件「恢复录入顺序」（仅管理员） */
+async function resetPartsOrder(){
+  if(!needSysAdmin())return;
+  return resetFormOrder('parts');
 }
 
 /* ================================================================
@@ -2589,6 +2688,457 @@ function delProduct(idx){
   products.splice(idx,1);
   save('products',products);
   renderContent();
+}
+
+/* ================================================================
+   【build .158】零部件数据 + 零部件台账（用户 2026-10-31 需求）
+   ----------------------------------------------------------------
+   与「产品主数据」的关系（用户口径，勿混）：
+     · 两套**互相独立**的库存账，完全不联动：产品库存 = Σ库存订单已交付（系统投影）；
+       零部件库存只由「入库」累加，与产品 / 订单 / 排产 / 交付全链路没有任何写入关系。
+     · 编码**不得与产品主数据重复**（用户已确认"不能"）—— 保存时跨表查重。同一编码在两张表
+       同时出现，日后引用料号时无法判断「这是产品还是零部件」，与产品删除守卫防的断链是同类风险。
+   字段（用户给定顺序，11 列，不得调整）：
+     编码 / 名称 / 规格 / 型号 / 单位 / 最大库存量 / 最小库存量 / 库存 / 已占用 / 结余 / 结余进度
+     · 「编码、名称、单位」必填；
+     · 结余 = 库存 减 已占用 —— **唯一公式点 partBalanceOf**，任何地方不得再写第二份；
+     · 结余进度 = 结余 ÷ 最大库存量（**分母＝最大库存量**，与库存管理的结余进度同款百分比口径，
+       可 >100%；最大库存量为 0/空 → 0，避免除零，也避免把「没设上限」显示成 100%）；
+     · 库存 / 已占用 / 结余 / 结余进度 **不可编辑**：库存只由「入库」增加；已占用为预留字段，
+       本期恒 0（用户确认"显示 0"），留待后续功能写入；
+     · 4 档警示与进度条配色复用 invStockLevel：红（结余<0）/ 黄（<最小库存量）/ 绿（正常）/
+       灰（>最大库存量）。进度条宽度取绝对值（负结余同样画得出来），DOM 结构照抄库存管理页。
+   ================================================================ */
+/* 台账类型标签（仿 js/transfer.js 的 TR_TYPE_LABEL）：本期只有 'in'，
+   保留映射表结构是为了后续加「出库 / 调整」时只需扩表、不必改渲染。 */
+const PARTLOG_TYPE_LABEL={in:'入库'};
+/* 结余 4 档 → 进度条背景色（与库存管理页 _lvCls 同色值） */
+const PART_LV_BAR={red:';background:var(--red)',amber:';background:var(--amber)',green:';background:var(--green)',gray:';background:#9ca3af'};
+
+/* 固定列（顺序即用户给的字段顺序）。不接「字段设置」配置：本次是封闭清单，
+   字段随需求一次性定死；配置化只会带来「每人看到不同列 → 导出/台账口径不一致」的风险。 */
+const PARTS_COLS=[
+  {key:'id',label:'编码',type:'text'},
+  {key:'name',label:'名称',type:'text'},
+  {key:'spec',label:'规格',type:'text'},
+  {key:'model',label:'型号',type:'text'},
+  {key:'unit',label:'单位',type:'text'},
+  {key:'stockMax',label:'最大库存量',type:'number'},
+  {key:'stockMin',label:'最小库存量',type:'number'},
+  {key:'stock',label:'库存',type:'number'},
+  {key:'used',label:'已占用',type:'number'},
+  /* 计算列：用 get 取唯一入口（参考库存订单 _balance/_balPct 的 schema 写法），不落库、不可编辑 */
+  {key:'_bal',label:'结余',type:'number',get:function(p){return partBalanceOf(p);}},
+  {key:'_balPct',label:'结余进度',type:'number',get:function(p){return partBalPctOf(p);}}
+];
+
+/* 结余 = 库存 减 已占用 —— **全工程唯一公式点**。禁止在任何其它位置再写一份（测试以源码断言钉住）。 */
+function partBalanceOf(p){return num(p&&p.stock)-num(p&&p.used);}
+/* 结余进度：分母 = 最大库存量；为 0/空 → 0 */
+function partBalPctOf(p){const max=num(p&&p.stockMax);return max>0?Math.round(partBalanceOf(p)/max*100):0;}
+
+/* 结余 4 档悬浮说明（档位判定复用 invStockLevel，文案针对零部件场景） */
+function partBalTip(p,bal,lv){
+  const mn=num(p&&p.stockMin),mx=num(p&&p.stockMax),used=num(p&&p.used);
+  if(lv==='red')return '结余 '+money(bal)+'：小于 0，库存不足以覆盖已占用（已占用 '+money(used)+'）';
+  if(lv==='amber')return '结余 '+money(bal)+'：低于最小库存量 '+money(mn)+'，缺货风险，建议入库补货';
+  if(lv==='gray')return '结余 '+money(bal)+'：高于最大库存量 '+money(mx)+'，库存积压';
+  return '结余 '+money(bal)+'：库存正常';
+}
+/* 零部件数字列文本：空值显示空白（不把「未设上下限」印成 0，与产品主数据「原样显示」一致） */
+function partNumTxt(v){return (v===''||v==null)?'':money(num(v));}
+
+/* 台账编号：PTH-YYYYMMDD-XXXXX（前缀 PTH · 日期去横线 · 当日 5 位序号左补零，每日从 00001 刷新）
+   生成策略照抄 nextDeliveryPlanNo（同前缀 max+1 + 去重兜底），**全工程唯一编号公式**，
+   新增入库时只能调本函数，不得另写一份。 */
+function nextPartLogNo(dateStr){
+  const _ds=String(dateStr==null?todayStr():dateStr);
+  const d=(/^\d{4}-\d{2}-\d{2}$/.test(_ds)?_ds:todayStr()).replace(/-/g,'');
+  const prefix='PTH-'+d+'-';
+  let max=0;
+  (partLogs||[]).forEach(function(x){
+    const v=(x&&x.id!=null)?String(x.id).trim():'';
+    if(v.indexOf(prefix)===0){
+      const n=parseInt(v.slice(prefix.length),10);
+      if(!isNaN(n)&&n>max)max=n;
+    }
+  });
+  const used={};
+  (partLogs||[]).forEach(function(x){if(x&&x.id!=null){const v=String(x.id).trim();if(v)used[v]=1;}});
+  let n=max+1;
+  while(used[prefix+String(n).padStart(5,'0')])n++;
+  return prefix+String(n).padStart(5,'0');
+}
+
+/* 零部件数据列表（仿 renderProducts）：拖拽排序 + 勾选 + 批量栏 + 筛选 + 分页 + 合计 */
+function renderParts(){
+  /* 顺序状态条（所有人可见，只读）+ 管理员专属「恢复录入顺序」——与产品主数据同款交互 */
+  const _ord=partsOrderOf();
+  const _ordTxt=_ord?('自定义（'+_ord.length+' 项）'):'录入顺序';
+  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>零部件数据 <span class="desc">维护零部件编码/名称/规格/型号/单位与库存上下限｜结余＝库存 减 已占用；入库在批量栏操作并写入「零部件台账」</span> '
+    +'<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:10px;white-space:nowrap">'
+      +'<span title="长按任意一行上下拖动即可调整顺序（仅管理员）。与产品主数据的顺序各存一份，互不影响">顺序：<b>'+esc(_ordTxt)+'</b></span>'
+      +(isSysAdmin()?'<span style="font-size:12px;color:var(--muted)">长按整行可上下拖动</span>':'')
+      +(isSysAdmin()&&_ord?'<button class="btn btn-sm" onclick="resetPartsOrder()" title="恢复零部件原始录入顺序（仅管理员）">恢复录入顺序</button>':'')
+    +'</span>'
+    +(canWriteForm('parts')?'<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="partModal()">新增零部件</button>':'')+'</div>';
+  if(parts.length===0){
+    html+='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><br>暂无零部件数据，点击「新增零部件」开始</div>';
+  }else{
+    const cols=PARTS_COLS;
+    TBL_SCHEMAS.parts=cols;   /* 固定列（不接 fields 配置） */
+    TBL_ROWS.parts=parts;
+    /* 自定义显示顺序：仅当用户**未手动点击列头排序**时生效（列头排序是临时查看，优先级更高）。
+       顺序先作用于**副本**再进 applyTable，保证「筛选 → 排序 → 分页」的先后与产品页一致。 */
+    let _pBase=parts;
+    if(!tState('parts').sort&&partsOrderOf())_pBase=partsSortedByOrder();
+    let shown=applyTable('parts',_pBase);
+    const pAll=shown;   /* 合计口径 = 筛选后全量（分页前保存） */
+    if(PAGED_FORMS.parts&&shown.length>0)shown=slicePaged('parts',shown,pageSizeOf('parts')).rows;
+    lastRowIds.parts=shown.map(p=>parts.indexOf(p));
+    html+=bulkBar('parts');
+    html+=filterBar('parts');
+    const _pColN=cols.length+1;
+    const _pColg='<colgroup>'+Array(_pColN).fill('<col>').join('')+'</colgroup>';
+    html+='<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">'+_pColg+'<thead><tr><th class="sel-col"></th>'+cols.map(c=>thCol('parts',c)).join('')+'</tr></thead></table></div></div>';
+    html+='<div class="table-wrap"><table class="body-tbl">'+_pColg+'<tbody>';
+    if(shown.length===0){html+=noMatchRow('parts',cols.length+1);}
+    shown.forEach((p)=>{
+      const idx=parts.indexOf(p);
+      const checked=selSet('parts').has(String(idx))?'checked':'';
+      /* 行上挂 data-pid（= 编码）+ **data-pdform="parts"** + onpointerdown：同一拖拽引擎按表单服务两张表。
+         非管理员时 prodDragDown 首行直接 return，不影响任何点击/勾选行为。 */
+      html+='<tr data-pid="'+esc(String(p.id==null?'':p.id))+'" data-pdform="parts" onpointerdown="prodDragDown(event)"'+(isSysAdmin()?' class="pd-draggable"':'')+' onclick="selRowClick(\'parts\','+idx+')"><td class="sel-col"><input type="checkbox" '+checked+' data-sel-id="'+idx+'" data-sel-form="parts" onclick="event.stopPropagation();selRowClick(\'parts\','+idx+')"></td>';
+      cols.forEach(function(c){
+        const v=colVal(c,p);
+        if(c.key==='_bal'){
+          const lv=invStockLevel(v,p.stockMin,p.stockMax);
+          const tri=lv==='red'?warnTriSvg('#ef4444',partBalTip(p,v,lv))
+            :(lv==='amber'?warnTriSvg('#f59e0b',partBalTip(p,v,lv))
+            :(lv==='gray'?warnTriSvg('#9ca3af',partBalTip(p,v,lv)):''));
+          html+='<td data-key="'+c.key+'" style="font-variant-numeric:tabular-nums;text-align:right'+(lv==='red'?';color:var(--red)':'')+'">'+tri+money(v)+'</td>';
+        }else if(c.key==='_balPct'){
+          /* 进度条结构照抄库存管理页结余进度列（progress-wrap + progress-bar + 11px 百分比文字），
+             宽度取绝对值（负结余也要画得出来），颜色随 4 档状态 */
+          const lv=invStockLevel(partBalanceOf(p),p.stockMin,p.stockMax);
+          const barCls=PART_LV_BAR[lv]||'';
+          const txtCls=(lv==='red'?';color:var(--red)':'');
+          html+='<td data-key="'+c.key+'" style="min-width:90px"><div style="display:flex;align-items:center;gap:4px"><div class="progress-wrap" style="flex:1;min-width:50px"><div class="progress-bar" style="width:'+Math.abs(v)+'%'+barCls+'"></div></div><span style="font-size:11px'+txtCls+'">'+v+'%</span></div></td>';
+        }else if(c.type==='number'){
+          html+='<td data-key="'+c.key+'" style="font-variant-numeric:tabular-nums;text-align:right">'+esc(partNumTxt(v))+'</td>';
+        }else{
+          html+='<td data-key="'+c.key+'">'+esc(v)+'</td>';
+        }
+      });
+      html+='</tr>';
+    });
+    /* 底部合计：数量列求和；「结余进度」已在 SUM_SKIP_KEYS 中跳过，无需额外处理 */
+    if(pAll.length>0)html+=sumRowHtml(cols,pAll,'<td class="sel-col"></td>','',sumLabelKey('parts',cols));
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+  return html;
+}
+
+/* 零部件新增/编辑弹窗（仿 productModal）。
+   库存 / 已占用 / 结余 / 结余进度一律只读展示：库存由「入库」驱动、已占用为预留字段，
+   手改会让「台账流水 → 库存」对不上账（台账是唯一可追溯来源）。 */
+function partModal(idx,prefill){
+  if(!ensureWrite('parts'))return;
+  const isNew=(idx==null||Number(idx)<0);   /* 无参=新增；prefill=复制（也按新增处理） */
+  const src=prefill!=null?prefill:(isNew?null:parts[idx]);
+  const p=src?Object.assign({},src):{unit:'个',stockMax:0,stockMin:0,stock:0,used:0};
+  if(p.unit==null||p.unit==='')p.unit='个';   /* 新建默认单位「个」 */
+  /* 新增/复制：库存与已占用一律从 0 起算（库存只由「入库」累加；复制件不应继承源零件的库存） */
+  if(isNew){p.stock=0;p.used=0;}
+  const F=[
+    {key:'id',label:'编码',type:'text',required:true,note:'唯一，且不能与产品主数据编码重复'},
+    {key:'name',label:'名称',type:'text',required:true},
+    {key:'spec',label:'规格',type:'text'},
+    {key:'model',label:'型号',type:'text'},
+    {key:'unit',label:'单位',type:'text',required:true},
+    {key:'stockMax',label:'最大库存量',type:'number',note:'结余进度的分母'},
+    {key:'stockMin',label:'最小库存量',type:'number',note:'结余低于此值显示黄色警示'}
+  ];
+  let body='<div class="form-row">';
+  F.forEach(function(f,i){
+    if(i>0&&i%2===0)body+='</div><div class="form-row">';
+    const val=p[f.key];
+    const ctrl=(f.type==='number')
+      ?'<input type="number" id="pj_'+f.key+'" min="0" step="1" value="'+esc(val==null||val===''?'':String(num(val)))+'">'
+      :'<input type="text" id="pj_'+f.key+'" value="'+esc(val==null?'':val)+'">';
+    body+='<div><label>'+esc(f.label)+(f.required?' *':'')+'</label>'+ctrl
+      +(f.note?'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(f.note)+'</div>':'')+'</div>';
+  });
+  body+='</div>';
+  const bal=partBalanceOf(p);
+  const RO=[
+    {label:'库存',val:money(num(p.stock)),tip:'库存由「入库」操作累加（列表勾选后点批量栏「入库」），不可直接编辑'},
+    {label:'已占用',val:money(num(p.used)),tip:'已占用为预留字段（本期恒 0），由后续功能写入，不可编辑'},
+    {label:'结余',val:money(bal),tip:'结余 ＝ 库存 减 已占用（系统自动计算，不可编辑）'},
+    {label:'结余进度',val:partBalPctOf(p)+'%',tip:'结余进度 ＝ 结余 ÷ 最大库存量（分母为最大库存量，可超过 100%）'}
+  ];
+  body+='<div class="form-row">';
+  RO.forEach(function(x){
+    body+='<div><label>'+esc(x.label)+'</label><input type="text" value="'+esc(x.val)+'" disabled title="'+esc(x.tip)+'" style="background:#f6f8fa;color:var(--muted)"></div>';
+  });
+  body+='</div>';
+  showModal(isNew?'新增零部件':'编辑零部件',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="savePart('+(isNew?-1:idx)+')">保存</button>');
+}
+
+/* 保存零部件（仿 saveProduct）。
+   校验顺序：必填 → 零部件内部编码唯一（编辑时排除自身）→ **跨表查重**（不得与产品编码重复）。
+   库存/已占用：编辑时原样保留（只由入库/后续功能驱动），新建 = 0。
+   写入：parts + logs 一次 DB.tx 原子提交（失败按 DB.tx 既有约定：内存回灌服务器真值、不渲染成功态）。 */
+async function savePart(idx){
+  const elv=function(k){const el=document.getElementById('pj_'+k);return el?el.value:'';};
+  const p={
+    id:String(elv('id')).trim(),
+    name:String(elv('name')).trim(),
+    spec:String(elv('spec')).trim(),
+    model:String(elv('model')).trim(),
+    unit:String(elv('unit')).trim(),
+    stockMax:num(elv('stockMax')),
+    stockMin:num(elv('stockMin')),
+    stock:0,used:0
+  };
+  if(!p.id){alert('请输入或填写零部件「编码」');return;}
+  if(!p.name){alert('请填写零部件「名称」');return;}
+  if(!p.unit){alert('请填写零部件「单位」');return;}
+  const dup=parts.some(function(x,i){return i!==idx&&String(x&&x.id!=null?x.id:'').trim()===p.id;});
+  if(dup){alert('零部件编码「'+p.id+'」已存在，编码不能重复');return;}
+  if((products||[]).some(function(x){return String(x&&x.id!=null?x.id:'').trim()===p.id;})){
+    alert('编码「'+p.id+'」已被产品主数据使用，零部件编码不能与产品编码重复');
+    return;
+  }
+  const isEdit=(idx>=0&&!!parts[idx]);
+  if(isEdit){p.stock=num(parts[idx].stock);p.used=num(parts[idx].used);}
+  if(isEdit)parts[idx]=p;else parts.push(p);
+  pushLogEntry(makeLogEntry(isEdit?'编辑':'新增','零部件数据',
+    (isEdit?'编辑零部件「':'新增零部件「')+p.name+'」('+p.id+')'));
+  const ok=await DB.tx([{key:'parts',value:parts},{key:'logs',value:logs}]);
+  if(!ok)return;   /* 失败：一字未写、内存已回灌服务器真值 → 不关弹窗、不渲染成成功态 */
+  closeModal();
+  renderContent();
+}
+
+function delPart(idx){
+  const p=parts[idx];
+  if(!p)return;
+  if(!ensureWrite('parts'))return;   /* 守卫在 confirm 之前：不让用户白点一次「确定」才被拦 */
+  if(!confirm('确认删除零部件「'+p.name+'」('+p.id+')？\n\n· 该零件已产生的入库流水仍保留在「零部件台账」（台账只增不改）\n· 删除不影响产品主数据与库存订单'))return;
+  pushLogEntry(makeLogEntry('删除','零部件数据','删除零部件「'+p.name+'」('+p.id+')'));
+  parts.splice(idx,1);
+  clearSel('parts');
+  (async function(){
+    const ok=await DB.tx([{key:'parts',value:parts},{key:'logs',value:logs}]);
+    if(ok)renderContent();
+  })();
+}
+function copyPart(i){
+  const c=Object.assign({},parts[i]);
+  /* 复制件的编码要同时避开零部件与产品两张表（否则保存时必然被跨表查重拦下，白填一遍） */
+  c.id=suggestCopyId(String(c.id==null?'':c.id),function(id){
+    return parts.some(function(p){return String(p.id)===String(id);})||
+      (products||[]).some(function(p){return String(p.id)===''+id;});
+  });
+  partModal(-1,c);
+}
+
+/* ================================================================
+   【build .158】零部件「入库」：勾选明细行 → 弹窗填数量 → 累加库存 + 写台账流水
+   ----------------------------------------------------------------
+   口径（用户第 1 条选择「要记录入库流水」）：
+     · 库存 = 原库存 + 本次入库数量（stockBefore / stockAfter 一并快照进台账，便于日后对账）
+     · 台账记录 partLogs 一条/零件：编号 PTH-…、时间、类型 in、零件四项、数量、前后库存、操作人
+     · **整批校验**：任一填写值非法 → 整批拒绝、库存一字不改（禁止部分提交，对齐 doReturnStock 的
+       做法，规避「填三行、只成功两行」的老问题 D7）；全部留空/填 0 → 提示「请至少填写一个」
+     · 一次 DB.tx 提交 parts + partLogs + logs；失败按 DB.tx 既有约定：内存回灌真值、不清勾选
+   ================================================================ */
+var __piIdxs=null;   /* 本次入库弹窗中参与的行下标（parts 下标，非分页行号） */
+/* 【build .158 修复·P1】入库提交重入锁。
+   现象（QA 实测）：确认按钮双击会在**同一个 tick 内**发起两次 `/api/tx`；第二次被服务端乐观锁 409
+   拦下（库存不会翻倍，数据是安全的），但会弹出「数据已被他人修改，请刷新后重新操作」——
+   而事实是用户自己点了两下，这条提示纯属误导（会让人以为同事在同时改数据）。
+   为什么用模块级标志而不是靠按钮 disabled：disabled 属于体验层（F12 / 回车 / 连点穿透都可能绕过），
+   业务侧必须自己有一道锁；按钮禁用作为体验层叠加实现（见 doPartIn 的 finally）。
+   ⚠ 释放必须写在 finally 里：任何一条早退路径漏解锁，入库按钮就会**永久卡死**，比原缺陷更糟。 */
+var __piBusy=false;
+function openPartIn(){
+  if(!ensureWrite('parts'))return;
+  if(!canAct('parts.partIn')){alert('当前账号无「入库」按钮权限（请联系管理员在「员工管理 → 表单写权限 → 零部件数据」下授权）');return;}
+  const s=selSet('parts');
+  const idxs=[...s].map(Number).filter(function(i){return !!parts[i];});
+  if(idxs.length===0){alert('请先勾选要入库的零部件');return;}
+  __piIdxs=idxs;
+  let rows='';
+  idxs.forEach(function(i){
+    const p=parts[i];
+    rows+='<tr><td style="font-weight:600">'+esc(p.id)+'</td><td>'+esc(p.name)+'</td><td>'+esc(p.spec||'')+'</td>'
+      +'<td>'+esc(p.unit||'')+'</td>'
+      +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+money(num(p.stock))+'</td>'
+      +'<td><input type="number" id="pi_qty_'+i+'" min="0" step="1" value="" placeholder="留空=不入库" style="width:120px"></td></tr>';
+  });
+  const body='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">已选 '+idxs.length+' 个零部件。填写本次入库数量（留空或填 0 表示该零件本次不入库）；确认后累加「库存」并写入「零部件台账」。</div>'
+    +'<div class="table-wrap" style="max-height:46vh"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>单位</th><th>当前库存</th><th>本次入库数量</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  showModal('零部件入库',body,
+    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pi_confirm" onclick="doPartIn()">确认入库</button>');
+}
+
+async function doPartIn(){
+  /* 重入保护：双击/回车连发的第二次在这里直接忽略（不重算、不重复提交、不弹误导提示）。
+     注意：锁只拦「提交」，不拦 openPartIn（打开弹窗不应被上一次的残留状态挡住）。 */
+  if(__piBusy)return;
+  __piBusy=true;
+  /* 【build .158 修复·P2】批次归属快照：收尾（关弹窗/清勾选/置空批次）只能作用于**本次提交的那一个弹窗**。
+     缺陷现象（QA 实测）：提交在途时用户再点「入库」会打开新弹窗；第一条提交成功后无条件
+     closeModal()+clearSel()+__piIdxs=null，把**新弹窗关掉并清空批次**，用户刚填的数量静默丢失
+     （数据安全，不会重复入库，但输入白填了）。修法=比对批次引用：只有弹窗仍是我的才收尾。 */
+  const myIdx=__piIdxs;
+  /* 体验层：提交期间禁用确认按钮并改文案，让用户看到「正在入库」而不是「点了没反应」 */
+  const cbtn=document.getElementById('pi_confirm');
+  const cbtnTxt=cbtn?cbtn.innerHTML:'';
+  if(cbtn){cbtn.disabled=true;cbtn.innerHTML='入库中…';}
+  try{
+    if(!__piIdxs||!__piIdxs.length){closeModal();return;}                     /* 出口①：无进行中的批次 */
+    if(!ensureWrite('parts'))return;                                          /* 出口②：无写权限 */
+    /* ① 先整批校验（此时一个字段都还没改） */
+    const plan=[];
+    for(let k=0;k<__piIdxs.length;k++){
+      const i=__piIdxs[k];
+      const el=document.getElementById('pi_qty_'+i);
+      const raw=el?String(el.value).trim():'';
+      if(raw==='')continue;                      /* 留空 = 本行不入库 */
+      const q=Number(raw);
+      if(!isFinite(q)){alert('入库数量「'+raw+'」不是有效数字，本次入库未提交（所有零件库存均未变动）。');return;}   /* 出口③ */
+      if(q<0){alert('入库数量不能为负数（第 '+(k+1)+' 行为「'+raw+'」），本次入库未提交（所有零件库存均未变动）。');return;}   /* 出口④ */
+      if(q===0)continue;                         /* 填 0 = 本行不入库（与留空同义） */
+      plan.push({i:i,qty:q});
+    }
+    if(plan.length===0){alert('请至少填写一个入库数量');return;}                /* 出口⑤ */
+    /* ② 全部校验通过后才动库存：逐行累加 + 逐行生成台账流水 */
+    const ts=logTimeStr(new Date());             /* 固定格式 'YYYY-MM-DD HH:mm:ss'（与操作日志同源） */
+    /* 操作人取值与 applyTransfers 写台账的方式**同源**：姓名优先，回退工号/用户名，未登录为「未知」 */
+    const user=(currentUser&&currentUser.name)||(currentUser&&currentUser.username)||'未知';
+    let totalQty=0;
+    plan.forEach(function(x){
+      const p=parts[x.i];
+      if(!p)return;
+      const stockBefore=num(p.stock);
+      p.stock=stockBefore+x.qty;
+      totalQty+=x.qty;
+      /* 编号在入账前逐条取号：nextPartLogNo 扫描 partLogs（含本批已入账的记录）→ 同批不会重号 */
+      const rec={id:nextPartLogNo(),ts:ts,type:'in',partId:p.id,partName:p.name,
+        spec:p.spec||'',model:p.model||'',unit:p.unit||'',
+        qty:x.qty,stockBefore:stockBefore,stockAfter:num(p.stock),remark:'',user:user};
+      partLogs.unshift(rec);
+    });
+    pushLogEntry(makeLogEntry('入库','零部件台账','入库 '+plan.length+' 个零部件，共 '+totalQty+' 件'));
+    /* ③ 一次原子提交（parts + partLogs + logs）。失败 → DB.tx 已回灌服务器真值，不改内存态、不清勾选 */
+    const ok=await DB.tx([{key:'parts',value:parts},{key:'partLogs',value:partLogs},{key:'logs',value:logs}]);
+    if(!ok)return;                                                            /* 出口⑥：事务失败（弹窗不关、勾选不清，可原样重试） */
+    /* 成功收尾：只有当「当前弹窗/批次仍是本次提交的那一个」时才关闭并清勾选。
+       提交在途期间用户可能又点了「入库」打开新弹窗（__piIdxs 已被换成新数组）——
+       此时绝不能关窗、不能清空批次，否则用户刚填的数量会静默丢失（P2）。
+       列表刷新（renderContent）与归属无关：库存已落库，列表必须显示新数字。 */
+    if(__piIdxs===myIdx){
+      __piIdxs=null;
+      closeModal();
+      clearSel('parts');
+    }
+    renderContent();
+  }finally{
+    /* 唯一解锁点：覆盖上面 6 条早退 + 成功 + 异常（抛错也不会把按钮锁死） */
+    __piBusy=false;
+    if(cbtn){cbtn.disabled=false;cbtn.innerHTML=cbtnTxt;}
+  }
+}
+
+/* 零部件台账（仿 renderTransfers）：只读流水，逐条展示每次入库。
+   本期**不做红冲**（用户只要求「记录入库流水」）：入库是既成事实，冲销会牵动库存与台账两边口径，
+   留待后续需求明确后再做——届时应新增反向记录类型并走同一个 DB.tx 写入点。 */
+function renderPartLogs(){
+  const rows=(partLogs||[]);
+  TBL_SCHEMAS.partLogs=[
+    {key:'ts',label:'时间',type:'text'},
+    {key:'type',label:'类型',type:'text',select:true,options:['入库'],get:function(r){return PARTLOG_TYPE_LABEL[r.type]||r.type;}},
+    {key:'partId',label:'零件编码',type:'text'},
+    {key:'partName',label:'零件名称',type:'text'},
+    {key:'spec',label:'规格',type:'text'},
+    {key:'model',label:'型号',type:'text'},
+    {key:'unit',label:'单位',type:'text'},
+    {key:'qty',label:'入库数量',type:'number'},
+    {key:'stockBefore',label:'入库前库存',type:'number'},
+    {key:'stockAfter',label:'入库后库存',type:'number'},
+    {key:'remark',label:'备注',type:'text',get:function(r){return r.remark||'';}},
+    {key:'user',label:'操作人',type:'text'}
+  ];
+  TBL_ROWS.partLogs=rows;
+  let shown=applyTable('partLogs',rows);
+  /* 金蝶式分页（单行模型直接切行），与调拨台账同款 */
+  if(PAGED_FORMS.partLogs&&shown.length>0)shown=slicePaged('partLogs',shown,pageSizeOf('partLogs')).rows;
+  let html='<div class="page">';
+  html+='<div class="bulk-bar"><span style="color:var(--muted);font-size:13px">零部件台账：记录每次「入库」流水（时间 / 数量 / 入库前后库存 / 操作人）。记录不可修改，用于追溯零件库存的来源。</span>'+pagerHtml('partLogs')+'</div>';
+  html+=filterBar('partLogs');
+  html+='<div class="table-wrap"><table><thead><tr>'
+    +TBL_SCHEMAS.partLogs.map(function(c){return thCol('partLogs',c);}).join('')
+    +'</tr></thead><tbody>';
+  /* 空态列数必须与列数一致（调拨台账曾因漏改 colspan 踩过坑）——这里直接取 schema 长度，杜绝手写数字漂移 */
+  if(!shown.length){html+='<tr><td colspan="'+TBL_SCHEMAS.partLogs.length+'" class="empty">暂无入库流水</td></tr>';}
+  else{
+    shown.forEach(function(t){
+      const typeCls='tag-green';   /* 本期只有「入库」（绿） */
+      html+='<tr>'+TBL_SCHEMAS.partLogs.map(function(c){
+        const v=colVal(c,t);
+        let txt;
+        if(c.key==='type')txt='<span class="tag '+typeCls+'">'+esc(v||'')+'</span>';
+        else if(c.key==='qty'||c.key==='stockBefore'||c.key==='stockAfter')txt=esc(money(num(v)));
+        else if(c.key==='partId')txt='<span style="font-weight:600">'+esc(v)+'</span>';
+        else txt=esc(v);
+        const st=(c.key==='ts')?' style="font-size:12px;color:var(--muted);white-space:nowrap"'
+          :((c.type==='number')?' style="font-variant-numeric:tabular-nums;text-align:right"':'');
+        return '<td data-key="'+c.key+'"'+st+'>'+txt+'</td>';
+      }).join('')+'</tr>';
+    });
+  }
+  html+='</tbody></table></div>';
+  html+='</div>';
+  return html;
+}
+
+/* 零部件导出列（表头 = 11 列中文名）+ 独立的「导出选中」分支。
+   **刻意不进 XLSX_SHEETS**：全量导出保持既有 4 张表不变（既有用例与「全量导出 = 4 个表单」
+   的用户预期都依赖这一点），零部件单独导出即可。 */
+const PARTS_EXPORT_COLS=[
+  {key:'id',label:'编码',type:'text'},
+  {key:'name',label:'名称',type:'text'},
+  {key:'spec',label:'规格',type:'text'},
+  {key:'model',label:'型号',type:'text'},
+  {key:'unit',label:'单位',type:'text'},
+  {key:'stockMax',label:'最大库存量',type:'number'},
+  {key:'stockMin',label:'最小库存量',type:'number'},
+  {key:'stock',label:'库存',type:'number'},
+  {key:'used',label:'已占用',type:'number'},
+  {key:'_bal',label:'结余',type:'number',get:function(p){return partBalanceOf(p);}},
+  {key:'_balPct',label:'结余进度',type:'number',get:function(p){return partBalPctOf(p);}}
+];
+function exportParts(rows){
+  const list=(rows!=null?rows:(parts||[]));
+  const headers=PARTS_EXPORT_COLS.map(function(c){return c.label;});
+  const data=list.map(function(item){
+    return PARTS_EXPORT_COLS.map(function(c){
+      const val=colVal(c,item);
+      if(c.type==='number')return num(val);
+      return val==null?'':val;
+    });
+  });
+  const bytes=XLSX.build([{name:'零部件数据',headers:headers,rows:data}]);
+  const blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='零部件数据'+(rows!=null?('_选中'+data.length+'条'):'')+'_'+todayStr()+'.xlsx';a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ================================================================
@@ -7167,7 +7717,7 @@ function delTpl(i){
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人｜.122：包装排产权限点移除 */
+const PERM_FORMS={products:'产品主数据',parts:'零部件数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人｜.122：包装排产权限点移除｜.158：新增零部件数据权限点（零部件台账同归此点） */
 async function loadUsers(){
   try{
     const r=await apiReq('/users');
@@ -7769,6 +8319,9 @@ function selRowClick(m,id){
      不抑制就会「拖完顺序变了、还顺带把该行勾选/取消」，用户会觉得莫名其妙。
      只抑制产品表、且窗口 300ms（一次手势内），其它表单与正常点击完全不受影响。 */
   if(m==='product'&&Date.now()-(_pdSuppressClick||0)<300)return;
+  /* 【build .158】同一抑制窗口对「最近一次拖拽的那张表」同样生效（零部件数据也可拖拽）；
+     product 已由上一行覆盖，这里只补其它可拖拽表单，行为与 .156 完全一致。 */
+  if(m===_pdLastForm&&Date.now()-(_pdSuppressClick||0)<300)return;
   id=String(id);
   const s=selSet(m);
   if(s.has(id))s.delete(id);else s.add(id);
@@ -7826,7 +8379,9 @@ var FORM_ACTIONS={
   prodPlan:{formKey:'prodPlan',get:function(i){return productionPlans[i];},edit:function(i){prodPlanModal(i);},del:function(i){delProdPlan(i);}},
   processTpl:{formKey:'processTpl',get:function(i){return processTemplates[i];},edit:function(i){tplModal(i);},del:function(i){delTpl(i);},copy:function(i){copyTpl(i);}},
   /* 2026-08-25.21：交付计划禁止复制（只能从订单管理下推），FORM_ACTIONS 无 copy 映射 */
-  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);}}
+  delivery:{formKey:'delivery',get:function(i){return deliveries[i];},edit:function(i){deliveryModal(i);},del:function(i){delDelivery(i);}},
+  /* 【build .158】零部件数据（get/edit/del/copy 全部按 parts 下标） */
+  parts:{formKey:'parts',get:function(i){return parts[i];},edit:function(i){partModal(i);},del:function(i){delPart(i);},copy:function(i){copyPart(i);}}
 };
 
 /* 表单上方批量操作工具栏 */
@@ -7838,6 +8393,11 @@ function bulkBar(m){
   const allChecked=ids.length>0 && ids.every(id=>selSet(m).has(String(id)));
   btns.push('<label class="btn btn-sm" style="margin-right:2px"><input type="checkbox" '+(allChecked?'checked':'')+' data-sel-all="'+m+'" onchange="toggleSelAll(\''+m+'\')"> 全选</label>');
   if(writable){
+    /* 【build .158】零部件：新增 / 入库（用户要求的操作键「全选、编辑、复制、删除、新增、导出选中、入库」）。
+       新增放最前（紧邻「全选」），与产品页「新增产品」在标题栏的位置形成呼应但入口更顺手；
+       入库受按钮级动作键 parts.partIn 门控（写权限块内，只读账号看不到）。 */
+    if(m==='parts')btns.push('<button class="btn btn-sm" onclick="partModal()">新增</button>');
+    if(m==='parts'&&canAct('parts.partIn'))btns.push('<button class="btn btn-sm btn-primary" onclick="openPartIn()" title="为选中的零部件登记入库：填写本次入库数量后累加库存，并写入零部件台账">入库</button>');
     if(btnOK(m,'edit'))btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'edit\')">编辑</button>');   /* .119：排产页编辑=ppEdit（PMC 填物料齐套时间；车间默认无此按钮） */
     /* 2026-08-25.21/.27：交付计划、排产计划只能由上游下推生成，禁止复制 */
     if(m!=='delivery'&&m!=='prodPlan')btns.push('<button class="btn btn-sm" onclick="bulkSingle(\''+m+'\',\'copy\')">复制</button>');
@@ -7959,6 +8519,11 @@ async function bulkDelete(m){
     dataOp={key:'productionPlans',value:productionPlans};
   }
   else if(m==='processTpl'){idxs.forEach(i=>processTemplates.splice(i,1));dataOp={key:'processTemplates',value:processTemplates};}
+  else if(m==='parts'){
+    /* 【build .158】零部件批量删除：台账流水**不删**（台账只增不改，删除零件后流水仍保留供追溯） */
+    idxs.forEach(i=>parts.splice(i,1));
+    dataOp={key:'parts',value:parts};
+  }
   else if(m==='delivery'){
     idxs.forEach(i=>deliveries.splice(i,1));
     dataOp={key:'deliveries',value:deliveries};
@@ -7982,6 +8547,12 @@ function bulkExport(m){
   let rows=idxs.map(i=>a.get(i)).filter(Boolean);
   if(m==='order'||m==='order_frame'||m==='order_inv')rows=orderFlatRowsOf(idxs.map(i=>orders[i]));
   else if(m==='prodPlan')rows=prodPlanFlatRows(idxs.map(i=>productionPlans[i]));
+  /* 【build .158】零部件走独立导出（不进 XLSX_SHEETS，避免影响全量导出与既有用例） */
+  if(m==='parts'){
+    exportParts(rows);
+    logOp('导出','零部件数据','导出选中 '+rows.length+' 条记录');
+    return;
+  }
   exportForm(a.formKey,rows);
   logOp('导出',a.formKey,'导出选中 '+rows.length+' 条记录');
 }
@@ -8205,6 +8776,9 @@ async function initApp(){
   processTemplates=await DB.get('processTemplates',[]);
   logs=await DB.get('logs',[]);
   transfers=await DB.get('transfers',[]);
+  /* 【build .158】零部件两表（服务端 DEFAULT_DATA 必须同时注册，否则 /api/save 报 400「未知数据表」） */
+  parts=await DB.get('parts',[]);
+  partLogs=await DB.get('partLogs',[]);
   fields=await DB.get('fields',JSON.parse(JSON.stringify(defaultFields)));
   fieldsAudit=await DB.get('fieldsAudit','audited');
   fieldsDraft=await DB.get('fieldsDraft',null);
@@ -8373,7 +8947,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-23.157</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-31.158</div>
 </body>
 </html>
 

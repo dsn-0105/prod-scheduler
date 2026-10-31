@@ -373,10 +373,16 @@ test('F1 拖拽用 Pointer Events 手写（非 HTML5 draggable），且有 500ms
 });
 
 test('F2 D1：拖拽前自动切 1000 条/页、结束后恢复原每页条数', function () {
+  /* 【build .158 同步】引擎按 `st.form` 参数化（产品/零部件共用一套拖拽逻辑），
+     故断言从「字面量 product」改为「缺省回落 product 的 fm 变量」——守的点完全不变：
+     必须先判「全部显示」、必须切 1000、必须记住并恢复原每页条数。 */
   const act = stripComments(extractFn(INDEX_SRC, 'prodDragActivate'));
-  assert.match(act, /if\(!prodAllShown\(\)\)\{/, '必须先判断是否全部显示');
+  assert.match(act, /const fm=st\.form\|\|'product'/, '表单键缺省回落 product（产品拖拽行为不变）');
+  assert.match(act, /if\(!prodAllShown\(fm\)\)\{/, '必须先判断是否全部显示');
   assert.match(act, /size:1000/, '自动切 1000 条/页');
-  assert.match(act, /st\.restoreSize=pageSizeOf\('product'\)/, '记住原每页条数以便恢复');
+  assert.match(act, /st\.restoreSize=pageSizeOf\(fm\)/, '记住原每页条数以便恢复（按当前拖拽表单取值）');
+  const rps = stripComments(extractFn(INDEX_SRC, 'prodRestorePageSize'));
+  assert.match(rps, /form=form\|\|_pdLastForm\|\|'product'/, '恢复每页条数缺省回落 product');
   const fin = stripComments(extractFn(INDEX_SRC, 'prodDragFinish'));
   assert.match(fin, /if\(size\)prodRestorePageSize\(size\)/, '结束后恢复原每页条数');
   const ab = stripComments(extractFn(INDEX_SRC, 'prodDragAbort'));
@@ -417,13 +423,25 @@ test('F6 拖拽结束后抑制一次行点击（否则松手会误勾选该行�
 });
 
 test('F7 保存的是**全量名单**：DOM 行序 + 按当前生效顺序补齐不在 DOM 的产品', function () {
+  /* 【build .158 同步】补齐用的排序与名单落库键都改为经「表单元数据」取（产品/零部件共用一套引擎），
+     守的点不变：①读 tbody 真实行序 ②补齐全量时用**当前生效顺序**（不是录入顺序）
+     ③落库的是名单数组且按表单分开存 ④必须写操作日志。 */
   const fin = stripComments(extractFn(INDEX_SRC, 'prodDragFinish'));
   assert.match(fin, /querySelectorAll\('tr\[data-pid\]'\)\)\.map\(r=>r\.dataset\.pid\)/, '读 tbody 实际行序');
-  assert.match(fin, /productsSortedByOrder\(\)\.forEach/, '补齐用当前生效顺序（用录入顺序会把已有自定义序打乱）');
-  assert.match(fin, /saveUiDefaults\(\{product:ids\}\)/, '存的是名单数组');
+  assert.match(fin, /const meta=pdMeta\(form\)/, '排序/日志目标由表单元数据提供');
+  assert.match(fin, /meta\.sorted\(\)\.forEach/, '补齐用当前生效顺序（用录入顺序会把已有自定义序打乱）');
+  assert.match(fin, /const patch=\{\};\s*patch\[form\]=ids;/, '名单按键分开存（product / parts 各一份，互不覆盖）');
+  assert.match(fin, /saveUiDefaults\(patch\)/, '存的是名单数组');
+  /* 表单元数据必须指回**同一套排序实现**（禁止各自复制一份排序逻辑）。 */
+  const plain = stripComments(INDEX_SRC);
+  assert.ok(plain.indexOf('sorted:productsSortedByOrder') >= 0, 'product 表单元数据指向 productsSortedByOrder');
+  assert.ok(plain.indexOf('sorted:partsSortedByOrder') >= 0, 'parts 表单元数据指向 partsSortedByOrder');
+  assert.ok(plain.indexOf('orderOf:prodOrderOf') >= 0 && plain.indexOf('orderOf:partsOrderOf') >= 0,
+    '两张表各自的名单取值点都挂在元数据上');
   /* 写操作日志：`.155` 那次「排序无效」正是靠「日志命中 0 条」定性的，
      故拖拽保存必须留痕，否则下次再出问题同样无从判定用户有没有点成功。 */
-  assert.match(fin, /logOp\('设置','产品主数据'/, '拖拽保存必须写操作日志');
+  assert.match(fin, /logOp\('设置',meta\.target/, '拖拽保存必须写操作日志（目标名随表单）');
+  assert.ok(plain.indexOf("orderLog:'调整产品显示顺序'") >= 0, '产品日志文案保持 .156 原文');
 });
 
 test('F8 拖拽必须过管理员守卫（非管理员连状态机都不启动）', function () {

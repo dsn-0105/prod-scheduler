@@ -313,3 +313,48 @@ test('G22-8【.155】uiDefaults 仅 admin 可写：staff 一律 false（即便 p
   assert.strictEqual(canWrite(su, 'uiDefaults', { value: {}, data: d }), false,
     'perms.uiDefaults=true 也不得放行（硬闸优先于 perms）');
 });
+
+/* ============================================================
+   G23【.158】零部件数据 / 零部件台账 的 canWrite 边界
+   ------------------------------------------------------------
+   口径：两表归**同一权限点 parts**（「入库」必然同时写零件库存 + 入库流水，
+        拆成两点会造出「能入库却写不进台账」的半权限态）。
+   覆盖：perms.parts=true 放行两表 / 无 parts 一律拒绝（即便持有订单或产品权限）/
+        admin 恒放行 / DEFAULT_DATA 必须已注册两表（漏登记 = /api/save 400「未知数据表」）。
+   ============================================================ */
+test('G23-1 DEFAULT_DATA 已注册 parts / partLogs（漏登记线上必 400）', () => {
+  assert.ok(Object.prototype.hasOwnProperty.call(srv.DEFAULT_DATA, 'parts'), 'DEFAULT_DATA 必须含 parts');
+  assert.ok(Object.prototype.hasOwnProperty.call(srv.DEFAULT_DATA, 'partLogs'), 'DEFAULT_DATA 必须含 partLogs');
+  assert.ok(Array.isArray(srv.DEFAULT_DATA.parts) && srv.DEFAULT_DATA.parts.length === 0, 'parts 初值应为空数组');
+  assert.ok(Array.isArray(srv.DEFAULT_DATA.partLogs) && srv.DEFAULT_DATA.partLogs.length === 0, 'partLogs 初值应为空数组');
+});
+
+test('G23-2 非 admin：perms.parts=true 才放行两表；放行后 parts / partLogs 结果一致', () => {
+  const d = ctxData(PRODS, [LOG_A]);
+  const u = U('pmc');
+  u.perms = Object.assign({}, u.perms, { parts: true });
+  const partsValue = [{ id: 'LJ-001', name: '螺钉', unit: '个', stock: 3, used: 0 }];
+  const logsValue = [{ id: 'PTH-20261031-00001', type: 'in', qty: 5 }];
+  assert.strictEqual(canWrite(u, 'parts', { value: partsValue, data: d }), true, 'perms.parts=true 应放行 parts');
+  assert.strictEqual(canWrite(u, 'partLogs', { value: logsValue, data: d }), true, 'perms.parts=true 应放行 partLogs（同权限点）');
+});
+
+test('G23-3 非 admin 且无 parts 权限：两表一律拒绝（订单/产品权限不得越权写入）', () => {
+  const d = ctxData(PRODS, [LOG_A]);
+  const u = U('pmc');   /* 线上真值：saleOrders/invOrders/dailyPlans/deliveries=true，无 parts */
+  assert.strictEqual(canWrite(u, 'parts', { value: [], data: d }), false, 'pmc 无 parts 权限 → 403');
+  assert.strictEqual(canWrite(u, 'partLogs', { value: [], data: d }), false, 'pmc 无 parts 权限 → 403');
+  const zj = U('zongjingli');
+  assert.strictEqual(canWrite(zj, 'parts', { value: [], data: d }), false, 'zongjingli → 403');
+  const noperms = U('chejian');
+  noperms.perms = Object.assign({}, noperms.perms, { parts: false });
+  assert.strictEqual(canWrite(noperms, 'partLogs', { value: [], data: d }), false, 'parts=false → 403（台账同点）');
+});
+
+test('G23-4 admin 恒放行；未登录恒拒绝', () => {
+  const d = ctxData(PRODS, [LOG_A]);
+  assert.strictEqual(canWrite(U('admin'), 'parts', { value: [], data: d }), true);
+  assert.strictEqual(canWrite(U('admin'), 'partLogs', { value: [], data: d }), true);
+  assert.strictEqual(canWrite(null, 'parts', { value: [], data: d }), false, '未登录必须拒绝');
+  assert.strictEqual(canWrite(null, 'partLogs', { value: [], data: d }), false, '未登录必须拒绝');
+});

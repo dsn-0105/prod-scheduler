@@ -45,7 +45,12 @@ const DEFAULT_DATA = {
      故不复用 tblLayout（否则「重置我的列布局」会深拷贝 def 把默认排序一起冻结进个人分片）。
      空对象 = 未配置 ⇒ 前端一律回落到各项既有默认行为（零回归）。 */
   uiDefaults: {},
-  transfers: []
+  transfers: [],
+  /* 【build .158】零部件数据 + 零部件台账（用户 2026-10-31 需求）。
+     必须同时登记在这里：/api/save 与 /api/tx 对「DEFAULT_DATA 未注册」的键一律 400「未知数据表」
+     —— 漏登记 = 前端一切正常、一保存就 400（历史坑，新增任何表都必须先加这里）。 */
+  parts: [],
+  partLogs: []
 };
 
 /* 业务数据表（受按表单写权限控制）；其余为系统 key（登录用户均可写）。
@@ -279,6 +284,13 @@ function canWrite(user, key, ctx) {
        读路径不受限：/api/data 全量下发，前端只读消费（普通账号照常按管理员配的顺序显示）。 */
     case 'uiDefaults':
       return false;
+    /* 【build .158】零部件数据 / 零部件台账：同一权限点 parts。
+       「入库」这个动作必然同时写 parts（库存）与 partLogs（流水）：拆成两个权限点会造出
+       「能入库却写不进台账」的半权限态（前端 formToKey 同样把两表映射到 parts）。
+       admin 已在函数首行放行，走到本例即非 admin ⇒ 只看 p.parts。 */
+    case 'parts':
+    case 'partLogs':
+      return p.parts === true;
     default:
       return p[key] === true;                             /* deliveries / processTemplates / fields */
   }
