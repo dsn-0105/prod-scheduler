@@ -1198,10 +1198,18 @@ function kdOrigTip(op){
   if(op.spec)seg.push('规格 '+op.spec);
   return seg.length?('原单：'+seg.join(' ｜ ')):'';
 }
-/* 2026-08-25.63：库存状态 4 档（数量 vs 上下限）——red(数量<0 欠货)/amber(0<数量<最小 缺货风险)/green(最小~最大 正常)/gray(数量>最大 积压)；未设限或限=0 时落 green，0 值落 green（用户口径：>0 且<最小才黄色） */
+/* 2026-08-25.63：库存状态 4 档（数量 vs 上下限）——red(数量<0 欠货)/amber(0≤数量<最小 缺货风险)/green(最小~最大 正常)/gray(数量>最大 积压)；未设限或限=0 时落 green。
+   【build .160】口径修正（用户 2026-11-14 拍板「A 方案：只改本共享函数的阈值，全局单源一致」）：
+     amber 档下界由开区间 0 放宽为**闭区间 0** ⇒ **0 ≤ v < 最小库存量 且 最小>0 → amber**。
+     （.160 起：结余=0 且有下限即缺货，须黄色警示。）
+     原口径「0 值落 green（用户口径：>0 且<最小才黄色）」**已废止** —— 它让「结余 0 + 最小库存量>0」
+     的库存订单行显示为绿色、且不画黄色三角警示（用户报障：明明低于下限却不警示）。
+     `num(min)>0` 这道守卫**必须保留**：最小=0 或留空 = **不设限**，此时 0 仍落 green（用户拍板第 2 点，不设限语义不变）。
+     因「已交付」列（lvD）与「结余」列（lvB）共用本函数 ⇒ 已交付=0 且最小>0 时一并变黄，不另开分支（用户拍板第 1 点）。
+     ⚠ 档位判定**只此一处**：严禁在调用点写 `lv==='x'?` 之类的副本（由 qa.parts-ledger.independent A4 单源守卫红线钉住）。 */
 function invStockLevel(v,min,max){
   if(num(v)<0)return 'red';
-  if(num(v)>0&&min!=null&&min!==''&&num(min)>0&&num(v)<num(min))return 'amber';
+  if(num(v)>=0&&min!=null&&min!==''&&num(min)>0&&num(v)<num(min))return 'amber';
   if(max!=null&&max!==''&&num(max)>0&&num(v)>num(max))return 'gray';
   return 'green';
 }
@@ -4568,14 +4576,18 @@ function renderOrderTable(formKey,typeOrders,prodMap){
        与「已交付/结余」4 档警示同款 svg（warnTriSvg），不影响数值口径。 */
     const _ps=invPuOf(pushedMap,o.id,r.__li,it.productId);
     const overTri=(formKey==='order_inv'&&invOverPushOf(pu,_ps)>0)?warnTriSvg('#f59e0b',invOverPushTip(pu,_ps)):'';
-    /* 2026-08-25.60：结余（仅库存订单），同款三角警示——低于最小库存→红、高于最大库存→黄；负数恒红 */
+    /* 2026-08-25.60：结余（仅库存订单），同款三角警示——低于最小库存→红、高于最大库存→黄；负数恒红
+       【build .160】「结余=0 且最小库存量>0」由 green 改判 amber（见 invStockLevel 注释），本列随之画出黄色三角。 */
     const balance=invBalanceOf(dq,pu);
     /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，同进度列口径，可>100%） */
     const balPct=oq>0?Math.round(balance/oq*100):0;
     const today=todayStr();
     const overdue=o.status==='执行中'&&o.deadline&&fmtDate(o.deadline)<today;
     const statusCls=o.status==='执行中'?'tag-blue':o.status==='已完成'?'tag-green':o.status==='已暂停'?'tag-amber':'tag-gray';
-    /* 2026-08-25.63：库存订单 4 档状态（已交付/结余 各自独立）——感叹号+进度条颜色同档位：red 红/amber 黄/green 绿无感叹号/gray 灰 */
+    /* 2026-08-25.63：库存订单 4 档状态（已交付/结余 各自独立）——感叹号+进度条颜色同档位：red 红/amber 黄/green 绿无感叹号/gray 灰
+       【build .160】两列的档位仍**一律**取自 invStockLevel（零分支）：故「结余=0 且 最小库存量>0」现在落 amber，
+       本行同时出现「已交付」黄三角（lvD）与「结余」黄三角（lvB）——用户拍板第 1 点「两列一起变黄」即此效果，
+       不得为此在调用点新增任何副本判定。 */
     const lvD=invStockLevel(dq,it.stockMin,it.stockMax);
     const lvB=invStockLevel(balance,it.stockMin,it.stockMax);
     /* 2026-08-30.91：三角警示悬浮框=行一句话总结（.90 总结列改悬浮；已交付/结余警示标 hover 均显示完整总结句） */
@@ -8974,7 +8986,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-10-31.159</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-14.160</div>
 </body>
 </html>
 
