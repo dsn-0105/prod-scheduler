@@ -1,7 +1,7 @@
 'use strict';
 /* ================================================================
    tests/qa.parts-ledger.independent.test.js
-   —— QA 独立验证：零部件数据 + 零部件台账（build 2026-10-31.158 起，随版本推进同步至 .159）
+   —— QA 独立验证：零部件数据 + 零部件台账（build 2026-10-31.158 起，随版本推进同步至 .160）
    ================================================================
    定位：**独立复验**，不是 tests/parts.158.test.js 的复读机。
      · 不采信工程师自述，不复用他的断言写法定式；
@@ -29,11 +29,11 @@ const { createApp, ROOT } = require('./harness/sandbox');
      · BUILD_NO   = BUILD 的 `.NNN` 段（guide.js 与注释里只许用「build .NNN」短形态）；
      · BUILD_DATE = BUILD 的日期段（guide.js 文首「更新：YYYY-MM-DD（build .NNN）」）。
    刻意**不**把 `.159` / `2026-10-31` 分散写死在断言里 —— .148 就因清单/计数不同步假失败过一次。 */
-const BUILD = '2026-10-31.159';
-const PREV = '2026-10-31.158';
-const BUILD_NO = String(BUILD).split('.')[1];       /* '159' */
-const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-10-31' */
-const PREV_NO = String(PREV).split('.')[1];         /* '158' */
+const BUILD = '2026-11-14.160';
+const PREV = '2026-10-31.159';
+const BUILD_NO = String(BUILD).split('.')[1];       /* '160' */
+const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-14' */
+const PREV_NO = String(PREV).split('.')[1];         /* '159' */
 
 const readRel = function (rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); };
 const INDEX_SRC = readRel('index.html');
@@ -277,7 +277,7 @@ test('A4 结余 4 档配色复用 invStockLevel（红/黄/绿/灰 各判一次�
   const app = mkApp();
   /* 4 档语义（共享函数）先钉死，避免「零件页自己写了一套」时也碰巧对 */
   assert.equal(app.run('invStockLevel(-1,5,100)'), 'red', '红：结余 < 0');
-  assert.equal(app.run('invStockLevel(3,5,100)'), 'amber', '黄：0 < 结余 < 最小库存量');
+  assert.equal(app.run('invStockLevel(3,5,100)'), 'amber', '黄：0 ≤ 结余 < 最小库存量');
   assert.equal(app.run('invStockLevel(10,5,100)'), 'green', '绿：正常区间');
   assert.equal(app.run('invStockLevel(200,5,100)'), 'gray', '灰：结余 > 最大库存量');
 
@@ -1386,13 +1386,57 @@ test('F6 完整版本号除权威水印外不得出现在注释里（只许【bu
   assert.equal(countOcc(INDEX_SRC, BUILD), 1, 'index.html 中完整版本号 ' + BUILD + ' 必须恰 1 处（即水印）');
   assert.equal(countOcc(INDEX_SRC, 'build ' + BUILD), 1, '「build <完整版本号>」也只许 1 处');
   assert.equal(countOcc(GUIDE_SRC, BUILD), 0, 'guide.js 正文不得写完整版本号（只许 build .' + BUILD_NO + '）');
-  /* 注释形态守卫分两段，各自的意义不同（别再合并成一个 >= 10 的数字）：
-       · 历史注释里【build .<PREV>】应当很多（上一版的功能注释），说明旧注释没被批量改写；
-       · 本次新增的【build .<BUILD_NO>】至少 3 处（doPartIn 整数闸 / savePart 两条硬闸 / 入库口径注释）。 */
-  assert.ok(countOcc(INDEX_SRC, 'build .' + PREV_NO) >= 10,
-    '历史注释应保留【build .' + PREV_NO + '】形态（实际 ' + countOcc(INDEX_SRC, 'build .' + PREV_NO) + ' 处）');
+  /* 注释形态守卫（.160 起改用**版本无关**判据；判别力经 QA 变异注入复核，与理想判别力齐平）：
+       · 原判据「历史注释里【build .<PREV>】应当很多」写成 `countOcc(...,'build .'+PREV_NO) >= 10`，
+         它实际把 **.158 那一版的注释体量（29 处）** 当成了恒定不变量。.159 只新增 3 处注释，
+         于是 PREV_NO 推进到 '159' 时该断言必然假失败（实测 count('build .159')=3 < 10）——
+         这不是回归，是判据绑定了某一版的大小（与 .148「另有 N 处」同类坑）。
+         补证：该 `>= 10` 是 **.159 那一版才加入的**（更早提交里没有），当时 PREV_NO='158' 恰有 29 处，
+         它从诞生起就只有一版寿命。改判据，四条各守一件事：
+         ① 非本版的「历史短形态标记」总量 >= 10 —— 旧注释被批量改写成新版本时总量会骤降，仍能抓住；
+         ①b 历史标记的**版本多样性** >= 5 —— 批量改写会把多标签收敛成 1~2 个。
+            补这一条的原因：只靠 ① 时，.158 的 29 处存量单独就满足「>= 10」（实测 29 >= 10），
+            即便把其余历史版本全抹掉 ① 照样绿，抓不住「只留一版存量」；
+         ② 上一版 PREV_NO 标记 >= 3 —— 见下方【常驻契约】说明；
+         ③ 本版 BUILD_NO 标记 >= 3 —— 本次改动点必须留下版本标记（缺则说明注释没写/写成了完整版本号）。
+
+       【常驻契约 · .160 起生效 —— ② 的 `>= 3` 不是碰巧值，请勿顺手调低】
+         · 依据：由 ③ 归纳。③ 要求**每一版**的改动点至少留下 3 处【build .NNN】短形态标记；
+           那么任一版 N 里的「上一版」= N-1，其标记数在 N-1 当时已被 ③ 要求 >= 3，
+           且一版冻结后不会再被删（删了正是本节要抓的回归）⇒ PREV_NO 的标记数恒 >= 3。
+           所以 `>= 3` 与版本号推进**无关**，不存在原判据「绑定某版体量」的问题。
+         · 因此本判据的准确性**依赖 ③ 持续成立**。若将来某版确实只该留 1~2 处标记
+           （例如纯文案订正、单点改动），**必须同步调整本判据并在注释里写明原因**，
+           **不许**静默把阈值放宽（`>= 1` 会漏掉「3 处被删 2 处」这种真实回归 —— QA 已实测漏报）。
+         · 反过来：若某版出现「上一版标记 < 3」，先别急着怀疑本判据 —— 按契约 ③ 它不该发生，
+           优先查是不是上一版的注释被误删/被批量改写（那才是真回归）。 */
+  const allShort = INDEX_SRC.match(/build \.\d{2,4}/g) || [];
+  const historic = allShort.filter(function (s) { return s !== 'build .' + BUILD_NO; });
+  assert.ok(historic.length >= 10,
+    '历史注释（非本版）短形态标记应 >= 10 处（实际 ' + historic.length + ' 处）——旧注释不得被批量改写');
+  assert.ok(Array.from(new Set(historic)).length >= 5,
+    '历史注释应保留 >= 5 个不同版本标签（实际 ' + Array.from(new Set(historic)).length + '：' +
+    Array.from(new Set(historic)).join(',') + '）——批量改写会把标签收敛成 1~2 个');
+  assert.ok(countOcc(INDEX_SRC, 'build .' + PREV_NO) >= 3,
+    '上一版【build .' + PREV_NO + '】标记不得被抹除（应 >= 3 处，实际 ' +
+    countOcc(INDEX_SRC, 'build .' + PREV_NO) + ' 处）——阈值依据 ③ 的归纳，见上方【常驻契约】');
   assert.ok(countOcc(INDEX_SRC, 'build .' + BUILD_NO) >= 3,
     '本版新增注释应有【build .' + BUILD_NO + '】标记（实际 ' + countOcc(INDEX_SRC, 'build .' + BUILD_NO) + ' 处，至少 3）');
+  /* ④ 结构性自检 —— **如实标注：本条恒真，不是守卫，拦不住回归**。
+       · 改前的写法对一个**硬编码字符串字面量**（内容仅「只有旧版 build .152」，外面套了 C 块注释壳）求值，
+         与 INDEX_SRC 完全无关，无论源码怎么变永远为真（QA 侧 8 个变异体实测全绿）；
+       · 改后对 `_wiped`（= 把 INDEX_SRC 里本版标记全部替换成 .OLD）求值，因 split/join 必然抹净，
+         `countOcc(_wiped,'build .'+BUILD_NO) >= 3` **必然为 false** ⇒ 本条**仍然恒真**。
+         它比原版唯一的好处：证明「判据依赖的是 INDEX_SRC 的真实内容」，而不是一个孤立字面量
+         （即：万一有人把上面几条改成对常量求值，这里的写法会立刻显得荒谬，可读性起到提醒作用）。
+       · **真正的判别力证据不在这里**，而在本文件 §G 的变异注入，以及 QA 终验（.160）在隔离副本上
+         做的反向验证：把 `num(v)>=0` 改回 `num(v)>0` 后本文件 §A1/§C1/§C3 必红；把 .159 的 3 处标记
+         删掉 2 处后 ② 必红；把历史标签收敛成 1 个后 ①b 必红。
+       · 请不要把本条当成「④ 已守住回归」的依据，也不要为它加计数/加阈值 —— 它守不了任何东西。 */
+  const _wiped = INDEX_SRC.split('build .' + BUILD_NO).join('build .OLD');
+  assert.equal(countOcc(_wiped, 'build .' + BUILD_NO) >= 3, false,
+    '结构性自检（恒真，非守卫）：抹掉本版标记后 ③ 的判据必然判红 ⇒ 说明判据吃的是 INDEX_SRC 真实内容；' +
+    '真实判别力见 §G 变异注入与 QA §六 反向验证');
 });
 
 /* ================================================================

@@ -72,7 +72,7 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test tests/*.test.js` → **895 tests / 893 pass / 0 fail / 2 skipped（既有 skip）**（`2026-10-31.159` 实测；`.158` 时为 830/828）。
+> **当前规模**：`node --test tests/*.test.js` → **907 tests / 905 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-14.160` 实测；`.159` 时为 895/893，新增 `tests/invlevel.160.test.js` 12 条）。
 > ⚠ 本条数字**只在收尾时手写更新**（变化频繁，不做断言），跑回归请用**显式文件列表**，勿用 `node --test tests/` 目录形式（会扫入 `_diag/before*` 造成假失败）。
 >
 > **三个「黄金样例」文件的存在理由**（不是凑覆盖率）：
