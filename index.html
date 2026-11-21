@@ -1015,6 +1015,22 @@ var TBL_ROWS={};      // 每个表格当前数据（渲染时注册，供筛选�
 function tState(m){if(!tblState[m])tblState[m]={sort:null,filters:{}};return tblState[m];}
 function colVal(col,r){return col.get?col.get(r):(r[col.key]!=null?r[col.key]:'');}
 
+/* 【build .162】某列的某个筛选模式是否为「列级语义档」（由列定义 `semFilters` 声明）。
+   ⚠ **判据单一来源** —— 三处消费方必须共用本函数，禁止各写一份：
+     ① `filterBar` 的 chip 放行（语义档 val 恒空，不放行则标签/清除入口都不出现）；
+     ② `thCol` 的漏斗图标点亮（不放行则「筛选生效但图标不亮」，用户看不出该列已有筛选）；
+     ③ `applyFilt` 写入前清空残留脏值（语义档不看数值，留着旧 val 只会在二次打开面板时回显）。
+   `.161` 的缺陷根因正是 ① 与 ② 各写一份判据、只改了一处（QA 独立回归 I3 捉出）。
+   入参用 `(m,key,mode)` 统一签名：filterBar 手上是 key、thCol 手上是 col.key，二者都传 key，
+   **不要**为此再造一个收 col 的重载（那又会分叉）。 */
+function isSemFiltMode(m,key,mode){
+  if(!mode)return false;
+  const schema=TBL_SCHEMAS[m]||[];
+  const col=schema.filter(function(c){return c.key===key;})[0];
+  if(!col||!col.semFilters||!col.semFilters.length)return false;
+  return col.semFilters.some(function(x){return x.mode===mode;});
+}
+
 function filterRows(m,rows){
   const s=tState(m),schema=TBL_SCHEMAS[m]||[];
   return rows.filter(r=>{
@@ -1313,7 +1329,10 @@ function thCol(m,col,style){
   const sorted=s.sort&&s.sort.key===col.key;
   const dir=sorted?(s.sort.dir===1?'▲':'▼'):'⇅';
   const f=s.filters[col.key];
-  const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));
+  /* 【build .162】「漏斗点亮」判据与 filterBar 的 chip 放行**同源**（都走 isSemFiltMode）：
+     语义档 val 恒空，若仍只看 `vals/val` 非空，就会出现「筛选生效了、图标却不亮」——
+     用户看不出该列已加筛选。`.161` 即此缺陷（只修了 chip 侧，漏了本处）。 */
+  const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||isSemFiltMode(m,col.key,f.mode));
   return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')"><span class="th-flex"><span class="th-label">'+esc(col.label)+
     (col.locked?' '+LOCK:'')+'</span>'+
     '<span class="sort-ico'+(sorted?' on':'')+'">'+dir+'</span>'+
@@ -1479,6 +1498,13 @@ function applyFilt(m,key,useChecks){
       f.val=document.getElementById('fp_val').value;
     }
   }
+  /* 【build .162】语义档不需要数值/日期值：写入前**清空残留脏值**（val/from/to）。
+     `.161` 遗留问题：先填 100 再切语义档时，隐藏的 fp_val 仍把 100 带进筛选态 ——
+     它一方面在二次打开面板时回显脏值，另一方面"歪打正着"点亮了漏斗图标，
+     掩盖了 thCol 判据缺陷。故本清理必须与 thCol 判据修复**同批**上线。
+     ⚠ 只对列级语义档生效：`is_empty`/`not_empty`/日期快捷模式的既有 val 行为一律不动
+       （动它们会改变文本列 chip 的既有表现，属超范围）。 */
+  if(isSemFiltMode(m,key,f.mode)){f.val='';delete f.from;delete f.to;}
   tState(m).filters[key]=f;
   closeFiltPop();
   /* 2026-08-25.66：筛选变化后回第 1 页（金蝶同款） */
@@ -1493,8 +1519,10 @@ function filterBar(m){
   /* 【build .161】语义筛选档文案登记（面板/筛选条共用同一份措辞） */
   const MODE_NAME={contains:'包含',not_contains:'不包含',eq:'=',neq:'≠',startswith:'以…开始',endswith:'以…结束',is_empty:'为空',not_empty:'不为空',gte:'≥',lte:'≤',today:'今天',this_week:'本周',this_month:'本月',last_month:'上月',last_1m:'过去一个月',last_3m:'过去三个月',range:'从…到…',inv_short:'低于最小库存量',inv_over:'超过最大库存量',in:''};
   /* 【build .161】语义模式 val 恒空 ⇒ 必须按「列是否声明了该语义档」放行，
-     否则 chip 与「清除全部」入口都不出现（表现为「筛选生效了但看不到标签、也清不掉」）。 */
-  const semModeOf=function(k,mode){const c=schema.find(x=>x.key===k);return (c&&c.semFilters)?(c.semFilters.filter(x=>x.mode===mode)[0]||null):null;};
+     否则 chip 与「清除全部」入口都不出现（表现为「筛选生效了但看不到标签、也清不掉」）。
+     【build .162】判定本体已提升为模块级 `isSemFiltMode`（thCol 漏斗点亮共用同一份）；
+     此处保留 `semModeOf` 仅作**薄别名**（逻辑零复制），让本函数两个消费点保持单行可读。 */
+  const semModeOf=function(k,mode){return isSemFiltMode(m,k,mode);};
   const keys=Object.keys(s.filters).filter(k=>{
     const f=s.filters[k];
     if(!f)return false;
@@ -9045,7 +9073,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-20.161</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-20.162</div>
 </body>
 </html>
 

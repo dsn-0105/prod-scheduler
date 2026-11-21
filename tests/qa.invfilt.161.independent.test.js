@@ -13,12 +13,13 @@
      【契约】  = 断言需求/设计规定的行为，源码若不符 → 产品缺陷（应回退工程师）
      【现状】  = 断言**当前实现的实际行为**（可能是已知折衷），用于把折衷钉死、防悄悄改变，
                  不表示该行为就是理想行为。本文件仅在 §I 使用，逐条标注。
+                （.162 起 §I 的已知折衷已修复，三条断言全部翻转为【契约】——见 §I 注释。）
 
    基线纪律（.152 教训：基线用 HEAD 会与自身对消）：
      · 上一版 index.html 由 **git 提交主题**反查修订号后 `git show <rev>:index.html` 取得，
        **不用 HEAD 当基线**，并带两条防抵消守卫：
          ① 两版 index.html 全文 md5 必须不同；
-         ② 提取器必须对修订敏感（fpModeChange 两版必须不同，而 invStockLevel 必须相同）。
+         ② 提取器必须对修订敏感（本版改动过的 thCol / applyFilt 两版必须不同，而 invStockLevel 必须相同）。
      · 与 §D3（qa.parts-ledger.validate.159）的「禁止持有版本字面量」兼容：
        本文件代码里**不写**完整版本号字面量，一律 `build.BUILD` / `build.PREV` 派生。
 
@@ -33,7 +34,7 @@
    §F 筛选条 chip 与清除全部
    §G 其他模块零回归（4 模块 × 筛选/排序/面板 全差分）
    §H 版本水印锚点（含「第 9 处」必要性裁决）
-   §I 工程师自曝折衷（applyFilt 残留值）：【现状】characterization
+   §I applyFilt 残留值 / thCol 漏斗点亮（.161 为【现状】折衷与缺陷，.162 修复后翻转为【契约】）
    §J 变异注入：7 条，每条硬约束「锚点命中数恰 1」+「注入必须生效」
 ================================================================ */
 
@@ -230,6 +231,24 @@ function parseOptions(html) {
 }
 
 /** 解析面板里 select 的 onchange 属性（无则 null） */
+/** 驱动 applyFilt（伪 document 提供 fp_mode/fp_val；useChecks=false 故不碰 filtPop） */
+function driveApplyFilt(app, m, key, mode, val) {
+  const valEl = { value: val == null ? '' : String(val), style: { display: '' } };
+  const sel = { value: mode, options: [{ value: mode, dataset: {} }], selectedIndex: 0 };
+  const doc = app.sandbox.document;
+  const orig = doc.getElementById;
+  doc.getElementById = function (id) {
+    if (id === 'fp_mode') return sel;
+    if (id === 'fp_val') return valEl;
+    return null;                       /* fp_drange 不存在 ⇒ 走「读 fp_val」分支 */
+  };
+  try {
+    app.run("applyFilt(" + JSON.stringify(m) + "," + JSON.stringify(key) + ",false);");
+  } finally {
+    doc.getElementById = orig;
+  }
+}
+
 function selectOnChange(html) {
   const m = /<select id="fp_mode"([^>]*)>/.exec(String(html));
   if (!m) return null;
@@ -387,9 +406,13 @@ test('A4 契约：invStockLevel 本体与上一版逐字相同（含两条防抵
   assert.ok(now.indexOf("return 'amber'") >= 0, 'invStockLevel 必须仍含 amber 分支');
   assert.ok(now.indexOf('num(min)>0') >= 0, '「最小=0/空 ⇒ 不设限」的守卫必须仍在（用户拍板第 2 点）');
 
-  /* 防抵消 ④：提取器对修订必须敏感 —— 本次确实改过的 fpModeChange 两版必须不同 */
-  assert.notEqual(extractFn(INDEX_SRC, 'fpModeChange'), extractFn(PREV_INDEX_SRC, 'fpModeChange'),
-    '提取器必须对修订敏感（fpModeChange 本版被改，两版必须不同；相同则说明提取/基线失效）');
+  /* 防抵消 ④：提取器对修订必须敏感 —— 本次（.162）确实改过的 thCol 两版必须不同。
+     【.162 同步】原探针用的是 fpModeChange（.161 改过），版本推进到 .162 后两版 fpModeChange
+     已经相同，该探针会失去判别力 ⇒ 改钉本版真正改动过的 thCol（判据并入 isSemFiltMode）。 */
+  assert.notEqual(extractFn(INDEX_SRC, 'thCol'), extractFn(PREV_INDEX_SRC, 'thCol'),
+    '提取器必须对修订敏感（thCol 本版被改，两版必须不同；相同则说明提取/基线失效）');
+  assert.notEqual(extractFn(INDEX_SRC, 'applyFilt'), extractFn(PREV_INDEX_SRC, 'applyFilt'),
+    '提取器必须对修订敏感（applyFilt 本版被改：语义档写入前清脏值）');
 });
 
 test('A5 契约（单源红线静态面）：invShortOf/invOverOf 函数体零阈值运算', function () {
@@ -614,7 +637,7 @@ test('D1 契约：结余进度列面板 = 原 4 模式 + 2 语义档，且仅语
   app.dispose();
 });
 
-test('D2 契约：数值列 select 已挂 onchange="fpModeChange()"（上一版没有）', function () {
+test('D2 契约：数值列 select 已挂 onchange="fpModeChange()"（.161 新增，.162 起已成基线）', function () {
   const app = bootInv();
   const now = selectOnChange(panelHtml(app, 'order_inv', '_balPct'));
   assert.equal(now, 'fpModeChange()', '数值列模式下拉必须触发 fpModeChange 以显隐数值框');
@@ -622,8 +645,10 @@ test('D2 契约：数值列 select 已挂 onchange="fpModeChange()"（上一版�
 
   const old = boot({ indexHtml: PREV_INDEX_SRC });
   old.run("renderOrderTable('order_inv',[],{});");
-  assert.equal(selectOnChange(panelHtml(old, 'order_inv', '_balPct')), null,
-    '前提自证：上一版数值列 select 确实没有 onchange（本版确实是新增）');
+  /* 【.162 同步】原断言「上一版没有 onchange」在版本推进到 .162 后不再成立（该标记已是基线）。
+     改为断言两版一致 ⇒ 语义从「本版新增」变「本版未回归」（.161 已在其报告中证明过"新增"）。 */
+  assert.equal(selectOnChange(panelHtml(old, 'order_inv', '_balPct')), 'fpModeChange()',
+    '上一版（.161 基线）数值列 select 已有 onchange ⇒ 本版必须与之一致');
   old.dispose();
 });
 
@@ -970,25 +995,18 @@ test('G2 契约（零回归）：4 个非 order_inv 模块的排序结果与上�
   p.prev.dispose();
 });
 
-test('G3 契约（零回归）：面板 HTML 差分 —— 本版对标记的改动必须恰为「data-noval 打标 + 数值列 onchange」', function () {
+test('G3 契约（零回归）：面板 HTML 差分 —— .162 未改面板渲染 ⇒ 两版逐列**原始逐字相同**', function () {
+  /* 【.162 同步说明】本用例在 .161 时比较的是「剥掉 data-noval / 数值列 onchange 后逐字相同」，
+     因为那两类标记是 .161 新增。版本推进到 .162 后，这些标记已进入基线（上一版也有），
+     而本版（.162）**完全没有触碰 openFilter / fpModeOptsHtml 等面板渲染代码** ⇒
+     判据升级为更强的形态：两版面板 HTML **原始逐字相同**（不再需要归一化，也就无法靠归一化掩盖差异）。 */
   const p = bootBoth();
   /* 追加 order_inv（本版唯一改动模块）以便逐列核对 */
   p.now.run("renderOrderTable('order_inv',[],{});");
   p.prev.run("renderOrderTable('order_inv',[],{});");
   const mods = ['order_frame', 'order_inv', 'product', 'parts', 'delivery'];
 
-  /* 归一化：剥掉本版**有意**引入的两类标记改动，其余必须逐字相同
-     （fpModeChange 的 onchange 在文本列上一版就有、数值列上本版新增 ⇒ 两侧一律剥离再比；
-       fpDateModeChange 的 onchange 本版完全未动 ⇒ 原样保留参与逐字比对） */
-  const normalize = function (html) {
-    return String(html)
-      .replace(/ data-noval="1"/g, '')
-      .replace(/ onchange="fpModeChange\(\)"/g, '');
-  };
-  /* 语义档两个 option 是预期新增，比对前剥掉 */
-  const stripSemOpts = function (html) {
-    return String(html).replace(/<option value="inv_short"[^>]*>[^<]*<\/option><option value="inv_over"[^>]*>[^<]*<\/option>/, '');
-  };
+  /* 无需归一化：本版对面板 HTML 零改动（见用例头说明） */
 
   let compared = 0;
   mods.forEach(function (m) {
@@ -1006,13 +1024,13 @@ test('G3 契约（零回归）：面板 HTML 差分 —— 本版对标记的改
       const bRaw = panelHtml(p.prev, m, c.key);
       compared++;
 
-      /* ① 归一化后逐字相同（= 除两类有意标记外，面板没有任何其它变化） */
-      const aNorm = isSem ? stripSemOpts(normalize(aRaw)) : normalize(aRaw);
-      assert.equal(aNorm, normalize(bRaw),
-        m + '.' + c.key + ' 面板出现非预期差异\n  本版：' + aRaw + '\n  上版：' + bRaw);
+      /* ① 原始逐字相同（＝本版对面板渲染零改动，任何差异都是回归） */
+      assert.equal(aRaw, bRaw,
+        m + '.' + c.key + ' 面板出现差异（.162 未改面板渲染）\n  本版：' + aRaw + '\n  上版：' + bRaw);
 
-      /* ② 上一版面板从无 data-noval（本版新增标记，防"本来就是这么写的"误判） */
-      assert.equal(/data-noval/.test(bRaw), false, '上一版面版不得含 data-noval（本版新增）');
+      /* ② 前提自证：data-noval 的存在性与上一版一致（.161 引入，非本版新增；语义列两版都带） */
+      assert.equal(/data-noval/.test(bRaw), /data-noval/.test(aRaw),
+        m + '.' + c.key + ' data-noval 标记的有无必须与上一版一致');
 
       /* ③ data-noval 只许打在「不需要填值」的模式上：语义档 或 为空/不为空 */
       parseOptions(aRaw).forEach(function (o) {
@@ -1021,9 +1039,9 @@ test('G3 契约（零回归）：面板 HTML 差分 —— 本版对标记的改
           m + '.' + c.key + ' 的模式 ' + o.value + ' 不该带 data-noval');
       });
 
-      /* ④ 数值列 onchange 属本次新增；日期列 onchange 必须原样保留 */
+      /* ④ 数值列 onchange 现已是基线（.161 引入），两版必须一致；日期列仍须是 fpDateModeChange */
       if (c.type === 'number') {
-        assert.equal(selectOnChange(bRaw), null, m + '.' + c.key + ' 上一版数值列不该有 onchange');
+        assert.equal(selectOnChange(bRaw), 'fpModeChange()', m + '.' + c.key + ' 上一版数值列已有 onchange（基线）');
         assert.equal(selectOnChange(aRaw), 'fpModeChange()', m + '.' + c.key + ' 数值列必须挂 fpModeChange()');
       } else if (c.type === 'date') {
         assert.equal(selectOnChange(aRaw), 'fpDateModeChange()',
@@ -1038,11 +1056,11 @@ test('G3 契约（零回归）：面板 HTML 差分 —— 本版对标记的改
           m + '.' + c.key + ' 文本列面板不得出现 fpDateModeChange（日期专用）');
       }
 
-      /* ⑤ 语义列的预期差异必须确有发生 */
+      /* ⑤ 语义列确实存在（两版都是 6 选项）——防「isSem 命中不到列、整段变成空跑」 */
       if (isSem) {
         const oa = parseOptions(aRaw), ob = parseOptions(bRaw);
-        assert.equal(ob.length, 4, '上一版该列只有 4 个模式（差异前提自证）');
-        assert.equal(oa.length, 6, '本版该列必须 6 个模式（4 + 2 语义档）');
+        assert.equal(ob.length, 6, '上一版该列已是 6 个模式（.161 基线自证）');
+        assert.equal(oa.length, 6, '本版该列必须仍是 6 个模式（4 + 2 语义档）');
       }
     });
   });
@@ -1157,46 +1175,66 @@ test('H7 裁决：qa.parts-ledger 的「第 9 处锚点」同步是**必要**的
 });
 
 /* ================================================================
-   §I 工程师自曝折衷：applyFilt 未改 ⇒ 语义模式下 f.val 可能残留
+   §I applyFilt 残留值 / thCol 漏斗点亮
+   【.162 同步】本节 .161 时固化的是「缺陷/折衷（可延后）」；
+   .162 修复后三条全部**翻转为契约**（原意与翻转依据逐条写在用例内，可追溯）。
 ================================================================ */
 
-test('I1 【现状】残留 val 不影响筛选结果，也不进 chip（功能面无损）', function () {
+test('I1 契约：语义档写入时 applyFilt 必须清空残留 val（.161 为脏值折衷，.162 修复）', function () {
   const app = bootInv();
-  const f = { _balPct: { mode: 'inv_short', val: '100' } };   /* 模拟"先填 100 再切语义档"的脏状态 */
+  app.run('renderContent=function(){};');
+  /* ① 引擎面（.161 已成立、本版不变）：残留 val 不得影响结果集 —— 语义档只走 sem.test */
+  const f = { _balPct: { mode: 'inv_short', val: '100' } };   /* 手工构造"先填 100 再切语义档"的脏状态 */
   const dirty = idsOf(runFilter(app, 'order_inv', CORE_ROWS, f)).sort();
   const clean = semHitIds(app, CORE_ROWS, 'inv_short').sort();
   assert.deepEqual(dirty, clean,
-    '【现状】残留 val 不得影响结果集（引擎对语义档完全忽略 val）—— 断言的是当前实现');
-  app.run("tState('order_inv').filters={_balPct:{mode:'inv_short',val:'100'}};");
-  assert.equal(/100/.test(app.run("filterBar('order_inv')")), false, '【现状】chip 不拼残留数值');
+    '残留 val 不得影响结果集（引擎对语义档完全忽略 val）— 本版仍然成立（双保险）');
+
+  /* ② 写入面（.162 新契约）：走真实 applyFilt 链路后 f.val 必须被清空 */
+  app.run("tState('order_inv').filters={_balPct:{mode:'gte',val:'100'}};");
+  assert.equal(app.run("tState('order_inv').filters._balPct.val"), '100', '前提：先有一个数值模式带 val');
+  driveApplyFilt(app, 'order_inv', '_balPct', 'inv_short', 100);
+  const st = app.run("JSON.stringify(tState('order_inv').filters._balPct)");
+  assert.equal(JSON.parse(st).mode, 'inv_short', '模式必须切到 inv_short');
+  assert.equal(JSON.parse(st).val, '',
+    '【.162 契约】语义档写入后 f.val 必须为 \'\'（.161 会残留 100，二次打开面板时回显脏值）。实际：' + st);
+  assert.equal(JSON.parse(st).from, undefined, '语义档不得残留 from（同类脏值一并清）');
+  assert.equal(JSON.parse(st).to, undefined, '语义档不得残留 to（同类脏值一并清）');
+  assert.equal(/100/.test(app.run("filterBar('order_inv')")), false, 'chip 不得拼残留数值');
+
+  /* ③ 范围守卫：清脏值只对**语义档**生效，文本列「为空」的既有 val 行为不动 */
+  app.run("tState('order_inv').filters={};renderOrderTable('order_inv',[],{});");
+  driveApplyFilt(app, 'order_inv', 'id', 'is_empty', 'KC');
+  assert.equal(app.run("tState('order_inv').filters.id.val"), 'KC',
+    '文本列 is_empty 的 f.val 行为必须保持不变（本轮只清语义档，不动既有模式）');
   app.dispose();
 });
 
-test('I2 【现状】残留 val 会在二次打开面板时回显（用户可见状态脏值）；清除后即干净', function () {
+test('I2 契约：语义档不再把残留值回显进隐藏的数值框（.162 翻转）', function () {
   const app = bootInv();
-  app.run("tState('order_inv').filters={_balPct:{mode:'inv_short',val:'100'}};");
-  const html = panelHtml(app, 'order_inv', '_balPct');
-  /* 面板仍按当前模式把 f.val 回填进 fp_val（该输入框在语义档下是隐藏的） */
-  assert.ok(/<input type="number" id="fp_val" value="100"/.test(html),
-    '【现状】二次打开面板时残留值仍写在隐藏的 fp_val 里（这是当前实现的实际行为，非契约）');
-  const opts = parseOptions(html);
-  assert.equal(opts[opts.length - 2].selected, true, '【现状】面板应回显当前语义档为 selected（inv_short）');
-  /* 「清除」路径不受脏值影响 ⇒ 支持"可延后修复"的判据之一 */
   app.run('renderContent=function(){};');
+  /* .161 现状：手工灌 {mode:'inv_short',val:'100'} 时面板会把 100 回填进 fp_val。
+     .162 起真实链路不会产生这种状态（applyFilt 已清 val），
+     故此处改为：走真实链路后重开面板，fp_val 必须是空值。 */
+  driveApplyFilt(app, 'order_inv', '_balPct', 'inv_short', 100);
+  assert.equal(app.run("tState('order_inv').filters._balPct.val"), '', '前提：真实链路已清 val');
+  const html = panelHtml(app, 'order_inv', '_balPct');
+  assert.ok(/<input type="number" id="fp_val" value=""/.test(html),
+    '重开面板时隐藏的数值框必须是空值（不得回显 100）');
+  const opts = parseOptions(html);
+  assert.equal(opts[opts.length - 2].selected, true, '面板应回显当前语义档为 selected（inv_short）');
+  /* 「清除」路径不受影响 */
   app.run("clearFilt('order_inv','_balPct')");
   const html2 = panelHtml(app, 'order_inv', '_balPct');
-  assert.ok(/<input type="number" id="fp_val" value=""/.test(html2),
-    '【现状】清除后重开面板必须是干净空值（脏值不落库、不跨筛选生命周期存活）');
+  assert.ok(/<input type="number" id="fp_val" value=""/.test(html2), '清除后重开面板仍是干净空值');
   app.dispose();
 });
 
-test('I3 【缺陷·可延后】语义筛选生效但列头漏斗图标不亮（thCol 的 act 判据未含 semFilters）', function () {
-  /* 这是与工程师已修的 filterBar keys 白名单**同一类**遗漏：
-       filterBar 已按 col.semFilters 放行（chip 出现），但 thCol 的「漏斗图标点亮」判据仍是
-       `vals 非空 || val 非空`，不含语义档 —— 语义档 val 恒空 ⇒ 图标不亮。
-     性质：**可见性提示缺失**，不影响筛选结果、不影响 chip 与清除全部 ⇒ 非阻塞，可延后。
-     ⚠ 本用例固化的是**当前缺陷**，不是契约。修好之后请把断言翻转（并同时把 applyFilt 的
-       残留 val 清空，否则"残留 val 点亮图标"的巧合会掩盖本缺陷）。 */
+test('I3 契约：语义筛选生效时列头漏斗图标必须点亮（.161 曾为缺陷，.162 修复后翻转）', function () {
+  /* 【.161 曾为缺陷】filterBar 的 chip 放行与 thCol 的「漏斗点亮」是两份各自写的判据，
+     只修了前者 ⇒ 语义档（val 恒空）下 chip 出现但图标不亮（用户看不出该列已有筛选）。
+     【.162 修复】两处判据合并为单一来源 `isSemFiltMode`，本节断言随之翻转为契约：
+     语义档生效（val 空）时图标**必须**点亮。 */
   const app = bootInv();
   const icoOn = function (filters) {
     app.run("tState('order_inv').filters=" + filters + ';');
@@ -1204,12 +1242,15 @@ test('I3 【缺陷·可延后】语义筛选生效但列头漏斗图标不亮（
       "return thCol('order_inv',c);})()");
     return /filt-ico on/.test(th);
   };
-  assert.equal(icoOn("{_balPct:{mode:'inv_short',val:''}}"), false,
-    '【缺陷固化】语义档生效（val 空）时漏斗图标确实不亮 —— 若变 true 说明缺陷已修，请翻转本断言');
-  assert.equal(icoOn("{_balPct:{mode:'inv_short',val:'100'}}"), true,
-    '【现状】残留 val 会"意外点亮"图标，从而掩盖上面的缺陷（这正是不能只清 val 的原因）');
+  assert.equal(icoOn("{_balPct:{mode:'inv_short',val:''}}"), true,
+    '【.162 契约】语义档 inv_short（val 空）必须点亮漏斗图标');
+  assert.equal(icoOn("{_balPct:{mode:'inv_over',val:''}}"), true,
+    '【.162 契约】语义档 inv_over（val 空）同样必须点亮');
+  assert.equal(icoOn('{}'), false, '无筛选时不得点亮（反假守卫：防止 act 恒真）');
   assert.equal(icoOn("{_balPct:{mode:'gte',val:'100'}}"), true,
     '对照：普通数值模式的图标点亮逻辑未受影响');
+  assert.equal(icoOn("{_balPct:{mode:'gte',val:''}}"), false,
+    '对照：数值模式但 val 留空 = 未生效 ⇒ 仍不得点亮（既有语义不变）');
   app.dispose();
 });
 

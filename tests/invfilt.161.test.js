@@ -546,3 +546,220 @@ test('F4 版本纪律：完整版本号只在权威水印出现 1 次；本版�
     assert.equal(countOcc(INDEX_SRC, build.PREV), 0, '上一版完整版本号不得残留');
   } finally { app.dispose(); }
 });
+
+/* ================================================================
+   §G 【build .162】漏斗图标点亮 / 判据单源 / 清脏值 / thCol 跨修订零回归
+   ----------------------------------------------------------------
+   背景（QA 独立回归 I3 捉出的缺陷，与 .161 已修的 chip 放行属**同一类**）：
+     判据原先在 filterBar 与 thCol **各写一份**，只修了 filterBar 侧 ⇒
+     语义档（val 恒空）下「筛选生效但列头漏斗图标不亮」，用户看不出该列已有筛选。
+   修复：判据提升为模块级单一来源 `isSemFiltMode(m,key,mode)`，filterBar / thCol / applyFilt 三处共用。
+   ================================================================ */
+
+/** 取某列的 thCol 表头 HTML（需先 renderInv 注册 schema） */
+function thOf(app, m, key) {
+  const raw = app.run(
+    "(function(){var c=(TBL_SCHEMAS[" + JSON.stringify(m) + "]||[]).filter(function(x){return x.key===" +
+    JSON.stringify(key) + ";})[0];return c?thCol(" + JSON.stringify(m) + ",c):'';})()"
+  );
+  assert.ok(raw && raw.length > 0, m + '.' + key + ' 的 thCol 输出为空（列未注册或 thCol 失效）');
+  return raw;
+}
+
+/** 漏斗图标是否点亮 */
+function icoOn(app, m, key) {
+  return /filt-ico on/.test(thOf(app, m, key));
+}
+
+test('G1 thCol：语义档（val 空）必须点亮漏斗图标（.161 曾为缺陷）', function () {
+  const app = boot({ orders: FIXTURES.map(function (x) { return mkInvOrder(x[0], x[1]); }) });
+  try {
+    renderInv(app);
+    clearFilters(app);
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), false, '无筛选时不得点亮（反假守卫，防 act 恒真）');
+
+    setFilter(app, '_balPct', { mode: 'inv_short', val: '' });
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), true,
+      'inv_short 生效（val 恒空）时漏斗图标必须点亮 —— .161 缺陷即此处不亮');
+    assert.equal(filterIds(app).length, SHORT_IDS.length, '前提自证：该状态下筛选确实生效');
+
+    setFilter(app, '_balPct', { mode: 'inv_over', val: '' });
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), true, 'inv_over 同样必须点亮');
+
+    /* 零回归：既有数值模式照旧点亮；val 空（未生效）照旧不点亮 */
+    setFilter(app, '_balPct', { mode: 'gte', val: 100 });
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), true, '数值模式 gte 有值 → 点亮（零回归）');
+    setFilter(app, '_balPct', { mode: 'gte', val: '' });
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), false, '数值模式 val 空 = 未生效 → 不点亮（零回归）');
+
+    /* 文本列「为空」：**保持既有行为不点亮**（这是 .161 之前就存在的形态，属本轮**范围外**）。
+       原因：`act` 的历史判据只认「vals 非空 / val 非空」，`is_empty` 的 val 恒空 ⇒ 从不点亮；
+       本轮红线要求「非语义档的 filt-ico 行为逐字节不变」，给 is_empty 补点亮会改动**全部模块**的表头，
+       故只把**语义档**并入判据。此条为反回归钉（将来若有人顺手改 is_empty，必须是有意为之并同步本节）。 */
+    app.run("tState('order_inv').filters={productName:{mode:'is_empty',val:''}};");
+    assert.equal(icoOn(app, 'order_inv', 'productName'), false,
+      '文本列 is_empty 的漏斗点亮行为必须保持 .161 形态（本轮范围外，不得连带修改）');
+  } finally { app.dispose(); }
+});
+
+test('G2 判据单源：isSemFiltMode 恰 1 份实现，thCol / filterBar / applyFilt 三处共用，且不得各写一份', function () {
+  const app = boot({ orders: [] });
+  try {
+    const plain = INDEX_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert.equal(countOcc(plain, 'function isSemFiltMode('), 1,
+      '语义档判据只许 1 份实现（.161 的根因正是 filterBar/thCol 各写一份）');
+    /* 三个消费方必须都调用单一来源 */
+    ['thCol', 'filterBar', 'applyFilt'].forEach(function (n) {
+      const body = fnSrc(INDEX_SRC, n);
+      assert.ok(body.indexOf('isSemFiltMode(') >= 0,
+        n + ' 必须调用 isSemFiltMode（不得自己判 semFilters）');
+      assert.equal(body.indexOf('semFilters'), -1,
+        n + ' 源码内不得直接出现 semFilters —— 一旦出现就是「又写了一份判据」');
+    });
+    /* 只允许引擎/面板三处按列读取 semFilters 声明本身 */
+    const readers = ['isSemFiltMode', 'filterRows', 'openFilter'].filter(function (n) {
+      return fnSrc(INDEX_SRC, n).indexOf('semFilters') >= 0;
+    });
+    assert.deepEqual(readers.sort(), ['filterRows', 'isSemFiltMode', 'openFilter'],
+      'semFilters 的读取点必须只有三处（引擎闸门 / 判据函数 / 面板选项），实际：' + readers.join(','));
+    /* filterBar 的薄别名必须仍存在（保留 chip 侧的既有调用形态；逻辑零复制） */
+    assert.ok(fnSrc(INDEX_SRC, 'filterBar').indexOf('const semModeOf=function(k,mode){return isSemFiltMode(m,k,mode);}') >= 0,
+      'filterBar 的 semModeOf 必须是委托 isSemFiltMode 的薄别名（不得重新实现判定）');
+  } finally { app.dispose(); }
+});
+
+test('G3 applyFilt：写入语义档前清空残留脏值（val/from/to），既有模式行为不动', function () {
+  const app = boot({ orders: FIXTURES.map(function (x) { return mkInvOrder(x[0], x[1]); }) });
+  try {
+    renderInv(app);
+    app.setGlobal('renderContent', function () {});   /* applyFilt 末尾会重渲染 */
+
+    /** 驱动 applyFilt：临时替换 DOM 桩的 getElementById（供应 fp_mode / fp_val；无 fp_drange） */
+    function applyFiltWith(m, key, mode, val) {
+      const valEl = { value: val == null ? '' : String(val), style: { display: '' } };
+      const sel = { value: mode, options: [{ value: mode, dataset: {} }], selectedIndex: 0 };
+      const doc = app.sandbox.document;
+      const orig = doc.getElementById;
+      doc.getElementById = function (id) {
+        if (id === 'fp_mode') return sel;
+        if (id === 'fp_val') return valEl;
+        return null;
+      };
+      try {
+        app.run('applyFilt(' + JSON.stringify(m) + ',' + JSON.stringify(key) + ',false);');
+      } finally {
+        doc.getElementById = orig;
+      }
+    }
+
+    /* ① 先设数值模式带 val，再切语义档 ⇒ val 必须被清空 */
+    app.run("tState('order_inv').filters={_balPct:{mode:'gte',val:'100'}};");
+    assert.equal(app.run("tState('order_inv').filters._balPct.val"), '100', '前提：先有一个带 val 的数值模式');
+    applyFiltWith('order_inv', '_balPct', 'inv_short', 100);
+    assert.equal(app.run("tState('order_inv').filters._balPct.mode"), 'inv_short', '模式必须切到 inv_short');
+    assert.equal(app.run("tState('order_inv').filters._balPct.val"), '',
+      '语义档写入后 f.val 必须为 \'\'（.161 会残留 100，导致二次打开面板回显脏值）');
+    assert.equal(app.run("typeof tState('order_inv').filters._balPct.from"), 'undefined', '不得残留 from');
+    assert.equal(app.run("typeof tState('order_inv').filters._balPct.to"), 'undefined', '不得残留 to');
+
+    /* ② 语义档下筛选结果仍正确（清脏值不得影响判定） */
+    assert.equal(filterIds(app).length, SHORT_IDS.length, '清脏值后筛选结果不变');
+
+    /* ③ 范围守卫：文本列 is_empty 的 f.val 既有行为一律不动 */
+    applyFiltWith('order_inv', 'productName', 'is_empty', 'KC');
+    assert.equal(app.run("tState('order_inv').filters.productName.val"), 'KC',
+      '文本列 is_empty 的 f.val 必须保持既有行为（本轮只清语义档，不动其它模式）');
+  } finally { app.dispose(); }
+});
+
+test('G4 thCol 跨修订零回归：非 order_inv 模块逐字节不变；order_inv 语义档差异恰为「一个 on 令牌」', function () {
+  const app = boot({ orders: [] });
+  try {
+    /* 上一版源码：由**提交主题**反查修订（不用 HEAD，避免自我对消）；取不到必须报错，禁止静默跳过 */
+    const log = require('node:child_process').execFileSync('git', ['log', '--format=%H%x09%s', '-n', '600'],
+      { cwd: ROOT, encoding: 'utf8' });
+    const hit = log.split('\n').filter(function (l) {
+      const i = l.indexOf('\t');
+      return i >= 0 && l.slice(i + 1).indexOf('build ' + build.PREV) === 0;
+    })[0];
+    assert.ok(hit, '必须能在提交主题里反查到上一版 build ' + build.PREV + ' 的修订（否则本用例失效）');
+    const prevRev = hit.slice(0, hit.indexOf('\t'));
+    const prevSrc = require('node:child_process').execFileSync('git', ['show', prevRev + ':index.html'],
+      { cwd: ROOT, encoding: 'utf8' });
+    assert.ok(prevSrc.length > 100000, '上一版 index.html 提取异常短（' + prevSrc.length + '）');
+
+    /* 两版用**同一份**夹具装载 */
+    const fixtures = {
+      products: [
+        { id: 'PA', name: '甲产品', spec: '', model: '', unit: '台', stock: 0, status: '启用' },
+        { id: 'PB', name: '乙产品', spec: '', model: '', unit: '台', stock: 0, status: '启用' },
+      ],
+      parts: [{ id: 'A1', name: '零件甲', spec: 's1', model: 'm1', unit: '个', stock: 0, status: '启用' }],
+      deliveries: [{ id: 'D1', planNo: 'JFJH-1', orderId: 'KC1', customer: '客户甲', createdAt: '2026-11-20', items: [] }],
+      orders: [], productionPlans: [], productionReports: [], transfers: [], logs: [],
+      /* 刻意**不**注入 fields：产品列 schema 由 fields.product 派生，注入空数组会让 product 表 0 列
+         （既有默认 fields 来自应用初始化，绕过它反而失真） */
+      meta: { seq: 0 },
+      tblLayout: {}, uiDefaults: { order: {} }, tblPage: {}, tblState: {}, selRows: {}, lastRowIds: {},
+    };
+    const mk = function (html) {
+      const a = createApp({ quietConsole: true, indexHtml: html, seed: JSON.parse(JSON.stringify(fixtures)) });
+      a.run('renderProducts();renderParts();renderDelivery();' +
+        "renderOrderTable('order_frame',[],{});renderOrderTable('order_inv',[],{});");
+      return a;
+    };
+    const now = mk(INDEX_SRC);
+    const prev = mk(prevSrc);
+    try {
+      /* 非语义筛选态电池：两版 thCol 输出必须**逐字节相同** */
+      const STATES = [
+        '{}',
+        "{id:{mode:'contains',val:'KC'}}",
+        "{id:{mode:'is_empty',val:''}}",
+        "{id:{mode:'not_empty',val:''}}",
+        "{id:{vals:['KC1'],mode:'in'}}",
+        "{stockMin:{mode:'gte',val:'5'}}",
+        "{stockMin:{mode:'neq',val:'5'}}",
+        "{startDate:{mode:'range',from:'2026-01-01',to:'2026-12-31'}}",
+        "{startDate:{mode:'today',val:''}}"
+      ];
+      const diffs = [];
+      let compared = 0;
+      ['product', 'order_frame', 'order_inv', 'delivery', 'parts'].forEach(function (m) {
+        const keys = JSON.parse(now.run('JSON.stringify((TBL_SCHEMAS[' + JSON.stringify(m) + ']||[]).map(function(c){return c.key;}))'));
+        assert.ok(keys.length >= 5, m + ' 列数异常（' + keys.length + '）');
+        keys.forEach(function (k) {
+          STATES.forEach(function (st) {
+            now.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
+            prev.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
+            const a = thOf(now, m, k);
+            const b = thOf(prev, m, k);
+            compared++;
+            if (a !== b) diffs.push(m + '.' + k + ' / ' + st + '\n  本版：' + a + '\n  上版：' + b);
+          });
+        });
+      });
+      assert.ok(compared >= 100, 'thCol 差分覆盖面异常（仅 ' + compared + ' 组）');
+      assert.deepEqual(diffs, [], '非语义筛选态下 thCol 输出出现回归：\n' + diffs.join('\n'));
+
+      /* 语义档是本版**唯一**预期差异：差异必须恰为多出一个 ` on` 令牌 */
+      now.run("tState('order_inv').filters={_balPct:{mode:'inv_short',val:''}};");
+      prev.run("tState('order_inv').filters={_balPct:{mode:'inv_short',val:''}};");
+      const aSem = thOf(now, 'order_inv', '_balPct');
+      const bSem = thOf(prev, 'order_inv', '_balPct');
+      /* 自证基线形态：上一版的 thCol 是否已含本修复（下一版推进后本用例自动降级为「两版相同」） */
+      const prevFixed = fnSrc(prevSrc, 'thCol').indexOf('isSemFiltMode') >= 0;
+      if (prevFixed) {
+        assert.equal(aSem, bSem, '上一版已含该修复 ⇒ 两版 thCol 输出必须相同（零回归）');
+      } else {
+        assert.equal(/filt-ico on/.test(bSem), false, '上一版该状态下漏斗图标不亮（= .161 缺陷，差异前提自证）');
+        assert.equal(/filt-ico on/.test(aSem), true, '本版该状态下漏斗图标必须点亮');
+        assert.equal(aSem.replace('filt-ico on', 'filt-ico'), bSem,
+          '两版 thCol 的差异必须**恰为**一个 ` on` 令牌（除此之外逐字节相同）');
+      }
+    } finally {
+      now.dispose();
+      prev.dispose();
+    }
+  } finally { app.dispose(); }
+});
