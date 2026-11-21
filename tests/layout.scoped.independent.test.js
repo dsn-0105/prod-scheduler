@@ -669,20 +669,40 @@ test('B5 同一账号多标签页：后写覆盖自己（无 409、无合并）�
 /* ============================================================
    Part C · 静态守卫（自己提取源码，不抄工程师断言）
    ============================================================ */
-test('C1 反潮汐：6 个既有函数体与 .152 **改前基线**逐字相同（不是形态正则）', () => {
+test('C1 反潮汐：5 个既有函数体与 .152 改前基线逐字相同 + thCol 只许多一处受控增量', () => {
   /* 基线 marker 用 .152 改动的**注释令牌**（`【build .152】`），不用权威水印：
      水印每推进一个版本就变，会把「当前版本必须含 marker」的防对消守卫打成假失败（.153 实测）。 */
   const base = resolveBaseline('index.html', '【build .152】', '.152 列布局改造');
   const headHtml = base.text;
   assert.notStrictEqual(base.rev, '', '基线修订必须解析成功');
-  const names = ['layoutOf', 'applyTableLayout', 'startColDrag', 'startColResize', 'syncHeadBody', 'thCol'];
-  names.forEach(n => {
+  /* 【build .162 受控放行说明】`thCol` 经用户批准做了一处改动：漏斗点亮判据并入语义档
+     （语义筛选生效但图标不亮，由 QA 独立回归 I3 捉出）。为**不削弱**反潮汐强度，
+     thCol 不改为「跳过」，而是「剥掉这一处受控增量后必须与基线逐字一致」——
+     除该增量外的任何改动仍会立刻变红。thCol 的正向行为另由
+     `tests/invfilt.161.test.js §G1/G2/G4`（点亮/单源/跨修订差分）守卫。 */
+  const STRICT = ['layoutOf', 'applyTableLayout', 'startColDrag', 'startColResize', 'syncHeadBody'];
+  STRICT.forEach(n => {
     const a = extractFn(INDEX_SRC, n);
     const b = extractFn(headHtml, n);
     assert.ok(a && a.length > 60, n + ' 在当前 index.html 中未抽出（守卫会退化为恒真，必须修）');
     assert.ok(b && b.length > 60, n + ' 在基线中未抽出（守卫会退化为恒真，必须修）');
     assert.strictEqual(a, b, n + ' 函数体必须与 .152 改前基线（' + base.rev.slice(0, 7) + '）逐字一致（反潮汐硬约束）');
   });
+
+  /* thCol：剥掉 .162 的两处受控增量（新增注释块 + act 判据里的 ||isSemFiltMode(...)）后必须逐字等于基线 */
+  const stripThColDelta = function (fn) {
+    return String(fn)
+      .replace(/\n  \/\* 【build \.162】[\s\S]*?\*\/\n/, '\n')
+      .replace('||isSemFiltMode(m,col.key,f.mode)', '');
+  };
+  const thNow = extractFn(INDEX_SRC, 'thCol');
+  const thBase = extractFn(headHtml, 'thCol');
+  assert.ok(thNow && thNow.length > 60, 'thCol 在当前 index.html 中未抽出（守卫会退化为恒真）');
+  assert.ok(thBase && thBase.length > 60, 'thCol 在基线中未抽出（守卫会退化为恒真）');
+  assert.notStrictEqual(thNow, thBase, '受控增量必须真的存在（若两版相同则本分支退化为恒真）');
+  assert.ok(thNow.indexOf('||isSemFiltMode(m,col.key,f.mode)') >= 0, '受控增量必须就是「判据并入语义档」');
+  assert.strictEqual(stripThColDelta(thNow), thBase,
+    'thCol 除 .162 那一处受控增量外，必须与 .152 改前基线逐字一致（反潮汐硬约束）');
   /* 基线确实来自更早的修订（防对消的第二重证据：基线内联脚本长度与当前不同） */
   assert.notStrictEqual(headHtml.length, INDEX_SRC.length, '基线与当前必须是不同修订');
   /* J9 的两行合并策略正则必须原样存在（invadjust.143 J9 依赖） */
