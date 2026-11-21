@@ -62,6 +62,7 @@ tests/
 ├── parts.159.test.js          .159 口径收紧（入库正整数 / 上下限禁负 / 禁静默纠正 / 整批性）
 ├── invfilt.161.test.js        .161 库存「结余进度」语义筛选（红/黄档 · 积压灰档 · 引擎顺序 · 面板 data-noval · chip）
 ├── qa.invfilt.161.independent.test.js  .161/.162 独立验证（QA 侧 47 条：口径 · 跨修订差分 · 7 条变异注入 · 漏斗点亮翻转）
+├── qa.invfilt.162.independent.test.js  .162 独立复核（QA 侧 41 条：守卫强度 17 条变异注入 · semFilters 全局枚举 · 前提同步必要性裁决）
 ├── qa.parts-ledger.independent.test.js  零部件独立验证（QA 侧 53 条：口径 / 真实 DB.tx 双击 / 在途重开自愈 / 变异注入基础设施 / 九锚点）
 ├── qa.parts-ledger.validate.159.test.js  .159 独立验证（QA 侧 39 条：整数边界 / 整批性 / 存量不动 / 4 处变异注入）
 ├── server.tx.test.js          /api/tx 原子性、回滚、权限（服务端）
@@ -74,7 +75,7 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test tests/*.test.js` → **977 tests / 975 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-20.162` 实测；`.161` 时为 973/971 = 926 + QA 独立验证 47 条，本轮 `.162` 在 `invfilt.161` 追加 §G 4 条 → 977）。
+> **当前规模**：`node --test tests/*.test.js` → **1018 tests / 1016 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-20.162` 实测；`.161` 时为 973/971 = 926 + QA 独立验证 47 条；`.162` 首轮 977 = +`invfilt.161` §G 4 条，收口轮 +QA 侧 `qa.invfilt.162` 41 条 → 1018）。
 > ⚠ 本条数字**只在收尾时手写更新**（变化频繁，不做断言），跑回归请用**显式文件列表**，勿用 `node --test tests/` 目录形式（会扫入 `_diag/before*` 造成假失败）。
 >
 > **三个「黄金样例」文件的存在理由**（不是凑覆盖率）：
