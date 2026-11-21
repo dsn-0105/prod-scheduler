@@ -1020,11 +1020,18 @@ function filterRows(m,rows){
   return rows.filter(r=>{
     for(const key of Object.keys(s.filters)){
       const f=s.filters[key];if(!f)continue;
+      /* 【build .161】列定义**必须提前**取：语义筛选档（col.semFilters）挂在列上，
+         若仍保持「先判 hasVals/hasVal → 再取 col」的旧顺序，val 恒空的语义模式会在 continue 处被**静默跳过**
+         （表象：面板里选中了但表格没筛）。故顺序改为「取列 → 解析语义档 → 判是否有效筛选」。
+         语义模式命中后**只按行级 test 判定、与列值无关**，随后 continue 到下一个筛选键。 */
+      const col=schema.find(c=>c.key===key);if(!col)continue;
+      const sem=(col.semFilters||[]).find(function(x){return x.mode===f.mode;})||null;
       const hasVals=f.vals&&f.vals.length>0;
       const hasVal=f.val!==''&&f.val!=null;
-      const isEmptyMode=f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f);   /* 2026-08-25.42/.43：为空/不为空/日期快捷模式 val 恒空，须绕过 hasVal 判定 */
-      if(!hasVals&&!hasVal&&!isEmptyMode)continue;
-      const col=schema.find(c=>c.key===key);if(!col)continue;
+      /* 2026-08-25.42/.43：为空/不为空/日期快捷模式 val 恒空，须绕过 hasVal 判定；.161 追加语义模式（同为零值自由模式） */
+      const valFreeMode=f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)||!!sem;
+      if(!hasVals&&!hasVal&&!valFreeMode)continue;
+      if(sem){if(!sem.test(r))return false;continue;}
       const v=colVal(col,r);
       if(col.type==='number'){
         const nv=num(v);
@@ -1213,6 +1220,16 @@ function invStockLevel(v,min,max){
   if(max!=null&&max!==''&&num(max)>0&&num(v)>num(max))return 'gray';
   return 'green';
 }
+/* 【build .161】库存管理「结余进度」列头漏斗的**语义筛选档**（用户 2026-11-20 拍板）。
+   用户原话「可筛选结余小于最小库存量（即红色和黄色警告标）」⇒ 口径 = **界面红黄三角警示标所见即所筛**：
+     · invShortOf = red（结余<0 欠货）或 amber（0≤结余<最小 且 最小>0）→「低于最小库存量（红/黄警示）」
+     · invOverOf  = gray（结余>最大 且 最大>0 积压）→「超过最大库存量（积压/灰）」
+   ⚠ **禁止在此重写判定（A4 单源守卫红线）**：档位一律**取自** invStockLevel 的返回值再比较，
+     本函数不参与任何阈值运算 —— 否则「≤.160 的零值/下限修正」会在筛选侧另存一份口径并日后走偏。
+   ⚠ 也**不得**改成「严格 结余<最小 且 最小>0」：那会漏掉「未设下限（min 空/0）但结余<0」的红标行 ——
+     这类行界面上确实画着红三角，用户要筛的就是它。 */
+function invShortOf(v,min,max){const lv=invStockLevel(v,min,max);return lv==='red'||lv==='amber';}
+function invOverOf(v,min,max){return invStockLevel(v,min,max)==='gray';}
 /* 2026-08-30.92：订单行数量（库存订单=最大库存量 stockMax，销售订单=orderQty；历史空 stockMax 回退 orderQty） */
 function invQtyOf(o,it){return (o.orderType==='库存订单'&&it.stockMax!=null&&it.stockMax!=='')?num(it.stockMax):num(it.orderQty);}
 /* ═══════════ 2026-10-07.139 / .141：「已计划未交付 / 结余」取值唯一入口（口径单源，禁止他处再算） ═══════════
@@ -1344,11 +1361,23 @@ function addMonthsStr(dateStr,n){
 }
 /* 日期快捷模式（val 恒空/range 用 from/to，须绕过 hasVal 判定） */
 function dateQuickMode(f){return f&&(f.mode==='today'||f.mode==='this_week'||f.mode==='this_month'||f.mode==='last_month'||f.mode==='last_1m'||f.mode==='last_3m'||f.mode==='range');}
-/* 为空/不为空模式：隐藏关键字输入框 */
+/* 为空/不为空模式 + 【build .161】列声明式语义模式：**仅凭 option 上的 data-noval 标记**隐藏输入框。
+   旧实现把模式名（'is_empty'/'not_empty'）硬编码在本函数内；语义模式是**开放扩展集合**（每列可声明任意档），
+   硬编码必然越加越漏，故改为「选项自带 data-noval」——渲染选项处声明一次，本函数只读标记。
+   回归等价性：文本列的「为空/不为空」仍隐藏、其余模式仍显示（选项生成处同步打标，见 openFilter）。 */
 function fpModeChange(){
   const m=document.getElementById('fp_mode'),v=document.getElementById('fp_val');
   if(!m||!v)return;
-  v.style.display=(m.value==='is_empty'||m.value==='not_empty')?'none':'';
+  const o=m.options[m.selectedIndex];
+  v.style.display=(o&&o.dataset&&o.dataset.noval)?'none':'';
+}
+/* 【build .161】模式选项渲染：list=[mode,label]；novalSet 内的模式打 data-noval="1"（选中即隐藏输入框）。
+   集中在生成处声明「哪些模式不需要输入值」，是 fpModeChange 的唯一依据来源。 */
+function fpModeOptsHtml(list,curMode,novalSet){
+  return list.map(function(x){
+    const noval=!!(novalSet&&novalSet[x[0]]);
+    return '<option value="'+x[0]+'"'+(noval?' data-noval="1"':'')+' '+(curMode===x[0]?'selected':'')+'>'+x[1]+'</option>';
+  }).join('');
 }
 /* 2026-08-25.43：日期筛选模式显隐——快捷模式（今天/本周/…）无输入；从…到… 双日期；等于 单日期。
    2026-08-25.48：加 fp_drange 守卫——仅日期增强面板执行，文本/数字面板不被误隐藏（此前 contains 落入 else 分支隐藏文本输入框） */
@@ -1377,7 +1406,13 @@ function openFilter(el,m,key){
     inner+='<div class="fp-opts">'+opts.map(v=>'<label class="fp-opt"><input type="checkbox" value="'+esc(v)+'" '+(sel.indexOf(v)>=0?'checked':'')+'>'+esc(v)+'</label>').join('')+'</div>'+
       '<div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="filtCheckAll(this,true)">全选</button><button class="btn btn-sm" onclick="filtCheckAll(this,false)">全不选</button></div>';
   }else if(col.type==='number'){
-    inner+='<select id="fp_mode">'+[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+    /* 【build .161】数值列模式 = 原 4 模式 + 该列声明的**语义档**（col.semFilters，如库存管理「结余进度」的红/黄/灰档）。
+       语义档不需要输入数值 ⇒ 选项带 data-noval，选中即隐藏 `fp_val`（由 fpModeChange 统一处理）。
+       未声明 semFilters 的数值列（全工程绝大多数）选项与行为**逐字不变**。 */
+    const semDefs=col.semFilters||[];
+    const nModes=[['gte','大于等于'],['lte','小于等于'],['eq','等于'],['neq','不等于']].concat(semDefs.map(function(x){return [x.mode,x.label];}));
+    const nNoVal={};semDefs.forEach(function(x){nNoVal[x.mode]=1;});
+    inner+='<select id="fp_mode" onchange="fpModeChange()">'+fpModeOptsHtml(nModes,f.mode,nNoVal)+'</select>'+
       '<input type="number" id="fp_val" value="'+(f.val!=null?f.val:'')+'" placeholder="输入数值">';
   }else if(col.type==='date'){
     /* 2026-08-25.43：order_frame 日期列对齐金蝶快捷模式（今天/本周/本月/上月/过去一月/过去三月/从…到…/等于）；其余模块保持原 4 模式 */
@@ -1392,7 +1427,8 @@ function openFilter(el,m,key){
   }else{
     /* 2026-08-25.42：order_frame 文本列用金蝶式 8 模式（含回车确认、为空/不为空隐藏输入框）；其余模块保持原 3 模式 */
     const modes=ENHANCED_FILT_MODES[m]?ENH_FILT_MODES_LIST:[['contains','包含'],['eq','等于'],['neq','不等于']];
-    inner+='<select id="fp_mode" onchange="fpModeChange()">'+modes.map(x=>'<option value="'+x[0]+'" '+(f.mode===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>'+
+    /* 【build .161】为空/不为空由选项自带 data-noval 声明（fpModeChange 不再硬编码模式名） */
+    inner+='<select id="fp_mode" onchange="fpModeChange()">'+fpModeOptsHtml(modes,f.mode,{is_empty:1,not_empty:1})+'</select>'+
       '<input type="text" id="fp_val" value="'+esc(f.val||'')+'" placeholder="输入关键字" onkeydown="if(event.key===\'Enter\'){event.preventDefault();applyFilt(\''+m+'\',\''+key+'\',false);}">';
   }
   const pop=document.createElement('div');
@@ -1454,13 +1490,25 @@ function applyFilt(m,key,useChecks){
 function filterBar(m){
   const s=tState(m);
   const schema=TBL_SCHEMAS[m]||[];
-  const MODE_NAME={contains:'包含',not_contains:'不包含',eq:'=',neq:'≠',startswith:'以…开始',endswith:'以…结束',is_empty:'为空',not_empty:'不为空',gte:'≥',lte:'≤',today:'今天',this_week:'本周',this_month:'本月',last_month:'上月',last_1m:'过去一个月',last_3m:'过去三个月',range:'从…到…',in:''};
-  const keys=Object.keys(s.filters).filter(k=>{const f=s.filters[k];return f&&(f.vals&&f.vals.length>0||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f));});
+  /* 【build .161】语义筛选档文案登记（面板/筛选条共用同一份措辞） */
+  const MODE_NAME={contains:'包含',not_contains:'不包含',eq:'=',neq:'≠',startswith:'以…开始',endswith:'以…结束',is_empty:'为空',not_empty:'不为空',gte:'≥',lte:'≤',today:'今天',this_week:'本周',this_month:'本月',last_month:'上月',last_1m:'过去一个月',last_3m:'过去三个月',range:'从…到…',inv_short:'低于最小库存量',inv_over:'超过最大库存量',in:''};
+  /* 【build .161】语义模式 val 恒空 ⇒ 必须按「列是否声明了该语义档」放行，
+     否则 chip 与「清除全部」入口都不出现（表现为「筛选生效了但看不到标签、也清不掉」）。 */
+  const semModeOf=function(k,mode){const c=schema.find(x=>x.key===k);return (c&&c.semFilters)?(c.semFilters.filter(x=>x.mode===mode)[0]||null):null;};
+  const keys=Object.keys(s.filters).filter(k=>{
+    const f=s.filters[k];
+    if(!f)return false;
+    if(f.vals&&f.vals.length>0)return true;
+    if(f.val!==''&&f.val!=null)return true;
+    if(f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f))return true;
+    return !!semModeOf(k,f.mode);
+  });
   if(!keys.length)return '';
   const chips=keys.map(k=>{
     const col=schema.find(c=>c.key===k);if(!col)return '';
     const f=s.filters[k];
-    const txt=(f.vals&&f.vals.length)?col.label+'：'+f.vals.length+'项':(f.mode==='range'?col.label+' '+f.from+'~'+f.to:col.label+' '+(MODE_NAME[f.mode]||'')+f.val);
+    /* 语义档只显示「列名 + 档位文案」，不拼数值（该档本就不看数值，拼上会误导） */
+    const txt=(f.vals&&f.vals.length)?col.label+'：'+f.vals.length+'项':(semModeOf(k,f.mode)?col.label+' '+(MODE_NAME[f.mode]||''):(f.mode==='range'?col.label+' '+f.from+'~'+f.to:col.label+' '+(MODE_NAME[f.mode]||'')+f.val));
     return '<span class="fchip">'+esc(txt)+' <b onclick="clearFilt(\''+m+'\',\''+k+'\')" title="移除该筛选">×</b></span>';
   }).join('');
   return '<div class="tbl-fbar">'+chips+'<button class="btn btn-sm" onclick="clearAllFilt(\''+m+'\')">清除全部</button></div>';
@@ -4487,11 +4535,22 @@ function renderOrderTable(formKey,typeOrders,prodMap){
        .139：改为**不钳制**——欠产以负数呈现（用户 2026-10-07 要求） */
     ...(formKey==='order_inv'?[{key:'_balance',label:'结余',type:'number',get:r=>
        invBalanceOf(r.item.deliveredQty,invPuOf(puMap,r.order.id,r.__li,r.item.productId))}]:[]),
-    /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，放结余后；与进度列同款百分比口径，可>100%） */
+    /* 2026-08-25.61：结余进度=结余/订单数量（仅库存订单，放结余后；与进度列同款百分比口径，可>100%）
+       【build .161】列头漏斗追加两个**语义筛选档**（用户 2026-11-20 拍板）：
+         `semFilters` 是筛选引擎的声明式扩展——引擎只认 mode/label/test，
+         判定口径**全部**透传给 invShortOf / invOverOf（→ invStockLevel），列定义里不写任何阈值。
+         入参取「结余」数值（与「结余」列同源同入口 invBalanceOf/invPuOf），故筛选与三角警示标 100% 同源。
+         注意：本列的 `get`（百分比数值）**不变**，语义档与列值无关，仅用于 `/` 面板选项。 */
     ...(formKey==='order_inv'?[{key:'_balPct',label:'结余进度',type:'number',get:r=>{
        const bal=invBalanceOf(r.item.deliveredQty,invPuOf(puMap,r.order.id,r.__li,r.item.productId));
        const t=invQtyOf(r.order,r.item);
-       return t>0?Math.round(bal/t*100):0; }}]:[]),
+       return t>0?Math.round(bal/t*100):0; },
+       semFilters:[
+         {mode:'inv_short',label:'低于最小库存量（红/黄警示）',test:r=>
+           invShortOf(invBalanceOf(r.item.deliveredQty,invPuOf(puMap,r.order.id,r.__li,r.item.productId)),r.item.stockMin,r.item.stockMax)},
+         {mode:'inv_over',label:'超过最大库存量（积压/灰）',test:r=>
+           invOverOf(invBalanceOf(r.item.deliveredQty,invPuOf(puMap,r.order.id,r.__li,r.item.productId)),r.item.stockMin,r.item.stockMax)}
+       ]}]:[]),
     {key:'_pct',label:'交付进度',type:'number',get:r=>{const t=invQtyOf(r.order,r.item);return t>0?Math.round(num(r.item.deliveredQty)/t*100):0;}},   /* .97：销售/库存统一「交付进度」=已交付/数量 */
     {key:'lineNotes',label:'商品行备注',type:'text',get:r=>r.item.lineNotes!=null?r.item.lineNotes:(r.item.notes||'')}
   ];
@@ -8986,7 +9045,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-14.160</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-20.161</div>
 </body>
 </html>
 

@@ -1,7 +1,7 @@
 'use strict';
 /* ================================================================
    tests/qa.parts-ledger.independent.test.js
-   —— QA 独立验证：零部件数据 + 零部件台账（build 2026-10-31.158 起，随版本推进同步至 .160）
+   —— QA 独立验证：零部件数据 + 零部件台账（build 2026-10-31.158 起，随版本推进同步至 .161）
    ================================================================
    定位：**独立复验**，不是 tests/parts.158.test.js 的复读机。
      · 不采信工程师自述，不复用他的断言写法定式；
@@ -29,10 +29,10 @@ const { createApp, ROOT } = require('./harness/sandbox');
      · BUILD_NO   = BUILD 的 `.NNN` 段（guide.js 与注释里只许用「build .NNN」短形态）；
      · BUILD_DATE = BUILD 的日期段（guide.js 文首「更新：YYYY-MM-DD（build .NNN）」）。
    刻意**不**把 `.159` / `2026-10-31` 分散写死在断言里 —— .148 就因清单/计数不同步假失败过一次。 */
-const BUILD = '2026-11-14.160';
-const PREV = '2026-10-31.159';
+const BUILD = '2026-11-20.161';
+const PREV = '2026-11-14.160';
 const BUILD_NO = String(BUILD).split('.')[1];       /* '160' */
-const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-14' */
+const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-20' */
 const PREV_NO = String(PREV).split('.')[1];         /* '159' */
 
 const readRel = function (rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); };
