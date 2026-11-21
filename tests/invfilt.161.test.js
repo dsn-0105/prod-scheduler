@@ -576,7 +576,11 @@ test('G1 thCol：语义档（val 空）必须点亮漏斗图标（.161 曾为缺
   try {
     renderInv(app);
     clearFilters(app);
-    assert.equal(icoOn(app, 'order_inv', '_balPct'), false, '无筛选时不得点亮（反假守卫，防 act 恒真）');
+    /* ⚠ 探针强度提示（QA 实测经验，见 docs/系统知识.md §2 测试纪律）：
+       「无筛选 → 不点亮」这条**判别力很弱** —— `act = f && (...)` 有 `f &&` 短路，
+       无筛选时任何判据都不会点亮，所以它抓不住「判据被改成恒真」。
+       真正有效的反假探针是下方 **「有筛选条目但模式无效」（gte + val:''）** 那条。 */
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), false, '无筛选时不得点亮（弱探针，见上方注释）');
 
     setFilter(app, '_balPct', { mode: 'inv_short', val: '' });
     assert.equal(icoOn(app, 'order_inv', '_balPct'), true,
@@ -589,26 +593,34 @@ test('G1 thCol：语义档（val 空）必须点亮漏斗图标（.161 曾为缺
     /* 零回归：既有数值模式照旧点亮；val 空（未生效）照旧不点亮 */
     setFilter(app, '_balPct', { mode: 'gte', val: 100 });
     assert.equal(icoOn(app, 'order_inv', '_balPct'), true, '数值模式 gte 有值 → 点亮（零回归）');
+    /* ★ 反假守卫（有效探针）：**有筛选条目**但模式未生效 ⇒ 不得点亮。
+       它绕过了 `f &&` 短路，能抓住「act 被改成恒真 / 恒 true」的变异。 */
     setFilter(app, '_balPct', { mode: 'gte', val: '' });
-    assert.equal(icoOn(app, 'order_inv', '_balPct'), false, '数值模式 val 空 = 未生效 → 不点亮（零回归）');
+    assert.equal(icoOn(app, 'order_inv', '_balPct'), false,
+      '有筛选条目但模式无效（gte + val 空）→ 不得点亮（有效反假守卫，绕过 f && 短路）');
 
-    /* 文本列「为空」：**保持既有行为不点亮**（这是 .161 之前就存在的形态，属本轮**范围外**）。
-       原因：`act` 的历史判据只认「vals 非空 / val 非空」，`is_empty` 的 val 恒空 ⇒ 从不点亮；
-       本轮红线要求「非语义档的 filt-ico 行为逐字节不变」，给 is_empty 补点亮会改动**全部模块**的表头，
-       故只把**语义档**并入判据。此条为反回归钉（将来若有人顺手改 is_empty，必须是有意为之并同步本节）。 */
+    /* 【现状·既有缺陷 D11】文本列「为空/不为空」筛选生效但漏斗图标不亮。
+       · 事实：`act` 的历史判据只认「vals 非空 / val 非空」，`is_empty` 的 val 恒空 ⇒ 从不点亮；
+         该行为自 .152 起就存在，**跨全部模块**的文本列，症状与 .162 所修缺陷同类。
+       · 为何本轮不修：给 is_empty 补点亮会改动全部模块表头，违反「非语义档 filt-ico 行为逐字节不变」红线；
+         修复需再做一次 `layout.scoped §C1` 受控放行。已登记为 **D11（P2·可见性提示缺失）**，
+         见 docs/系统知识.md §7。
+       · 本断言**不是认可该行为**，只是把现状钉住，避免被"顺手改掉"时无人意识到影响面；
+         **修复 D11 时请把下一条断言翻转为 `true`**，并同步本条注释与 D11 登记。 */
     app.run("tState('order_inv').filters={productName:{mode:'is_empty',val:''}};");
     assert.equal(icoOn(app, 'order_inv', 'productName'), false,
-      '文本列 is_empty 的漏斗点亮行为必须保持 .161 形态（本轮范围外，不得连带修改）');
+      '【现状·既有缺陷 D11】文本列 is_empty 筛选生效但漏斗图标不亮 —— 修复后请把本断言翻转为 true，并同步 D11 登记');
   } finally { app.dispose(); }
 });
 
-test('G2 判据单源：isSemFiltMode 恰 1 份实现，thCol / filterBar / applyFilt 三处共用，且不得各写一份', function () {
+test('G2 判据单源：isSemFiltMode 恰 1 份实现，thCol / filterBar / applyFilt 三处共用；semFilters 提及点全局枚举恰 4 处', function () {
   const app = boot({ orders: [] });
   try {
     const plain = INDEX_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     assert.equal(countOcc(plain, 'function isSemFiltMode('), 1,
       '语义档判据只许 1 份实现（.161 的根因正是 filterBar/thCol 各写一份）');
-    /* 三个消费方必须都调用单一来源 */
+
+    /* ---- ① 判据的消费方：必须都调用单一来源，且自身不得出现 semFilters ---- */
     ['thCol', 'filterBar', 'applyFilt'].forEach(function (n) {
       const body = fnSrc(INDEX_SRC, n);
       assert.ok(body.indexOf('isSemFiltMode(') >= 0,
@@ -616,12 +628,57 @@ test('G2 判据单源：isSemFiltMode 恰 1 份实现，thCol / filterBar / appl
       assert.equal(body.indexOf('semFilters'), -1,
         n + ' 源码内不得直接出现 semFilters —— 一旦出现就是「又写了一份判据」');
     });
-    /* 只允许引擎/面板三处按列读取 semFilters 声明本身 */
-    const readers = ['isSemFiltMode', 'filterRows', 'openFilter'].filter(function (n) {
-      return fnSrc(INDEX_SRC, n).indexOf('semFilters') >= 0;
+
+    /* ---- ② semFilters 的**全部**提及点：全局扫描（两种独立方法互相校验） ----
+       `semFilters` 的合法提及点恰 4 个函数：
+         isSemFiltMode（判据本体，3 次）/ filterRows（引擎闸门）/ openFilter（面板选项）/
+         renderOrderTable（列定义**声明**处，不是读取）。
+       ⚠ 旧写法「先写死 3 个函数名再查它们是否包含」**排除不了第四处**
+         （不在名单里的函数偷偷读取时永远绿）—— 故改为遍历全部 function 声明。 */
+    const EXPECTED = ['filterRows', 'isSemFiltMode', 'openFilter', 'renderOrderTable'];
+
+    /* 方法 A（枚举 + 函数体检查）：遍历主脚本所有 `function NAME(` 声明 */
+    const declRe = /(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+    const declNames = [];
+    let dm;
+    while ((dm = declRe.exec(INDEX_SRC)) !== null) declNames.push(dm[1]);
+    const uniqNames = Array.from(new Set(declNames));
+    assert.ok(uniqNames.length >= 200,
+      '函数枚举异常（仅 ' + uniqNames.length + ' 个）—— 扫描逻辑可能已失效，不得静默通过');
+    const readersA = [];
+    uniqNames.forEach(function (n) {
+      let body;
+      try { body = fnSrc(INDEX_SRC, n); } catch (e) { return; }   /* 提取失败不掩盖：方法 B 兜底 */
+      if (body.indexOf('semFilters') >= 0) readersA.push(n);
     });
-    assert.deepEqual(readers.sort(), ['filterRows', 'isSemFiltMode', 'openFilter'],
-      'semFilters 的读取点必须只有三处（引擎闸门 / 判据函数 / 面板选项），实际：' + readers.join(','));
+    assert.deepEqual(readersA.sort(), EXPECTED,
+      'semFilters 的提及点必须恰为 4 个函数（实际：' + readersA.join(', ') +
+      '）—— 多出第五处即说明又出现了一份判据或新的读取点');
+
+    /* 方法 B（位置归属，**不依赖**函数体提取成功）：把每一处 semFilters 归属到它前面最近的
+       `function NAME(` 声明，再核对归属集合与总次数。这样即便某个函数体提取被字符串花括号截断、
+       方法 A 漏看，本方法仍能定位到越界的那一处。 */
+    const declPos = [];
+    const declPosRe = /function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+    let pm;
+    while ((pm = declPosRe.exec(plain)) !== null) declPos.push({ name: pm[1], at: pm.index });
+    const owners = [];
+    let idx = plain.indexOf('semFilters');
+    while (idx >= 0) {
+      const owner = declPos.filter(function (d) { return d.at < idx; }).pop();
+      owners.push(owner ? owner.name : '<模块级/函数外>');
+      idx = plain.indexOf('semFilters', idx + 1);
+    }
+    assert.equal(owners.length, 6,
+      '去注释后 semFilters 应恰出现 6 次（isSemFiltMode 内 3 次 + filterRows/openFilter/renderOrderTable 各 1 次），实际 ' +
+      owners.length + ' 次：' + owners.join(', '));
+    assert.deepEqual(Array.from(new Set(owners)).sort(), EXPECTED,
+      'semFilters 的归属函数集合必须恰为 4 个（位置归属扫描），实际：' + Array.from(new Set(owners)).join(', '));
+    assert.equal(owners.filter(function (n) { return n === 'isSemFiltMode'; }).length, 3,
+      'isSemFiltMode 内应恰有 3 次 semFilters 提及（判据本体）');
+    assert.equal(owners.indexOf('<模块级/函数外>'), -1,
+      '不得有 semFilters 出现在任何函数之外（模块级）');
+
     /* filterBar 的薄别名必须仍存在（保留 chip 侧的既有调用形态；逻辑零复制） */
     assert.ok(fnSrc(INDEX_SRC, 'filterBar').indexOf('const semModeOf=function(k,mode){return isSemFiltMode(m,k,mode);}') >= 0,
       'filterBar 的 semModeOf 必须是委托 isSemFiltMode 的薄别名（不得重新实现判定）');
