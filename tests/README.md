@@ -60,6 +60,7 @@ tests/
 ├── import.idempotent.test.js  金蝶导入：幂等（重复导入不增生）/ 决策分支 / 导入口径（.130：已交付不落库、不写 directDelivered）
 ├── parts.158.test.js          零部件数据 / 零部件台账（结余单源 / 编码唯一 / 入库整批 + 重入锁 / 批次归属 / 顺序键 / 静态守卫）
 ├── parts.159.test.js          .159 口径收紧（入库正整数 / 上下限禁负 / 禁静默纠正 / 整批性）
+├── invfilt.161.test.js        .161 库存「结余进度」语义筛选（红/黄档 · 积压灰档 · 引擎顺序 · 面板 data-noval · chip）
 ├── qa.parts-ledger.independent.test.js  零部件独立验证（QA 侧 53 条：口径 / 真实 DB.tx 双击 / 在途重开自愈 / 变异注入基础设施 / 九锚点）
 ├── qa.parts-ledger.validate.159.test.js  .159 独立验证（QA 侧 39 条：整数边界 / 整批性 / 存量不动 / 4 处变异注入）
 ├── server.tx.test.js          /api/tx 原子性、回滚、权限（服务端）
@@ -72,7 +73,7 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test tests/*.test.js` → **907 tests / 905 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-14.160` 实测；`.159` 时为 895/893，新增 `tests/invlevel.160.test.js` 12 条）。
+> **当前规模**：`node --test tests/*.test.js` → **926 tests / 924 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-20.161` 实测；`.160` 时为 907/905，新增 `tests/invfilt.161.test.js` 19 条）。
 > ⚠ 本条数字**只在收尾时手写更新**（变化频繁，不做断言），跑回归请用**显式文件列表**，勿用 `node --test tests/` 目录形式（会扫入 `_diag/before*` 造成假失败）。
 >
 > **三个「黄金样例」文件的存在理由**（不是凑覆盖率）：
