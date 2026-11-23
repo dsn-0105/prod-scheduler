@@ -9113,7 +9113,11 @@ bootstrap();
 
    ★ 用 var 而不用 const：本文件是单文件全局作用域，若将来有人在别处也声明 var SYSTEMS
      只是覆盖（可察觉、可调试）；用 const 重复声明会抛 SyntaxError，后果是整页白屏。
-   ★ 本块内**严禁**出现主脚本末尾那个自动执行调用（harness 靠「含该调用的最长块」定位主脚本）。 */
+   ★ 本块内**严禁**出现主脚本末尾那个自动执行调用（harness 靠「含该调用的最长块」定位主脚本）。
+   ★★ 部署前提（改动前必读）：质量系统**必须与生产系统同域同端口**部署 —— nginx 同域
+      不同 location（`/` 与 `/quality/`）。原因：免登录靠的是 sessionStorage 同源共享，
+      改成独立子域或独立端口后 sessionStorage 不再共享 ⇒ 免登录失效、质量页拿不到 token，
+      直接破坏「只登录一次」这条硬需求。详见设计 §9.3 与 deploy-qa.sh 的 nginx 片段。 */
 var SYSTEMS=[
   {key:'prod',name:'生产排单系统',url:'/',icon:'house'},
   {key:'qa',name:'质量系统',url:'/quality/',icon:'shield'}
