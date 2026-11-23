@@ -1,0 +1,122 @@
+%% 质量系统模块 · 关键调用流程（时序）
+%% 生成：2026-11-23 · 架构师 高见远
+%% 对应文档：docs/质量模块-设计-2026-11-23.md §4
+
+sequenceDiagram
+    autonumber
+    participant U as 用户浏览器
+    participant QA as quality/index.html<br/>qa-core.js + qa-app.js
+    participant NG as nginx :80
+    participant QS as qa-server :3001
+    participant PS as prod-server :3000
+    participant F as data-qa.json
+
+    Note over QA: ── 场景 1：首次访问 / 恢复登录态 ──
+    U->>NG: GET /quality/
+    NG-->>U: 200 quality/index.html
+    QA->>QA: token = sessionStorage['wb_cb_prod_token']
+    alt token 为空
+        QA->>QA: showLogin() 渲染登录卡片（不请求接口）
+    else token 非空
+        QA->>NG: GET /api/qa/me  (Authorization: Bearer)
+        NG->>QS: proxy_pass 127.0.0.1:3001
+        alt 缓存命中且未过期（≤60s）
+            QS-->>QA: 200 {ok,user,canWrite}
+        else 缓存 miss
+            QS->>PS: GET /api/me  (Authorization 原样转发)
+            alt 200
+                PS-->>QS: 200 publicUser{username,name,role,perms}
+                QS->>QS: 提炼白名单字段入缓存 (TTL 60s, 上限 500)
+                QS-->>QA: 200 {ok,user,canWrite}
+            else 401 / 403
+                PS-->>QS: 401
+                QS->>QS: cache.delete(token)
+                QS-->>QA: 401
+                QA->>QA: 清 sessionStorage → showLogin()
+            else 超时 / 连不上
+                QS-->>QA: 503 + Retry-After: 3  (fail-closed)
+                QA->>QA: 顶部提示 + setTimeout(boot, 3000)
+            end
+        end
+        QA->>QA: canWrite=false → 渲染只读提示条（不可关闭）
+    end
+
+    Note over QA: ── 场景 2：登录（同源复用生产登录） ──
+    U->>QA: 输入账号密码 + 点登录
+    QA->>NG: POST /api/login {username,password}
+    NG->>PS: proxy_pass 127.0.0.1:3000
+    PS-->>QA: 200 {token, username, name, role, perms, mustChangePwd}
+    QA->>QA: sessionStorage.setItem('wb_cb_prod_token', token)
+    QA->>QA: mustChangePwd===true → setTimeout(alert, 300)
+    QA->>QA: boot() → 走场景 1 的非空分支
+
+    Note over QA: ── 场景 3：新增异常记录（含 409 静默重试） ──
+    U->>QA: 点「新增」
+    QA->>NG: GET /api/qa/next-no
+    NG->>QS: proxy_pass 3001
+    QS->>QS: nextQaNo(QA_DATA.qaLogs, now)  ← 日期段取「发号当日」
+    QS-->>QA: 200 {no:'YC-20261123-00004'}
+    QA->>QA: openAddModal({date: todayStr(), no}) 编号 input readonly + 灰底
+    U->>QA: 填日期 + 点保存
+    QA->>QA: 前端校验 isValidDate(date)
+    QA->>NG: POST /api/qa/exceptions {date, no}
+    NG->>QS: proxy_pass 3001
+    QS->>QS: ① invalidate(token); verify(token)  ← 写操作强制穿透缓存
+    QS->>QS: ② canWrite? 否则 403
+    QS->>QS: ③ enqueueWrite(() => {  ← 写串行化队列（防 readBody 异步丢更新）
+    QS->>QS:      snapshot = clone(QA_DATA)
+    QS->>QS:      r = applyCreate(doc, body, user, now)
+    alt 编号唯一性终检通过
+        QS->>QS: revs.qaLogs += 1
+        QS->>F: writeAtomic: writeFileSync(file+'.tmp') → renameSync  (原子替换)
+        F-->>QS: ok
+        QS-->>QA: 201 {ok, rev, record}
+        QA->>QA: closeModal(); 清空选中; page=1; 重新 GET 列表; 新行高亮 1.5s
+    else 撞号
+        QS->>QS: 回滚内存快照
+        QS-->>QA: 409 {conflict:true, suggest:'YC-...-00005'}
+        QA->>QA: 静默用 suggest 替换 no，重提交一次（用户无感）
+    else 落盘失败
+        QS->>QS: 回滚内存快照
+        QS-->>QA: 500 {error:'保存失败：...'}
+        QA->>QA: alert + 不关闭弹窗（保数据）
+    end
+    QS->>QS: })
+
+    Note over QA: ── 场景 4：编辑（单条） ──
+    U->>QA: 勾选 1 行 → 点「编辑」
+    alt 已选 0 条
+        QA->>U: alert('请先在左侧勾选要编辑的记录')
+    else 已选 > 1 条
+        QA->>U: alert('「编辑」仅支持选中单条记录，当前已选 N 条。请只勾选一条再操作。')
+    else 已选 1 条
+        QA->>QA: openEditModal(record)  编号 readonly，日期取原值
+        U->>QA: 改日期 + 保存
+        QA->>NG: PUT /api/qa/exceptions/:id {date}
+        NG->>QS: proxy_pass 3001
+        QS->>QS: invalidate+verify → canWrite → enqueueWrite → applyUpdate
+        alt id 不存在
+            QS-->>QA: 404 {error:'记录不存在'}
+        else body.no ≠ 原值
+            QS-->>QA: 400 {error:'编号不可修改'}
+        else ok
+            QS->>F: writeAtomic 原子替换
+            QS-->>QA: 200 {ok, rev, record}
+            QA->>QA: closeModal(); 清空选中; 就地更新该行（不整表重绘）
+        end
+    end
+
+    Note over U,QA: ── 场景 5：系统切换（同标签页，登录态无感延续） ──
+    U->>QA: 点击标题 ▾ → toggleSysMenu(ev)
+    QA->>QA: ev.stopPropagation(); menu.classList.add('show'); renderSysMenu()
+    Note right of QA: 折叠态：<svg> 单击即触发；面板 left:calc(100%+6px) 从 56px 侧边栏右侧浮出<br/>（.sidebar 无 overflow ⇒ absolute 可逃逸，无需 fixed）
+    alt 点「质量系统」
+        U->>QA: 点击面板项
+        QA->>QA: closeSysMenu()
+        QA->>NG: location.href = '/quality/'  ← 同标签页（禁 window.open）
+        Note right of QA: sessionStorage 同源共享 ⇒ 生产会话在 /quality/ 直接可用
+    else 点当前项「生产排单系统 ✓」
+        QA->>QA: closeSysMenu()（不跳转、不刷新）
+    else 点面板外 / ESC
+        QA->>QA: closeSysMenu()
+    end

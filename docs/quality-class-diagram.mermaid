@@ -1,0 +1,148 @@
+%% 质量系统模块 · 类图（数据模型 + 服务）
+%% 生成：2026-11-23 · 架构师 高见远
+%% 对应文档：docs/质量模块-设计-2026-11-23.md §3.1
+
+classDiagram
+    direction LR
+
+    class QaRecord {
+        +string id
+        +string no
+        +string date
+        +string createdBy
+        +string createdAt
+        +string updatedBy
+        +string updatedAt
+    }
+
+    class QaDoc {
+        +string version
+        +RevMap revs
+        +QaRecord[] qaLogs
+    }
+
+    class RevMap {
+        +number qaLogs
+    }
+
+    class PublicUser {
+        +string username
+        +string name
+        +string role
+        +Perms perms
+        +boolean mustChangePwd
+    }
+
+    class Perms {
+        +boolean qa
+        +Acts acts
+    }
+
+    class Acts {
+        +boolean qaDel
+    }
+
+    class QaCore {
+        <<module, 纯函数>>
+        +string NO_PREFIX$
+        +number DEFAULT_PAGE_SIZE$
+        +todayStr(now) string
+        +buildNo(dateStr, seq) string
+        +nextQaNo(list, now) string
+        +isValidNo(s) boolean
+        +isValidDate(s) boolean
+        +sortRecords(list, key, dir) QaRecord[]
+        +paginate(list, page, size) PageResult
+        +buildCsv(records, columns) string
+    }
+
+    class PageResult {
+        +QaRecord[] rows
+        +number page
+        +number pages
+        +number total
+    }
+
+    class QaStore {
+        <<module, fs/now/rand 注入>>
+        +string TABLE_KEY$
+        +string[] PROTECTED_KEYS$
+        +makeId(now, rand) string
+        +validateDoc(obj) void
+        +loadFromFile(file, fs) QaDoc
+        +initFile(file, fs) object
+        +applyCreate(doc, body, user, now, rand) Result
+        +applyUpdate(doc, id, body, user, now) Result
+        +writeAtomic(file, doc, fs) void
+    }
+
+    class Result {
+        +number code
+        +any body
+        +QaDoc doc
+    }
+
+    class QaAuth {
+        <<module, httpGet 注入>>
+        +createVerifier(opts) Verifier
+    }
+
+    class Verifier {
+        +verify(token) Promise~AuthResult~
+        +invalidate(token) void
+        +stats() Stats
+    }
+
+    class AuthResult {
+        +string status
+        +PublicUser user
+    }
+
+    class Stats {
+        +number size
+        +number hits
+        +number misses
+    }
+
+    class QaServer {
+        <<module, HTTP 入口>>
+        +handleRequest(req, res) void
+        +createServer() Server
+        +enqueueWrite(fn) Promise
+        +canWrite(user) boolean
+        +main() void
+    }
+
+    class QaApp {
+        <<browser only>>
+        +boot() void
+        +apiQa(path, opts) Promise
+        +doLogin() void
+        +logout() void
+        +renderNav() void
+        +renderExceptions() void
+        +toggleSelAll() void
+        +updateSelUI() void
+        +openAddModal() void
+        +openEditModal() void
+        +saveModal() void
+        +toggleSysMenu(ev) void
+        +closeSysMenu() void
+    }
+
+    QaDoc "1" *-- "1" RevMap : revs
+    QaDoc "1" *-- "0..*" QaRecord : qaLogs
+    PublicUser "1" *-- "1" Perms : perms
+    Perms "1" *-- "1" Acts : acts
+
+    QaStore ..> QaDoc : 读 / 写
+    QaStore ..> QaCore : nextQaNo()
+    QaServer *-- Verifier : 持有单例
+    QaServer ..> QaStore : 调用
+    QaServer ..> QaCore : 调用
+    QaApp ..> QaCore : 调用（编号预生成 / 排序 / 分页）
+    Verifier ..> PublicUser : 产出
+    QaStore ..> Result : 产出
+    QaCore ..> PageResult : 产出
+    QaServer ..> PublicUser : canWrite() 入参
+    Verifier ..> Stats : stats()
