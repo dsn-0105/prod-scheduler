@@ -1,27 +1,25 @@
 'use strict';
 /* ================================================================
    tests/qa.quality-module.independent.test.js
-   —— QA 独立验收（.163 质量系统模块）· 补「工程师未覆盖」的两类守卫
+   —— QA 独立验收（.163 质量系统模块）
    ================================================================
-   本文件只做三件事，全部来自**实测发现**，不复述任何人的说法：
+   本文件只做三类事，全部来自**实测发现**，不复述任何人的说法：
 
-   §A 基线「防对消」守卫（补工程师缺的那一条）
-      T05 把 4 个用例的参考系从 build.PREV 改成固定历史修订 revOfBuild('2026-11-20.161')。
-      他给 PREV 加了「基线不得等于 HEAD / 两版 md5 必须不同 / 基线必须自证水印」三条防对消，
-      **却完全没有给新的 B161 基线加同类守卫** —— 一旦 .161 解析不到或解析错，
-      比对就会自我对消、断言退化为恒真。本节把这三条补齐。
-      同时**正向证明这次改动是「恢复判别力」而非「削弱断言」**：
-       .162 的 thCol 与当前**逐字相同** ⇒ 原来拿 PREV 当参考系必然失效；.161 才是有差异的那一版。
+   §A/§B  基线「防对消」守卫 + 变异判别力
+      T05 把 4 个用例的参考系从 build.PREV 改成固定历史修订 .161。
+      他给 PREV 加了 3 条防对消守卫（不得等于 HEAD / md5 不同 / 水印自证），
+      **新引入的 B161 基线一条都没有** —— 一旦 .161 解析错，比对会自我对消、断言恒真而不报错。
+      本节补齐这三条，并正向证明「改参考系是恢复判别力，不是削弱断言」：
+        .162 的 thCol 与当前**逐字相同** ⇒ 原写法必然失效；.161 才是有差异的那一版。
 
-   §B 变异判别力（独立复现 K11(b) 的语义，不看他的断言）
-      「把当前 thCol 整段换回 X 版」这个变异：
-        · X = .161 ⇒ 文本真的变了（变异生效，可判别）
-        · X = .162 ⇒ 文本没变（变异是 no-op，参考系无判别力）
-      这一对就是「参考系必须固定在 .161」的直接证据。
+   §C     渲染契约：ico() 产出的 svg 必须自带固有尺寸（totality 不变量）
+   §D     渲染契约：#sysMenu 不得是有 span 隐藏规则的容器（h1 / .sub）的后代，
+          且必须是触发器的兄弟（与生产页同构）
 
-   §C/§D 质量页渲染契约守卫（真实浏览器实测发现的 2 个缺陷）
-      自动化断言只查 DOM 文本与结构，查不出「渲染出来是 956px 大的图标」，
-      故这里用**静态契约**把两条渲染不变量固定住。
+   §C/§D 的由来：这两个缺陷漏过了 1135 条测试，因为既有断言只查 DOM 文本与结构、
+   从不查渲染尺寸与可见性。§C 用「totality 不变量」把这一类问题变成**不可能发生**
+   （每个 svg 都自带宽高 ⇒ 任何漏加 CSS 约束的新容器都不会再爆）；
+   §D 用「祖先链结构断言」把 CSS 选择器串味这一类变成可查。
 
    断言标记：【契约】= 需求/设计规定的行为，不符即产品缺陷。
    ================================================================ */
@@ -41,13 +39,21 @@ const ROOT = path.resolve(__dirname, '..');
 const md5 = function (s) { return crypto.createHash('md5').update(String(s), 'utf8').digest('hex'); };
 const countOcc = function (h, n) { return String(h).split(String(n)).length - 1; };
 const readRel = function (rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); };
+/* 行尾归一化：`git show` 取出的 blob 恒为 LF，而工作树在 core.autocrlf=true 的机器上
+   可能是 CRLF。本文件比较的是**代码内容**而非行尾，故两侧一律归一化，
+   避免换个 checkout 就假失败（行尾纪律由 tests/qa.ops-eol.test.js 专管）。 */
+const normEol = function (s) { return String(s).replace(/\r\n/g, '\n'); };
 
 function git(args) {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 const gitShow = function (rev, rel) { return git(['show', rev + ':' + rel]); };
 
-/** 按提交主题反查修订（主题必须以 "build <ver>" 开头，防前缀误配） */
+/**
+ * 按提交主题反查修订（主题必须以 "build <ver>" 开头，防前缀误配）。
+ * @param {string} ver 版本号
+ * @returns {string} git 修订号
+ */
 function revOfBuild(ver) {
   const out = git(['log', '--format=%H%x09%s', '-n', '600']);
   const revs = out.split('\n').filter(function (l) {
@@ -91,6 +97,60 @@ function extractFn(src, name) {
   return out;
 }
 
+/**
+ * 去掉 HTML 注释、<style>、<script> 内容，只留可解析的标签结构。
+ * 必须先剥：注释里会出现 `<h1>`、CSS/JS 里会出现标记字符串，都会污染标签栈。
+ * @param {string} html 原始文本
+ * @returns {string} 纯结构文本
+ */
+function structuralHtml(html) {
+  return String(html)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '');
+}
+
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+/**
+ * 求某个带指定属性的元素在文档中的**祖先链**（由外到内）。
+ * 只做结构解析、不依赖 DOM；不闭合标签按标准算法弹栈，噪声只会让链更长不会更短，
+ * 因此「祖先链里不得出现 X」这类断言是保守的（不会漏报）。
+ * @param {string} html 原始 HTML
+ * @param {string} marker 定位标记，如 'id="sysMenu"'
+ * @returns {Array<{name: string, attrs: string}>} 祖先链
+ */
+function ancestorChainOf(html, marker) {
+  const src = structuralHtml(html);
+  const pos = src.indexOf(marker);
+  assert.ok(pos >= 0, '未能定位标记 ' + marker + '（结构已变，请同步本文件）');
+  const stack = [];
+  const tagRe = /<(\/?)([a-zA-Z][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+  let m;
+  while ((m = tagRe.exec(src)) !== null && m.index < pos) {
+    /* 若这个标签自身跨过了 marker 位置，它就是**目标元素本身**，不能算进祖先链（否则
+       触发器 #sysSwitchBtn 所在的那个 <h1> 会被误当成它自己的祖先）。 */
+    if (m.index + m[0].length > pos) break;
+    const closing = m[1] === '/';
+    const name = m[2].toLowerCase();
+    const selfClose = m[4] === '/';
+    if (closing) {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].name === name) { stack.length = i; break; }
+      }
+    } else if (!selfClose && !VOID_TAGS.has(name)) {
+      stack.push({ name: name, attrs: m[3] || '' });
+    }
+  }
+  return stack;
+}
+
+/** 祖先链签名（用于"同一父容器"判定） */
+function chainSig(chain) {
+  return chain.map(function (e) { return e.name + '|' + e.attrs.replace(/\s+/g, ' ').trim(); }).join('/');
+}
+
 /* 四个坐标：当前工作树 / 本版发布修订 / 上一版 / 上上一版（.161 是不可变历史，写死反而更稳） */
 const INDEX_SRC = readRel('index.html');
 const HEAD = git(['rev-parse', 'HEAD']).trim();
@@ -118,28 +178,27 @@ test('A2【契约】固定历史基线 .161 用水印自证（取错修订则全
 });
 
 test('A3【契约·关键】.162 的 thCol 与当前**逐字相同** ⇒ 原「拿 PREV 当参考系」的写法必然失效（改动是必要的）', function () {
-  const now = extractFn(INDEX_SRC, 'thCol');
-  const b162 = extractFn(B162_SRC, 'thCol');
-  const b161 = extractFn(B161_SRC, 'thCol');
+  const now = extractFn(normEol(INDEX_SRC), 'thCol');
+  const b162 = extractFn(normEol(B162_SRC), 'thCol');
+  const b161 = extractFn(normEol(B161_SRC), 'thCol');
 
   /* 自证提取器有效（否则"相同"可能是两边都提取失败了） */
   assert.ok(now.indexOf('isSemFiltMode(m,col.key,f.mode)') >= 0, '当前 thCol 必须含语义筛选判据子句');
   assert.ok(now.length > 200 && b161.length > 200, '两侧 thCol 提取结果都必须足够长');
 
   assert.equal(b162, now,
-    '.162 的 thCol 与当前必须逐字相同 —— 这正是「原断言 notEqual(当前, PREV) 会恒红」的根因；'
+    '.162 的 thCol 与当前必须逐字相同（已归一化行尾） —— 这正是「原断言 notEqual(当前, PREV) 会恒红」的根因；'
     + '工程师把参考系改到 .161 是**必要**的，不改则用例必然失效');
   assert.notEqual(b161, now,
     '.161 的 thCol 必须与当前不同（它是「漏斗不亮」的那一版），否则新参考系没有判别力');
 });
 
 test('A4【契约】新参考系的语义正确：.161 无 isSemFiltMode 子句、当前有（不是随便找了版不同的）', function () {
-  const now = extractFn(INDEX_SRC, 'thCol');
-  const b161 = extractFn(B161_SRC, 'thCol');
+  const now = extractFn(normEol(INDEX_SRC), 'thCol');
+  const b161 = extractFn(normEol(B161_SRC), 'thCol');
   assert.equal(b161.indexOf('isSemFiltMode(m,col.key,f.mode)'), -1,
     '.161 的 thCol 必须**不含** isSemFiltMode 判据子句（这正是"回退它 ⇒ §C1 必须变红"的前提）');
-  assert.ok(now.indexOf('isSemFiltMode(m,col.key,f.mode)') >= 0,
-    '当前 thCol 必须含该子句');
+  assert.ok(now.indexOf('isSemFiltMode(m,col.key,f.mode)') >= 0, '当前 thCol 必须含该子句');
 });
 
 /* ================================================================
@@ -147,109 +206,131 @@ test('A4【契约】新参考系的语义正确：.161 无 isSemFiltMode 子句�
 ================================================================ */
 
 test('B1【契约·关键】变异「回退到 .161 的 thCol」必须真的改变文本（该参考系可判别）', function () {
-  const now = extractFn(INDEX_SRC, 'thCol');
-  const b161 = extractFn(B161_SRC, 'thCol');
-  assert.equal(countOcc(INDEX_SRC, now), 1, 'thCol 原文必须恰命中 1 处（否则变异会撒到别处）');
-  const mutated = INDEX_SRC.replace(now, b161);
-  assert.notEqual(mutated, INDEX_SRC, '回退到 .161 后文本必须发生变化（变异生效）');
+  const src = normEol(INDEX_SRC);
+  const now = extractFn(src, 'thCol');
+  const b161 = extractFn(normEol(B161_SRC), 'thCol');
+  assert.equal(countOcc(src, now), 1, 'thCol 原文必须恰命中 1 处（否则变异会撒到别处）');
+  const mutated = src.replace(now, b161);
+  assert.notEqual(mutated, src, '回退到 .161 后文本必须发生变化（变异生效）');
   assert.equal(countOcc(mutated, 'isSemFiltMode(m,col.key,f.mode)'), 0,
     '回退后 isSemFiltMode 判据子句必须消失（这才是"增量被整段删掉"）');
 });
 
 test('B2【契约·关键】变异「回退到 .162 的 thCol」是 no-op ⇒ 证明 PREV 参考系没有判别力', function () {
-  const now = extractFn(INDEX_SRC, 'thCol');
-  const b162 = extractFn(B162_SRC, 'thCol');
-  /* 这正是工程师在 K11(b) 里踩的坑：用 PREV(=.162) 时 anchor === repl，
-     变异注入的"必须真的变化"守卫会立刻报「变异注入未生效」，用例变成不可能通过。 */
+  const src = normEol(INDEX_SRC);
+  const now = extractFn(src, 'thCol');
+  const b162 = extractFn(normEol(B162_SRC), 'thCol');
   assert.equal(now, b162, '回退到 .162 与当前完全相同 ⇒ 变异是 no-op');
-  const mutated = INDEX_SRC.replace(now, b162);
-  assert.equal(mutated, INDEX_SRC,
+  const mutated = src.replace(now, b162);
+  assert.equal(mutated, src,
     '这正是"no-op 变异"：替换前后一模一样 —— 若参考系仍用 PREV，本类防退化用例必然失效');
 });
 
 /* ================================================================
-   §C 质量页渲染契约：卡片标题图标必须有尺寸约束
-   （真实浏览器实测：无约束时该 svg 渲染成 956×956，把整页撑坏）
+   §C 渲染契约：ico() 产出的 svg 必须自带固有尺寸（totality 不变量）
+   —— 修 P0（图标 956×956 把整页撑坏）的根因防线
 ================================================================ */
 
-test('C1【契约】质量页 .card-title 内的 svg 必须有尺寸约束', function () {
-  const qHtml = readRel('quality/index.html');
-  const qApp = readRel('quality/qa-app.js');
+/**
+ * 取出 ico() 返回的那个 <svg ...> 开标签的属性串。
+ * ⚠ 必须先剥掉 stroke-width：否则 /width\s*=/ 会被 `stroke-width="2"` 命中，
+ *   断言退化成恒真（本文件第一版就踩了这个坑，实测"永远绿"）。
+ * @param {string} qApp quality/qa-app.js 源码
+ * @returns {string} <svg> 开标签的属性部分
+ */
+function icoSvgAttrs(qApp) {
+  const body = extractFn(qApp, 'ico').replace(/stroke-width\s*=\s*["'][^"']*["']/g, '');
+  const m = /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>/.exec(body);
+  assert.ok(m, 'ico() 必须直接返回 <svg ...> 字面量（结构已变，请同步本文件）');
+  return m[1];
+}
 
-  /* 允许两种修法（断言"不变量"而不是某一种实现）：
-     ① CSS 里加 .card-title svg{width:..;height:..}
-     ② ico() 产出的 svg 自带 width/height 或行内 style */
-  const cssRule = /\.card-title\s+svg\s*\{[^}]*width\s*:\s*\d+px[^}]*height\s*:\s*\d+px/i.test(qHtml)
-    || /\.card-title\s+svg\s*\{[^}]*height\s*:\s*\d+px[^}]*width\s*:\s*\d+px/i.test(qHtml);
-  /* ⚠ 必须先剥掉 stroke-width：否则 /width\s*=/ 会被 `stroke-width="2"` 命中，
-     本断言退化成恒真（本文件第一版就踩了这个坑，实测"永远绿"）。 */
-  const icoFn = extractFn(qApp, 'ico').replace(/stroke-width\s*=\s*["'][^"']*["']/g, '');
-  /* 只认「width=数字」或行内 style 里的 width:，且不得是 stroke-width（已剥离） */
-  const inlineSized = /(?:^|[^-\w])width\s*=\s*["']?\d/.test(icoFn)
-    || /style\s*=\s*["'][^"']*(?:^|[^-\w])width\s*:/.test(icoFn);
-
-  assert.ok(cssRule || inlineSized,
-    '质量页 .card-title 的 svg 必须受尺寸约束：无约束时 SVG 按容器 100% 撑开'
-    + '（实测渲染成 956×956px，卡片高 1841px，工具栏被推到首屏外）。'
-    + '请在 quality/index.html 加 `.card-title svg{width:18px;height:18px;flex-shrink:0}`，'
-    + '或让 ico() 产出带 width/height 的 svg。');
+test('C1【契约·根因】ico() 产出的 <svg> 必须自带 width 与 height 固有尺寸', function () {
+  const attrs = icoSvgAttrs(readRel('quality/qa-app.js'));
+  const w = /(?:^|\s)width\s*=\s*["']?\d/.exec(attrs);
+  const h = /(?:^|\s)height\s*=\s*["']?\d/.exec(attrs);
+  assert.ok(w, 'ico() 的 <svg> 必须带 width 属性：没有固有尺寸的 svg 会按容器 100% 撑开'
+    + '（实测曾渲染成 956×956，把 .card 顶到 1841px、工具栏推到首屏外）。'
+    + '这是在**产出侧**一次性封死整类问题：任何漏加 CSS 约束的新容器都不会再爆。');
+  assert.ok(h, 'ico() 的 <svg> 必须带 height 属性（只写 width 时高度仍会按宽高比/容器撑开）');
+  /* 取值合理性：0 或负数等于没有尺寸 */
+  const wn = Number(/(?:^|\s)width\s*=\s*["']?(\d+)/.exec(attrs)[1]);
+  const hn = Number(/(?:^|\s)height\s*=\s*["']?(\d+)/.exec(attrs)[1]);
+  assert.ok(wn >= 12 && hn >= 12 && wn <= 64 && hn <= 64,
+    'svg 固有尺寸必须在 [12,64] 内（实际 ' + wn + '×' + hn + '）；过大同样会撑坏布局，过小不可读');
 });
 
-test('C2【契约】质量页里每个「无尺寸约束的 svg 使用点」都必须有对应 CSS 规则', function () {
+test('C2【契约·纵深防御】.card-title svg 必须有一条 CSS 尺寸规则', function () {
   const qHtml = readRel('quality/index.html');
-  const qApp = readRel('quality/qa-app.js');
-  /* 只对 ico() 产出的 svg 做检查：它在哪些容器里被用，哪些容器就有 svg 尺寸规则 */
-  const containers = ['card-title', 'btn', 'nav-item', 'sys-menu-item', 'empty'];
-  const used = containers.filter(function (c) {
-    return new RegExp('[\'"]' + c + '[\'"]').test(qApp) || new RegExp('class="' + c + '"').test(qApp);
-  });
-  const missing = used.filter(function (c) {
-    if (c === 'sys-menu-item') return !/\.sys-menu-item\s+svg\s*\{[^}]*width/.test(qHtml);
-    if (c === 'card-title') {
-      /* card-title 允许走 ico() 行内尺寸那条路，由 C1 兜底；这里只在两边都没有时报错 */
-      const css = /\.card-title\s+svg\s*\{[^}]*width\s*:\s*\d+px/i.test(qHtml);
-      const icoBare = extractFn(qApp, 'ico').replace(/stroke-width\s*=\s*["'][^"']*["']/g, '');
-      const inlineSized = /(?:^|[^-\w])width\s*=\s*["']?\d/.test(icoBare)
-        || /style\s*=\s*["'][^"']*(?:^|[^-\w])width\s*:/.test(icoBare);
-      return !(css || inlineSized);
-    }
-    return !new RegExp('\\.' + c + '\\s+svg\\s*\\{[^}]*width').test(qHtml);
-  });
-  assert.deepStrictEqual(missing, [],
-    '以下容器内会渲染 ico() 产出的无尺寸 svg，但缺少对应的 svg 尺寸规则：' + missing.join(', '));
+  const ok = /\.card-title\s+svg\s*\{[^}]*width\s*:\s*\d+px[^}]*\}/i.test(qHtml)
+    || /\.card-title\s+svg\s*\{[^}]*height\s*:\s*\d+px[^}]*\}/i.test(qHtml);
+  assert.ok(ok, '即使 ico() 已自带尺寸，`.card-title svg` 仍应有一条 CSS 规则显式钉住：'
+    + 'presentation attribute 的优先级最低，任何后续 CSS 都能覆盖它；'
+    + '显式规则让"卡片标题图标就是这么大"成为不可争的事实，而不是"取决于 ico 的实现"。');
 });
 
 /* ================================================================
-   §D 质量页折叠态系统切换面板：不得隐藏文字、不得压在侧边栏上
-   （真实浏览器实测：面板里一个字都没有）
+   §D 渲染契约：折叠态不得隐藏面板文字
+   —— 修 P1（折叠后下拉一个字都没有）的结构防线
 ================================================================ */
 
-test('D1【契约】#sysMenu 不得嵌在系统切换的 `h1` 内（折叠态 h1 span{display:none} 会吞掉面板文字）', function () {
+test('D1【契约】#sysMenu 的祖先链里不得出现 h1 或 .sub（折叠态会把它们的 span 一起隐藏）', function () {
   const qHtml = readRel('quality/index.html');
-  const btnIdx = qHtml.indexOf('id="sysSwitchBtn"');
-  assert.ok(btnIdx >= 0, '未能定位质量页系统切换触发器 #sysSwitchBtn（结构已变，请同步本文件）');
-  const h1Open = qHtml.lastIndexOf('<h1', btnIdx);
-  const h1Close = qHtml.indexOf('</h1>', btnIdx);
-  assert.ok(h1Open >= 0 && h1Close > h1Open, '未能定位触发器所在的 <h1> 边界（结构已变，请同步本文件）');
-  const h1Block = qHtml.slice(h1Open, h1Close + 5);
+  const chain = ancestorChainOf(qHtml, 'id="sysMenu"');
+  const names = chain.map(function (e) {
+    const cls = /(?:^|\s)class\s*=\s*"([^"]*)"/.exec(e.attrs);
+    return e.name + (cls ? '.' + cls[1].trim().split(/\s+/).join('.') : '');
+  });
 
-  assert.equal(h1Block.indexOf('id="sysMenu"'), -1,
-    '#sysMenu 必须移出 <h1>：折叠态规则 `.sidebar.collapsed .sidebar-header h1 span{display:none}`'
-    + ' 会把面板里所有 <span>（系统名与 ✓）一并隐藏，实测面板变成"只有两个图标、一个字都没有"。'
-    + '生产系统把 #sysMenu 放在 h1 的兄弟位置，所以生产页没有这个问题。');
-  /* 正向：面板必须仍然存在，且位于该 h1 之后（= 兄弟节点，而不是被挪到别处或删掉） */
-  const menuIdx = qHtml.indexOf('id="sysMenu"');
-  assert.ok(menuIdx >= 0, '#sysMenu 必须存在（不得用删除面板的方式绕过）');
-  assert.ok(menuIdx > h1Close, '#sysMenu 必须位于触发器 <h1> 之后（作为兄弟节点）');
+  const bad = chain.filter(function (e) {
+    if (e.name === 'h1') return true;
+    const cls = /(?:^|\s)class\s*=\s*"([^"]*)"/.exec(e.attrs);
+    const list = cls ? cls[1].trim().split(/\s+/) : [];
+    return list.indexOf('sub') >= 0;
+  }).map(function (e) { return e.name; });
+
+  assert.deepStrictEqual(bad, [],
+    '#sysMenu 的祖先链里出现了 ' + JSON.stringify(bad) + '（完整链：' + names.join(' > ') + '）。'
+    + '原因：既有规则 `.sidebar.collapsed .sidebar-header h1 span{display:none}` 与 '
+    + '`.sidebar.collapsed .sidebar-header .sub{display:none}` 会在折叠态隐藏其内部**所有** span，'
+    + '面板项的系统名与 ✓ 会被一并吞掉 —— 实测面板 innerText 退化成空串，切换入口失效。'
+    + '面板必须是触发器的**兄弟**节点（与生产 index.html 同构），祖先后代关系一概不允许。');
 });
 
-test('D2【契约】折叠态面板必须向侧边栏右侧浮出（left 不得为 0）', function () {
+test('D2【契约】#sysMenu 与触发器必须是**兄弟**（同一父容器），与生产页同构', function () {
+  const qHtml = readRel('quality/index.html');
+  const menuChain = ancestorChainOf(qHtml, 'id="sysMenu"');
+  assert.ok(menuChain.length >= 1, '#sysMenu 必须有父容器');
+  const trigChain = ancestorChainOf(qHtml, 'id="sysSwitchBtn"');
+  assert.equal(chainSig(menuChain), chainSig(trigChain),
+    '#sysMenu 与触发器 #sysSwitchBtn 必须同父（兄弟关系）。实际面板父链：' + chainSig(menuChain)
+    + '；触发器父链：' + chainSig(trigChain));
+});
+
+test('D3【契约+守卫·现状】折叠态面板必须浮到侧边栏右侧（left≠0 是契约；写法 calc(100%) 是现状固定）', function () {
+  /* 分级说明（沿用项目既有标记口径）：
+       · 「left 不得为 0」= 【契约】：为 0 时面板整块压在 56px 侧边栏上、还伸出视口左边缘，
+         实测 x=-4，违反 P0-3「向右浮出、不被裁切」。
+       · 「left 必须是 calc(100%…)」= 【守卫·现状】：这是当前**已知正确**的写法。
+         换成另一种正确写法（如固定 62px）本文件会红，按提示同步即可 ——
+         此处刻意选择「宁可误红，也不放过 left:8px 这类仍然压在侧边栏上的回归」。 */
   const qHtml = readRel('quality/index.html');
   const m = /\.sidebar\.collapsed\s+\.sys-menu\s*\{([^}]*)\}/.exec(qHtml);
   assert.ok(m, '折叠态必须有 .sidebar.collapsed .sys-menu 定位规则');
   const left = /left\s*:\s*([^;}]+)/.exec(m[1]);
   assert.ok(left, '折叠态 .sys-menu 规则必须显式声明 left（不要依赖默认定位）');
   const val = left[1].trim();
-  assert.notEqual(val, '0', '折叠态面板 left 不得为 0：实测 x=-4，整块压在 56px 侧边栏上、左边缘还伸出视口 4px。'
-    + 'P0-3 要求"面板向右浮出、不被裁切"，应改为 left:calc(100% + 6px)（与生产页一致）');
+  assert.notEqual(val, '0', '折叠态面板 left 不得为 0：实测 x=-4，整块压在 56px 侧边栏上、'
+    + '左边缘还伸出视口 4px。P0-3 要求「面板向右浮出、不被裁切」，应改为 left:calc(100% + 6px)');
+  assert.ok(/calc\(\s*100%/.test(val),
+    '【守卫·现状】折叠态面板 left 应基于 100% 计算（浮到容器右侧，实测 61px ≥ 侧边栏 56px）。'
+    + '若确属有意的布局重设计，请同步本断言；不要为了让它变绿而改成 left:8px 之类的值 ——'
+    + '那样面板仍会压在侧边栏上。');
+
+  /* 生产页必须同口径（PRD 5.2「折叠态与 5.1 同规则」）—— 防止两页各自漂移 */
+  const pHtml = readRel('index.html');
+  const pm = /\.sidebar\.collapsed\s+\.sys-menu\s*\{([^}]*)\}/.exec(pHtml);
+  assert.ok(pm, '生产页也必须有折叠态 .sys-menu 规则（两页同口径）');
+  assert.ok(/calc\(\s*100%/.test(/left\s*:\s*([^;}]+)/.exec(pm[1])[1]),
+    '生产页折叠态面板同样必须浮到右侧（两页口径一致）');
 });
