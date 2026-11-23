@@ -59,9 +59,11 @@ function suffix(no) {
    V3 语法：in-process 逐块编译（等价 node --check，绕开 EBUSY 管道）
    ================================================================ */
 
-test('V3 index.html 3 个内联块 + 5 个外链模块均可编译（等价 node --check 的语法校验）', () => {
+test('V3 index.html 4 个内联块 + 5 个外链模块均可编译（等价 node --check 的语法校验）', () => {
   const blocks = extractInlineScripts(INDEX_SRC);
-  assert.equal(blocks.length, 3, 'index.html 应含 3 个内联 script 块');
+  /* 【build .163】3 → 4：质量系统 T03 按设计 §1.2.2d 在 </body> 前新增一个独立的
+     「系统切换下拉」内联块（var SYSTEMS + IIFE）。块数不是契约，契约是每块可独立编译。 */
+  assert.equal(blocks.length, 4, 'index.html 应含 4 个内联 script 块');
   const bad = [];
   blocks.forEach((b, i) => {
     try {
@@ -79,9 +81,10 @@ test('V3 index.html 3 个内联块 + 5 个外链模块均可编译（等价 node
     }
   });
   assert.deepEqual(bad, [], '不得有语法错误；实际：' + bad.join(' | '));
-  /* bootstrap() 自动执行点仍只在主块 */
+  /* bootstrap() 自动执行点仍只在主块（用块数派生期望值，避免每加一个块就要手改这里） */
   const hasBootstrap = blocks.map((b) => /(^|\n)[ \t]*bootstrap\(\)[ \t]*;/.test(b.code));
-  assert.deepEqual(hasBootstrap, [false, true, false], '主块（#1）必须含 bootstrap() 自动执行点');
+  const expectedBootstrap = blocks.map((_, i) => i === 1);
+  assert.deepEqual(hasBootstrap, expectedBootstrap, '主块（#1）必须含 bootstrap() 自动执行点，且仅此一块');
 });
 
 /* ================================================================

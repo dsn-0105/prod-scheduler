@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>生产排单与报表系统</title>
+<!-- 系统清单 SYSTEMS 见文件末尾「系统切换下拉」script 块 -->
 <style>
 :root{
   --primary:#4f46e5;--primary-light:#eef2ff;--primary-dark:#4338ca;
@@ -72,6 +73,30 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
   .content{padding:12px 12px 60px}
   .bulk-bar{top:48px}   /* 移动端顶栏(mobile-header)更矮，吸附位置上移 */
 }
+/* 【build .163】系统切换下拉（仅新增规则，未改动任何既有规则） */
+/* 定位：.sys-switch 自建定位上下文；.sys-menu 用 absolute 而非 fixed —— .sidebar 全行无 overflow
+   （绝对定位后代可逃逸 56px 折叠宽度），且移动端 .sidebar 有 transform 会成为 fixed 的包含块。 */
+.sys-switch{position:relative}
+.sys-switch-trigger{cursor:pointer;border-radius:8px;padding:2px 4px;margin:-2px -4px;transition:background .15s}
+.sys-switch-trigger:hover{background:var(--primary-light)}
+.sys-switch-caret{font-size:10px;color:var(--muted);line-height:1}
+.sys-menu{display:none;position:absolute;left:8px;top:calc(100% + 6px);
+  min-width:180px;max-width:calc(100vw - 32px);background:var(--card);
+  border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;z-index:120}
+.sys-menu.show{display:block}
+.sys-menu-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap;color:var(--text)}
+.sys-menu-item:hover{background:var(--primary-light)}
+.sys-menu-item.cur{color:var(--primary);font-weight:600}
+.sys-menu-item svg{width:16px;height:16px;flex-shrink:0}
+.sys-menu-item .ck{margin-left:auto;color:var(--green);font-weight:700}
+/* 折叠态：h1 内的 span 已被既有规则隐藏（只剩 20px 盾牌图标）⇒ 把命中区扩到 36×36 */
+.sidebar.collapsed .sys-switch-trigger{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:8px;margin:0 auto;border-radius:8px}
+.sidebar.collapsed .sys-switch-trigger:hover{background:var(--primary-light)}
+/* 折叠态：面板从 56px 侧边栏**右侧**浮出（.sys-switch 折叠态宽 = 侧边栏内容宽 56px
+   ⇒ left:calc(100%+6px) = 起点 62px，正好在栏外，不会被 56px 裁切） */
+.sidebar.collapsed .sys-menu{left:calc(100% + 6px);top:8px}
+@media(max-width:768px){.sidebar.collapsed .sys-menu{left:8px;top:calc(100% + 6px)}}
 /* components */
 .card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
 .card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
@@ -297,7 +322,12 @@ body.col-dragging{cursor:grabbing;user-select:none}
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;color:var(--primary)"><path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/></svg><span>生产排单系统</span></h1>
+      <!-- 【build .163】系统切换下拉：h1 仍是 h1（.sidebar-header h1 与折叠态规则全部继续生效），
+           原 svg 与「生产排单系统」span 逐字节保留，仅追加 ▾ 与兄弟面板 #sysMenu -->
+      <div class="sys-switch" id="sysSwitch">
+        <h1 class="sys-switch-trigger" id="sysSwitchBtn" title="切换系统" onclick="toggleSysMenu(event)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;color:var(--primary)"><path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/></svg><span>生产排单系统</span><span class="sys-switch-caret">▾</span></h1>
+        <div class="sys-menu" id="sysMenu"></div>
+      </div>
       <div class="sub">智能断路器 · 辰微</div>
     </div>
     <nav class="nav" id="nav"></nav>
@@ -7843,7 +7873,7 @@ function delTpl(i){
 /* ================================================================
    员工管理（仅管理员） + 修改密码
 ================================================================ */
-const PERM_FORMS={products:'产品主数据',parts:'零部件数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人｜.122：包装排产权限点移除｜.158：新增零部件数据权限点（零部件台账同归此点） */
+const PERM_FORMS={products:'产品主数据',parts:'零部件数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账',qa:'质量管理'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人｜.122：包装排产权限点移除｜.158：新增零部件数据权限点（零部件台账同归此点）｜【build .163】新增 qa:'质量管理'（质量系统写权限；勾选=可编辑，不勾=只读，无该键的存量员工一律只读） */
 async function loadUsers(){
   try{
     const r=await apiReq('/users');
@@ -9074,6 +9104,76 @@ bootstrap();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
 <div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-20.162</div>
+<!-- ================================================================
+     系统切换下拉（左上角标题）—— 新增系统只改下方 SYSTEMS 数组一行
+     ================================================================ -->
+<script>
+/* 【build .163】系统清单 SYSTEMS —— 新增系统只在这里加一行，其余不动。
+   与质量系统 quality/qa-app.js 里的 SYSTEMS 各自维护**同构副本**（不做跨文件共享）。
+
+   ★ 用 var 而不用 const：本文件是单文件全局作用域，若将来有人在别处也声明 var SYSTEMS
+     只是覆盖（可察觉、可调试）；用 const 重复声明会抛 SyntaxError，后果是整页白屏。
+   ★ 本块内**严禁**出现主脚本末尾那个自动执行调用（harness 靠「含该调用的最长块」定位主脚本）。 */
+var SYSTEMS=[
+  {key:'prod',name:'生产排单系统',url:'/',icon:'house'},
+  {key:'qa',name:'质量系统',url:'/quality/',icon:'shield'}
+];
+(function(){
+  var ICONS={
+    house:'<path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/>',
+    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'
+  };
+  function svgIcon(name){
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+      + 'stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||'')+'</svg>';
+  }
+  /* 本页固定是生产排单系统 ⇒ 当前项恒为 prod（质量系统在 /quality/ 里显示自己为当前项） */
+  function renderSysMenu(){
+    var el=document.getElementById('sysMenu');
+    if(!el)return;
+    el.innerHTML=SYSTEMS.map(function(s){
+      var isCur=s.key==='prod';
+      return '<div class="sys-menu-item'+(isCur?' cur':'')+'" data-sys="'+s.key+'">'
+        +svgIcon(s.icon)+'<span>'+s.name+'</span>'+(isCur?'<span class="ck">✓</span>':'')+'</div>';
+    }).join('');
+    var items=el.querySelectorAll('.sys-menu-item');
+    for(var i=0;i<items.length;i++){
+      items[i].onclick=(function(node){
+        return function(ev){pickSystem(ev,node.getAttribute('data-sys'));};
+      })(items[i]);
+    }
+  }
+  function toggleSysMenu(ev){
+    if(ev)ev.stopPropagation();   /* 防被 document 的「点外部关闭」立刻吃掉 */
+    var el=document.getElementById('sysMenu');
+    if(!el)return;
+    if(el.classList.contains('show')){closeSysMenu();return;}
+    renderSysMenu();
+    el.classList.add('show');
+  }
+  function closeSysMenu(){
+    var el=document.getElementById('sysMenu');
+    if(el)el.classList.remove('show');
+  }
+  /* 点当前系统：只关面板不刷新；点其它系统：**同标签页**跳转
+     （sessionStorage 按标签页隔离，开新窗口/新标签必然丢登录态） */
+  function pickSystem(ev,key){
+    if(ev)ev.stopPropagation();
+    closeSysMenu();
+    if(key==='prod')return;
+    for(var i=0;i<SYSTEMS.length;i++){
+      if(SYSTEMS[i].key===key){location.href=SYSTEMS[i].url;return;}
+    }
+  }
+  function initSysSwitch(){
+    renderSysMenu();
+    document.addEventListener('click',function(){closeSysMenu();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSysMenu();});
+  }
+  window.toggleSysMenu=toggleSysMenu;   /* 仅供 h1 的 onclick 调用，其余不外泄 */
+  initSysSwitch();
+})();
+</script>
 </body>
 </html>
 

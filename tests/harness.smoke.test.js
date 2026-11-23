@@ -100,9 +100,13 @@ test('沙箱：setGlobal 能改 let/const 全局（直接写 sandbox 属性会�
   assert.throws(() => app.setGlobal('DB', {}), /constant/i);
 });
 
-test('内联脚本提取：找到 3 块，主块=含 bootstrap() 的最长块', () => {
+test('内联脚本提取：找到 4 块，主块=含 bootstrap() 的最长块', () => {
   const app = createApp({ installRecorder: false });
-  assert.equal(app.inlineScripts.length, 3);
+  /* 【build .163】3 → 4：质量系统 T03 按设计 §1.2.2d 在 </body> 前**新增**一个独立的
+     「系统切换下拉」内联块（内含 var SYSTEMS + IIFE，块内不含主脚本的自动执行调用）。
+     该块追加在末尾 ⇒ 既有 0/1/2 三块的索引不变，只有「块数」这个数字变了。
+     块数本身不是契约，契约是「每块可独立编译 + 主块唯一」—— 下面继续守着。 */
+  assert.equal(app.inlineScripts.length, 4);
   app.inlineScripts.forEach((b) => {
     assert.equal(b.startLine > 0, true);
     assert.equal(b.endLine >= b.startLine, true);
@@ -110,7 +114,7 @@ test('内联脚本提取：找到 3 块，主块=含 bootstrap() 的最长块', 
   /* extractInlineScripts/findMainScript 可独立复用（收尾动作里做「逐块 node --check」） */
   const html = require('node:fs').readFileSync(require('node:path').join(ROOT, 'index.html'), 'utf8');
   const blocks = extractInlineScripts(html);
-  assert.equal(blocks.length, 3);
+  assert.equal(blocks.length, 4);
   const main = findMainScript(blocks);
   assert.equal(/(^|\n)[ \t]*bootstrap\(\)[ \t]*;/.test(main.code), true);
   assert.equal(main.code.length, Math.max.apply(null, blocks.map((b) => b.code.length)));
