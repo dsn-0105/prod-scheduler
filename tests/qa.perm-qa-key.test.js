@@ -198,6 +198,20 @@ test('员工面板两处 UI 均从 PERM_FORMS 派生（加 qa 不需要改任何
 /* ============================================================
    五、服务端口径对齐：STAFF_PERMS 不含 qa ⇒ 新建员工默认只读
    ============================================================ */
+test('员工面板：qa 行显示「质量管理」，右栏走「该表单无独立业务动作按钮」兜底', function () {
+  /* 左栏行标题取 PERM_FORMS[k]（单一来源 ⇒ 加 qa 自动出现第 9 行「质量管理」） */
+  assert.ok(/\+\s*PERM_FORMS\[k\]\s*\+/.test(INDEX_SRC), '左栏行标题必须取 PERM_FORMS[k]');
+  /* 右栏兜底文案必须在，且由 fmKey 为空触发（qa 没有 FORM_ACTS 键 ⇒ 必然走这条） */
+  assert.ok(INDEX_SRC.indexOf('该表单无独立业务动作按钮') >= 0, '右栏必须有「该表单无独立业务动作按钮」兜底文案');
+  assert.ok(/const acts=fmKey\?Object\.keys\(FORM_ACTS\[fmKey\]\):\[\]/.test(INDEX_SRC),
+    '右栏动作列表必须是「fmKey 存在才取 FORM_ACTS」的三元兜底');
+  /* 前提：qa 确实反查不到承载表单（否则兜底不成立） */
+  const app = createApp({ installRecorder: false, quietConsole: true });
+  assert.strictEqual(app.run("permFormKeyOf('qa')"), null, 'qa 必须反查不到承载表单');
+  /* 左栏「动作▸」角标对 qa 必须不出现（hasActs=false） */
+  assert.ok(/const hasActs=!!fmKey/.test(INDEX_SRC), '左栏「动作▸」角标必须由 hasActs 决定');
+});
+
 test('server.js 的 STAFF_PERMS 不含 qa（新建员工默认只读，与前端口径一致）', function () {
   const m = /const\s+STAFF_PERMS\s*=\s*\{([\s\S]*?)\}/.exec(SERVER_SRC);
   assert.ok(m, '必须能在 server.js 中定位 STAFF_PERMS');
