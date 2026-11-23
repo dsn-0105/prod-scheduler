@@ -71,7 +71,16 @@
     });
   }
 
-  /** 内联 SVG 图标（不引任何外部资源） */
+  /**
+   * 内联 SVG 图标（不引任何外部资源）。
+   *
+   * 【P0-1 修复】必须输出 width/height **presentation 属性**（18×18）：
+   * 没有任何尺寸约束的 <svg> 会按容器 100% 撑开 —— 质量页曾因此把 `.card-title` 的图标
+   * 渲染成 956×956px，卡片高度被顶到 1841px、工具栏被推出首屏（QA 真浏览器实测）。
+   * 用 presentation attribute 而不是写死 style，是因为 CSS 类规则（如 `.btn svg{width:15px}`、
+   * `.empty svg{width:40px}`）优先级高于它 ⇒ 各处既定尺寸完全不受影响；
+   * 而任何**漏加 CSS 约束**的新容器都不会再爆（生产页靠行内 style 兜底，本页靠这里兜底）。
+   */
   function ico(name) {
     var p = {
       shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
@@ -81,7 +90,7 @@
       edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
       download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>'
     };
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
       + (p[name] || '') + '</svg>';
   }
 

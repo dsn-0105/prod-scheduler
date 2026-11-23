@@ -72,9 +72,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
   .content{padding:12px 12px 60px}
   .bulk-bar{top:48px}
 }
-/* ---------- 系统切换下拉（本页自有实现，与生产同构但独立） ---------- */
-.sys-switch{position:relative;cursor:pointer;user-select:none;border-radius:8px;padding:2px 4px;margin:-2px -4px;transition:background .15s}
-.sys-switch:hover{background:var(--primary-light)}
+/* ---------- 系统切换下拉（结构与生产 index.html 同构：.sys-switch 容器 > h1 触发器 + 兄弟 #sysMenu） ---------- */
+/* 【P1-2 修复】#sysMenu 必须是 <h1> 的**兄弟**、而不是 h1 的后代：
+   既有规则 `.sidebar.collapsed .sidebar-header h1 span{display:none}` 会在折叠态隐藏 h1 内所有 span
+   ⇒ 面板项里的系统名与 ✓ 一并消失，innerText 退化成空串。移到 h1 外面就完全不受该规则影响。 */
+.sys-switch{position:relative}
+.sys-switch-trigger{cursor:pointer;user-select:none;border-radius:8px;padding:2px 4px;margin:-2px -4px;transition:background .15s}
+.sys-switch-trigger:hover{background:var(--primary-light)}
 .sys-switch-icon{width:20px;height:20px;flex-shrink:0;color:var(--primary)}
 .sys-switch-caret{font-size:10px;color:var(--muted);margin-left:auto;line-height:1}
 .sys-menu{position:absolute;left:0;top:calc(100% + 8px);min-width:184px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.16);padding:6px;z-index:120;display:none}
@@ -84,12 +88,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .sys-menu-item.cur{color:var(--primary);font-weight:600}
 .sys-menu-item svg{width:16px;height:16px;flex-shrink:0}
 .sys-menu-item .ck{margin-left:auto;color:var(--green);font-weight:700}
-/* 折叠态：标题文字与 ▾ 都被隐藏，只剩图标 ⇒ 图标仍可点，面板从侧边栏右侧浮出
-   （.sidebar 全行无 overflow，absolute 后代可逃逸出 56px 宽度） */
-.sidebar.collapsed .sys-menu{left:0;top:calc(100% + 10px)}
+/* 折叠态：标题文字与 ▾ 都被既有规则隐藏（只剩 20px 盾牌图标）⇒ 命中区扩到 36×36 */
+.sidebar.collapsed .sys-switch-trigger{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:8px;margin:0 auto;border-radius:8px}
+.sidebar.collapsed .sys-switch-trigger:hover{background:var(--primary-light)}
+/* 【P1-2 修复】折叠态面板从 56px 侧边栏**右侧**浮出：.sys-switch 折叠态宽 = 侧边栏内容宽 56px
+   ⇒ left:calc(100% + 6px) = 62px，既不出视口左边缘（旧写法 left:0 叠 margin:-4px 会到 x=-4），
+   也不再压在侧边栏上（overlap 由 60px 降到 0）。 */
+.sidebar.collapsed .sys-menu{left:calc(100% + 6px);top:8px}
 /* ---------- components（复制生产系统） ---------- */
 .card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
 .card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+/* 【P0-1 修复】卡片标题里的 svg 必须显式定尺寸：无 width/height 约束的 svg 会按容器 100% 撑开，
+   一次就把卡片高度从 ~900px 顶到 1841px、把工具栏推到首屏之外（QA 实测 956×956px）。
+   生产页每个 card-title 的 svg 都是行内 style 定尺寸，本页改用 ico() 拼装后丢了这层保险。 */
+.card-title svg{width:18px;height:18px;flex-shrink:0}
 .card-title .desc{font-size:12px;color:var(--muted);font-weight:400}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);font-size:13px;cursor:pointer;color:var(--text);transition:all .15s;min-height:36px;white-space:nowrap}
 .btn:hover{border-color:var(--primary);color:var(--primary)}
@@ -163,13 +175,17 @@ thead .sel-col{background:#eef2ff;z-index:6}
   <!-- 侧边栏 -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <!-- 折叠态下 .sidebar-header h1 span 全部隐藏 ⇒ 仅剩盾牌图标，图标仍可点开系统切换面板 -->
-      <h1 class="sys-switch" id="sysSwitch" onclick="QA_APP.toggleSysMenu(event)" title="切换系统">
-        <svg class="sys-switch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span class="sys-switch-name">质量系统</span>
-        <span class="sys-switch-caret">▾</span>
+      <!-- 【P1-2 修复】结构对齐生产页：.sys-switch 容器 > h1 触发器 + **兄弟** #sysMenu。
+           面板绝不放进 h1 —— 折叠态既有规则 `.sidebar.collapsed .sidebar-header h1 span{display:none}`
+           会把 h1 内所有 span 隐藏，面板项文字会整块消失。 -->
+      <div class="sys-switch" id="sysSwitch">
+        <h1 class="sys-switch-trigger" id="sysSwitchBtn" onclick="QA_APP.toggleSysMenu(event)" title="切换系统">
+          <svg class="sys-switch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span class="sys-switch-name">质量系统</span>
+          <span class="sys-switch-caret">▾</span>
+        </h1>
         <div class="sys-menu" id="sysMenu"></div>
-      </h1>
+      </div>
       <div class="sub">智能断路器 · 辰微</div>
     </div>
     <nav class="nav" id="nav"></nav>
