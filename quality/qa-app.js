@@ -300,7 +300,7 @@
       '<div class="form-row"><div><label>原密码</label><input id="cp_old" type="password"></div></div>'
       + '<div class="form-row"><div><label>新密码</label><input id="cp_new" type="password"></div></div>'
       + '<div class="form-row"><div><label>确认新密码</label><input id="cp_new2" type="password"></div></div>',
-      '保存');
+      '保存', 'QA_APP.savePwd()');
   }
 
   async function savePwd() {
@@ -662,17 +662,27 @@
   }
 
   /* ---------- 弹窗 ---------- */
-  function openModalShell(title, bodyHtml, okText) {
+  /**
+   * 弹窗外壳。
+   * @param {string} title 标题
+   * @param {string} bodyHtml 弹窗体 HTML
+   * @param {string} okText 主按钮文案
+   * @param {string=} okHandler 主按钮点击调用的 QA_APP 方法调用串
+   *        （异常台账弹窗与改密弹窗共用外壳，但提交函数不同 —— 必须由调用方指定，
+   *          否则改密会误触台账的日期校验）
+   */
+  function openModalShell(title, bodyHtml, okText, okHandler) {
     var m = $('modal');
     var bg = $('modalBg');
     if (!m || !bg) return;
+    var handler = okHandler || 'QA_APP.saveModal()';
     m.innerHTML = '<div class="modal-head"><h3>' + esc(title) + '</h3>'
       + '<div class="close-x" onclick="QA_APP.closeModal()">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M18 6L6 18M6 6l12 12"/></svg>'
       + '</div></div>'
       + '<div class="modal-body">' + bodyHtml + '</div>'
       + '<div class="modal-foot"><button class="btn" onclick="QA_APP.closeModal()">取消</button>'
-      + '<button class="btn btn-primary" id="qaSaveBtn" onclick="QA_APP.saveModal()">' + esc(okText || '保存') + '</button></div>';
+      + '<button class="btn btn-primary" id="qaSaveBtn" onclick="' + handler + '">' + esc(okText || '保存') + '</button></div>';
     bg.classList.add('show');
   }
 
@@ -891,9 +901,8 @@
       return;
     }
     await reloadAll();
-    if (state.me && state.me.mustChangePwd) {
-      showNotice('当前账号使用的是初始密码或已被重置的密码，请尽快用右上角「改密」修改。', false);
-    }
+    /* 注：/api/qa/me 只返回 {username,name,role,perms}（服务端白名单刻意剔除 mustChangePwd），
+       故「待改密」提示只在登录响应里判断，恢复登录态时不重复打扰用户。 */
   }
 
   /* ---------- 对外接口（HTML 内联 onclick 只依赖这一个对象） ---------- */
