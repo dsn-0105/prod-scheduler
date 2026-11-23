@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>质量系统 · 辰微</title>
+<!-- 【build .163】质量系统独立页面。样式全部内联（复制生产系统的 CSS 变量与组件类定义），
+     不引用生产前端的任何脚本文件、不调用其中的任何函数 —— 视觉与交互口径一致、代码零耦合。
+     只加载本目录下的 qa-core.js（共享内核）与 qa-app.js（本页面逻辑）。 -->
+<style>
+:root{
+  --primary:#4f46e5;--primary-light:#eef2ff;--primary-dark:#4338ca;
+  --bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#94a3b8;--border:#e2e8f0;
+  --green:#10b981;--green-bg:#ecfdf5;--red:#ef4444;--red-bg:#fef2f2;
+  --amber:#f59e0b;--amber-bg:#fffbeb;--blue:#3b82f6;--blue-bg:#eff6ff;
+  --teal:#14b8a6;--purple:#8b5cf6;
+  --shadow:0 1px 3px rgba(0,0,0,.08);
+  --r:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+/* ---------- layout（复制生产系统） ---------- */
+.app{display:flex;min-height:100vh}
+.sidebar{width:210px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:transform .25s}
+.sidebar-header{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+.sidebar-header .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.nav{flex:1;overflow-y:auto;padding:8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;font-size:13px;color:var(--text);border-left:3px solid transparent;transition:all .15s}
+.nav-item:hover{background:var(--primary-light)}
+.nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
+.nav-item svg{width:18px;height:18px;flex-shrink:0}
+.sidebar-collapse{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border:none;background:var(--card);border-top:1px solid var(--border);color:var(--muted);font-size:13px;width:100%;transition:all .15s}
+.sidebar-collapse:hover{color:var(--primary);background:var(--primary-light)}
+.sidebar-collapse svg{width:18px;height:18px;flex-shrink:0;transition:transform .2s}
+.sidebar.collapsed{width:56px}
+.sidebar.collapsed .sidebar-header{padding:18px 0 14px;text-align:center}
+.sidebar.collapsed .sidebar-header h1{justify-content:center}
+.sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:none}
+.sidebar.collapsed .nav-item{justify-content:center;padding:10px 0}
+.sidebar.collapsed .nav-item span{display:none}
+.sidebar.collapsed .sidebar-collapse{justify-content:center;padding:12px 0}
+.sidebar.collapsed .sidebar-collapse span{display:none}
+.sidebar.collapsed .sidebar-collapse svg{transform:rotate(180deg)}
+.sidebar.collapsed~.main{margin-left:56px}
+.main{flex:1;margin-left:210px;min-width:0}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;gap:12px;flex-wrap:wrap}
+.topbar-left{display:flex;align-items:center;gap:10px}
+.topbar h2{font-size:16px;font-weight:700}
+.topbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.content{padding:16px 20px 80px}
+.mobile-header{display:none;background:var(--card);border-bottom:1px solid var(--border);padding:10px 14px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:60}
+.mobile-header h1{font-size:15px;font-weight:700}
+.hamburger{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+.hamburger svg{width:20px;height:20px}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99}
+.overlay.show{display:block}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%);width:240px}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar.collapsed{width:240px}
+  .sidebar.collapsed .sidebar-header{padding:18px 16px 14px}
+  .sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:inline}
+  .sidebar.collapsed .nav-item{justify-content:flex-start;padding:10px 16px}
+  .sidebar.collapsed .nav-item span{display:inline}
+  .sidebar.collapsed .sidebar-collapse{justify-content:flex-start;padding:12px 16px}
+  .sidebar.collapsed .sidebar-collapse span{display:inline}
+  .sidebar.collapsed .sidebar-collapse svg{transform:none}
+  .sidebar.collapsed~.main{margin-left:0}
+  .main{margin-left:0}
+  .mobile-header{display:flex}
+  .content{padding:12px 12px 60px}
+  .bulk-bar{top:48px}
+}
+/* ---------- 系统切换下拉（本页自有实现，与生产同构但独立） ---------- */
+.sys-switch{position:relative;cursor:pointer;user-select:none;border-radius:8px;padding:2px 4px;margin:-2px -4px;transition:background .15s}
+.sys-switch:hover{background:var(--primary-light)}
+.sys-switch-icon{width:20px;height:20px;flex-shrink:0;color:var(--primary)}
+.sys-switch-caret{font-size:10px;color:var(--muted);margin-left:auto;line-height:1}
+.sys-menu{position:absolute;left:0;top:calc(100% + 8px);min-width:184px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.16);padding:6px;z-index:120;display:none}
+.sys-menu.show{display:block}
+.sys-menu-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap;color:var(--text)}
+.sys-menu-item:hover{background:var(--primary-light)}
+.sys-menu-item.cur{color:var(--primary);font-weight:600}
+.sys-menu-item svg{width:16px;height:16px;flex-shrink:0}
+.sys-menu-item .ck{margin-left:auto;color:var(--green);font-weight:700}
+/* 折叠态：标题文字与 ▾ 都被隐藏，只剩图标 ⇒ 图标仍可点，面板从侧边栏右侧浮出
+   （.sidebar 全行无 overflow，absolute 后代可逃逸出 56px 宽度） */
+.sidebar.collapsed .sys-menu{left:0;top:calc(100% + 10px)}
+/* ---------- components（复制生产系统） ---------- */
+.card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+.card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card-title .desc{font-size:12px;color:var(--muted);font-weight:400}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);font-size:13px;cursor:pointer;color:var(--text);transition:all .15s;min-height:36px;white-space:nowrap}
+.btn:hover{border-color:var(--primary);color:var(--primary)}
+.btn svg{width:15px;height:15px}
+.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn-primary:hover{background:var(--primary-dark);color:#fff}
+.btn-danger{color:var(--red);border-color:var(--red)}
+.btn-danger:hover{background:var(--red);color:#fff}
+.btn-sm{padding:4px 10px;min-height:30px;font-size:12px}
+.btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;border-color:var(--border);color:var(--muted);background:var(--card)}
+.btn:disabled:hover,.btn[disabled]:hover{border-color:var(--border);color:var(--muted);background:var(--card)}
+input,select,textarea{font-family:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);width:100%;outline:none;transition:border .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.1)}
+input[type=checkbox]{width:auto}
+input[readonly]{background:#f8fafc;color:var(--muted);cursor:not-allowed}
+label{font-size:12px;color:var(--muted);display:block;margin-bottom:3px}
+.form-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.form-row>div{flex:1;min-width:120px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary-light);color:var(--primary);font-weight:600;text-align:left;padding:8px 10px;white-space:nowrap;border-bottom:2px solid var(--border)}
+td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:#f8fafc}
+.sel-col{position:sticky;left:0;z-index:5;background:#fff;text-align:center;width:44px;vertical-align:middle;padding:6px 4px}
+thead .sel-col{background:#eef2ff;z-index:6}
+.sel-col input{cursor:pointer;width:16px;height:16px}
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+.table-wrap tbody tr{cursor:pointer}
+.table-wrap tbody tr:hover{background:#f5f7ff}
+#content .table-wrap tbody tr.row-sel td{background:rgba(59,130,246,.16)}
+#content .table-wrap tbody tr.row-sel:hover td{background:rgba(59,130,246,.24)}
+#content .table-wrap tbody tr.row-flash td{animation:qaFlash 1.5s ease-out}
+@keyframes qaFlash{0%{background:rgba(16,185,129,.28)}100%{background:transparent}}
+.bulk-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 6px;position:sticky;top:58px;z-index:40;background:var(--primary-light);border-radius:8px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.bulk-bar .sel-count{font-size:12px;color:var(--primary);margin-left:2px}
+.bulk-bar label.ck-all{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text);margin:0;cursor:pointer}
+.bulk-bar label.ck-all input{width:16px;height:16px;cursor:pointer}
+.empty{text-align:center;padding:30px;color:var(--muted);font-size:13px}
+.empty svg{width:40px;height:40px;margin-bottom:8px;opacity:.4}
+.empty .btn{margin-top:10px}
+.th-sort{cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden}
+.th-sort:hover{filter:brightness(.96)}
+.sort-ico{font-size:9px;margin-left:3px;color:#c7d2fe;display:inline-block}
+.sort-ico.on{color:var(--primary)}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center;padding:16px}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border-radius:12px;width:420px;max-width:96vw;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-head h3{font-size:16px;font-weight:700}
+.modal-body{padding:18px}
+.modal-foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.close-x{width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;color:var(--muted)}
+.close-x:hover{background:#f1f5f9}
+.hint{font-size:11px;color:var(--muted);margin-top:4px}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+.tag-green{background:var(--green-bg);color:var(--green)}
+.tag-amber{background:var(--amber-bg);color:var(--amber)}
+/* ---------- 质量系统专属 ---------- */
+/* 只读提示条：不可关闭，有 qa 权限时不渲染 */
+.readonly-bar{background:#fef3c7;color:#92400e;font-size:12px;border-radius:6px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:flex-start;gap:6px}
+.qa-notice{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;display:none;align-items:center;gap:8px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:9px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px;max-width:86vw}
+.qa-notice.show{display:flex}
+.qa-notice .btn{min-height:28px;padding:2px 10px;font-size:12px}
+.tbl-pager{display:inline-flex;align-items:center;gap:6px;flex:none;white-space:nowrap;font-size:12px;color:var(--muted);margin-left:auto}
+.tbl-pager input{width:38px;text-align:center;padding:1px 2px;border:1px solid var(--border);border-radius:4px}
+.tbl-pager select{padding:1px 2px;border:1px solid var(--border);border-radius:4px;width:auto}
+.build-mark{position:fixed;right:8px;bottom:6px;font-size:11px;color:#94a3b8;z-index:180;pointer-events:none;user-select:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <!-- 折叠态下 .sidebar-header h1 span 全部隐藏 ⇒ 仅剩盾牌图标，图标仍可点开系统切换面板 -->
+      <h1 class="sys-switch" id="sysSwitch" onclick="QA_APP.toggleSysMenu(event)" title="切换系统">
+        <svg class="sys-switch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span class="sys-switch-name">质量系统</span>
+        <span class="sys-switch-caret">▾</span>
+        <div class="sys-menu" id="sysMenu"></div>
+      </h1>
+      <div class="sub">智能断路器 · 辰微</div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <button class="sidebar-collapse" id="collapseBtn" onclick="QA_APP.toggleSidebarCollapse()" title="收起/展开侧边栏">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      <span>收起</span>
+    </button>
+  </aside>
+  <div class="overlay" id="overlay" onclick="QA_APP.toggleSidebar()"></div>
+
+  <!-- 主区 -->
+  <div class="main">
+    <div class="mobile-header">
+      <div class="hamburger" onclick="QA_APP.toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg></div>
+      <h1 id="mobileTitle">异常台账</h1>
+      <div style="width:36px"></div>
+    </div>
+    <div class="topbar">
+      <div class="topbar-left"><h2 id="pageTitle">异常台账</h2></div>
+      <div class="topbar-actions">
+        <button class="btn btn-sm" id="pwdBtn" onclick="QA_APP.pwdModal()" title="修改自己的登录密码"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>改密</button>
+        <button class="btn btn-sm" id="logoutBtn" onclick="QA_APP.logout()" title="退出登录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>退出</button>
+      </div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal" id="modal"></div>
+</div>
+
+<!-- 顶部非阻塞提示（鉴权服务不可用等） -->
+<div class="qa-notice" id="qaNotice"></div>
+
+<div class="build-mark">build 2026-11-23.001</div>
+
+<script src="qa-core.js"></script>
+<script src="qa-app.js"></script>
+</body>
+</html>
