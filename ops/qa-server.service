@@ -1,0 +1,38 @@
+[Unit]
+Description=QA System Backend (qa-server) — 辰微质量系统
+# 与生产 prod-server 完全独立的 unit / 端口 / 崩溃域：qa-server 挂了或重启，生产排单系统零影响
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/qa-server
+ExecStart=/usr/bin/node /opt/qa-server/qa-server.js
+# Restart=always 是刻意的：数据文件损坏时 qa-server 会 process.exit(1) 拒绝启动，
+# systemd 每 3 秒重试一次并刷出同一条明确错误 —— 比"进程躺着不重启、没人发现"好得多。
+# 配套告警：journalctl -u qa-server | grep 拒绝启动 出现即需人工介入（见 runbook）。
+Restart=always
+RestartSec=3
+
+# ---- 环境变量（名字与 server/qa-server.js 读取的完全一致，改动前请先看该文件顶部）----
+# 端口：QA_PORT 优先于 PORT（qa-server.js 内为 `QA_PORT || PORT || 3001`）。
+#   单独写 QA_PORT 是为了与生产共用同一台机器时不误占 3000。
+Environment=QA_PORT=3001
+# 数据文件：与生产的 /opt/prod-server/data.json 无任何交集（隔离边界清单 §9.1）
+Environment=QA_DATA_FILE=/opt/qa-server/data-qa.json
+# 鉴权代理：唯一身份来源（不读生产账号文件；见设计 §1.2.1a）
+Environment=QA_PROD_ME_URL=http://127.0.0.1:3000/api/me
+# 鉴权缓存与超时（缺省值即下列值，写出来是为了运维可调且可见）
+Environment=QA_AUTH_TTL_MS=60000
+Environment=QA_AUTH_TIMEOUT_MS=1500
+Environment=QA_AUTH_CONNECT_TIMEOUT_MS=800
+Environment=QA_AUTH_MAX_ENTRIES=500
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qa-server
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

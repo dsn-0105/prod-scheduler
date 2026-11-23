@@ -1,0 +1,12 @@
+[Unit]
+Description=QA data-qa.json daily backup (oneshot)
+# 备份不依赖 qa-server 存活（这正是用独立 timer 的理由）
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/qa-server/qa-backup.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qa-backup
+NoNewPrivileges=true

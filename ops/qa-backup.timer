@@ -1,0 +1,13 @@
+[Unit]
+Description=Run QA data backup daily at 02:30
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# 服务器关机错过执行点 ⇒ 开机后补跑一次（"每日备份"该有的语义）
+Persistent=true
+# 避免与其它定时任务撞同一秒
+RandomizedDelaySec=300
+Unit=qa-backup.service
+
+[Install]
+WantedBy=timers.target
