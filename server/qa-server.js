@@ -389,9 +389,18 @@ function handleRequest(req, res) {
     });
   }
 
-  /* ⑦ 删除：本轮不实现。P1 上线时把 405 换成 200 即可，路由结构零改动 */
+  /* ⑦ 删除：本轮不实现，返回 405。
+     ⚠️ **安全边界警告（不要删掉这段说明）**：
+        本分支**刻意先鉴权、再回 405**，而不是直接 405。原因：若把鉴权放在后面，注释里那句
+        "P1 上线时把 405 换成 200 即可" 就会被真正照做 —— 那时留下的将是一个**免鉴权的删除接口**，
+        且因为"只改了一个状态码"，review 时极易被当成小事放过去。
+        现在改成：无 token ⇒ 401；有 token 但无「质量管理」写权限 ⇒ 403；有权限 ⇒ 405。
+        P1 实现删除时，**只需把内层那句 405 换成真正的删除逻辑**，鉴权边界已经在外面守住了。 */
   if (putMatch && method === 'DELETE') {
-    return sendJson(res, 405, { error: '本轮未开放删除功能' });
+    return authenticate(req, res, function (user) {
+      if (!canWrite(user)) return sendJson(res, 403, { error: WRITE_FORBIDDEN_TEXT });
+      return sendJson(res, 405, { error: '本轮未开放删除功能' });
+    });
   }
 
   /* ⑧ 兜底 */

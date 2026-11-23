@@ -413,15 +413,34 @@ test('PUT：200 改日期 / 404 不存在 / 400 改编号 / 403 无权限', asyn
 /* ============================================================
    七、DELETE / 未知路由
    ============================================================ */
-test('DELETE /api/qa/exceptions/:id ⇒ 405（本轮未开放，P1 换成 200 即可）', async function () {
+test('DELETE /api/qa/exceptions/:id ⇒ 三档鉴权：无 token 401 / 无 qa 权限 403 / 有权 405', async function () {
+  /* 【P2-4 修复】原来 DELETE 分支在 authenticate() 之前、恒回 405（免鉴权）。
+     那条注释「P1 上线时把 405 换成 200 即可」一旦被照做，就会留下**免鉴权的删除接口**。
+     现改为先鉴权再回 405 ⇒ 无 token 从 405 变 401，是本轮唯一的行为变更（发版说明已登记）。 */
   freshDb('delete');
   const created = await req('POST', '/api/qa/exceptions', { token: T_ADMIN, body: { date: '2026-11-23' } });
-  const r = await req('DELETE', '/api/qa/exceptions/' + encodeURIComponent(created.json.record.id), { token: T_ADMIN });
+  const url = '/api/qa/exceptions/' + encodeURIComponent(created.json.record.id);
+
+  /* ① 无 token ⇒ 401（此前是 405） */
+  const noAuth = await req('DELETE', url);
+  assert.strictEqual(noAuth.status, 401, '无 token 的 DELETE 必须先 401，不能直接 405');
+  assert.strictEqual(noAuth.json.error, '未登录或登录已过期');
+
+  /* ② 有 token 但无「质量管理」写权限 ⇒ 403，且文案与 POST/PUT 完全一致 */
+  const forbidden = await req('DELETE', url, { token: T_RO });
+  assert.strictEqual(forbidden.status, 403, '无写权限的 DELETE 必须 403');
+  assert.strictEqual(forbidden.json.error,
+    '无「质量管理」编辑权限，请联系管理员在「员工管理 → 表单写权限」中授权',
+    '403 文案必须与 POST/PUT 同一句（前端只维护一份）');
+
+  /* ③ 有权限 ⇒ 405（功能本身本轮未开放） */
+  const r = await req('DELETE', url, { token: T_ADMIN });
   assert.strictEqual(r.status, 405);
   assert.strictEqual(r.json.error, '本轮未开放删除功能');
-  /* 405 之后记录必须还在（防「说了没开放其实删了」） */
+
+  /* 三档都不得改数据（防「说了没开放其实删了」） */
   const list = await req('GET', '/api/qa/exceptions', { token: T_ADMIN });
-  assert.strictEqual(list.json.total, 1);
+  assert.strictEqual(list.json.total, 1, 'DELETE 的任何分支都不得真的删除记录');
 });
 
 test('未知路由 / 未知方法 ⇒ 404 {error:"not found"}', async function () {
