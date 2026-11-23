@@ -75,7 +75,7 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test tests/*.test.js` → **1018 tests / 1016 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-20.162` 实测；`.161` 时为 973/971 = 926 + QA 独立验证 47 条；`.162` 首轮 977 = +`invfilt.161` §G 4 条，收口轮 +QA 侧 `qa.invfilt.162` 41 条 → 1018）。
+> **当前规模**：`node --test tests/*.test.js` → **1129 tests / 1127 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-23.163` 实测；上一版 `.162` 为 1018/1016）。本轮「质量系统」新增 **111 条**：T01 后端进程 + 共享内核 87 条（`qa-core` 25 / `qa-backend` 41 / `qa-server` 21）、T03 生产系统改动守卫 24 条（`qa.systems-switch` 12 / `qa.perm-qa-key` 12）⇒ 1018 + 111 = 1129。
 > ⚠ 本条数字**只在收尾时手写更新**（变化频繁，不做断言），跑回归请用**显式文件列表**，勿用 `node --test tests/` 目录形式（会扫入 `_diag/before*` 造成假失败）。
 >
 > **三个「黄金样例」文件的存在理由**（不是凑覆盖率）：

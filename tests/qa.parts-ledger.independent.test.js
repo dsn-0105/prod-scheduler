@@ -29,11 +29,11 @@ const { createApp, ROOT } = require('./harness/sandbox');
      · BUILD_NO   = BUILD 的 `.NNN` 段（guide.js 与注释里只许用「build .NNN」短形态）；
      · BUILD_DATE = BUILD 的日期段（guide.js 文首「更新：YYYY-MM-DD（build .NNN）」）。
    刻意**不**把 `.159` / `2026-10-31` 分散写死在断言里 —— .148 就因清单/计数不同步假失败过一次。 */
-const BUILD = '2026-11-20.162';
-const PREV = '2026-11-20.161';
-const BUILD_NO = String(BUILD).split('.')[1];       /* '160' */
-const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-20' */
-const PREV_NO = String(PREV).split('.')[1];         /* '159' */
+const BUILD = '2026-11-23.163';
+const PREV = '2026-11-20.162';
+const BUILD_NO = String(BUILD).split('.')[1];       /* '163' */
+const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-23' */
+const PREV_NO = String(PREV).split('.')[1];         /* '162' */
 
 const readRel = function (rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); };
 const INDEX_SRC = readRel('index.html');

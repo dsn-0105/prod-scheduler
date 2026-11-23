@@ -131,6 +131,12 @@ const INDEX_SRC = readRel('index.html');
 const HEAD = git(['rev-parse', 'HEAD']).trim();
 const PREV_REV = revOfBuild(build.PREV);
 const PREV_INDEX_SRC = gitShow(PREV_REV, 'index.html');
+/* 【.163 同步·固定历史基线】本文件里 K11(b)/L1/Q2 三处断言的对象是「**本轮（.162）相对 .161 的受控增量**」，
+   不是「本版相对上一版」。版本推进到 .163 后 build.PREV 变成 .162 —— 而 .163 没有改动 thCol/applyFilt/filterBar，
+   于是 PREV 与当前逐字相同，这三处会同时失效（notEqual 恒红、回退变异变成 no-op）。
+   故把「本轮增量的参考系」钉死为 .161：它是不可变历史，往后任何版本推进都不会让它漂移。 */
+const B161_REV = revOfBuild('2026-11-20.161');
+const B161_INDEX_SRC = gitShow(B161_REV, 'index.html');
 
 /**
  * 「.152 改前基线」定位（**独立重实现** layout.scoped 的 resolveBaseline 语义）：
@@ -435,8 +441,10 @@ test('K11 防退化①：受控增量被删（分「只删子句」「整段回�
     '失败必须来自「增量内容必须就是 isSemFiltMode 子句」（实际：' + (va.err && va.err.message) + '）');
 
   /* (b) 整段回退成 .161 的 thCol（注释与子句都不在）：
-         此时 thNow === thBase，"受控增量必须真的存在"那条防退化断言会立刻报红 */
-  const full = mutateText(INDEX_SRC, extractFn(INDEX_SRC, 'thCol'), extractFn(PREV_INDEX_SRC, 'thCol'), 'K/K11b');
+         此时 thNow === thBase，"受控增量必须真的存在"那条防退化断言会立刻报红
+         【.163 同步】参考系必须是 .161（B161_INDEX_SRC）：若还用 PREV(= .162)，
+         回退后与当前完全一致，变异变 no-op，本用例会退化成假绿。 */
+  const full = mutateText(INDEX_SRC, extractFn(INDEX_SRC, 'thCol'), extractFn(B161_INDEX_SRC, 'thCol'), 'K/K11b');
   const vb = c1Verdict(full);
   assert.equal(vb.pass, false, '整段回退时 §C1 必须变红（否则"增量必须真的存在"这条防退化断言是摆设）');
   assert.ok(vb.err && /受控增量必须真的存在/.test(String(vb.err.message)),
@@ -490,10 +498,12 @@ test('L1 裁决（A4④ 提取器敏感探针换锚点）：必要同步，强�
   /* 换锚点的动机：.161 时 fpModeChange 是"被改过"的函数；推进到 .162 后两版 fpModeChange 相同，
      原探针会变成 notEqual(相同,相同) → 恒红；若有人图省事删掉它，守卫就消失。
      故换锚点**必要**。但必须证明新锚点仍在证明同一件事（提取器对修订敏感、不是抓到恒定片段）。 */
-  const changed = ['thCol', 'applyFilt', 'filterBar'];   /* 本版确实改过的三个函数 */
+  /* 【.163 同步】比较对象是「相对 .161 的受控增量」（.163 本身没动这三个函数，
+     用 PREV(= .162) 会变成 notEqual(相同,相同) 恒红）。 */
+  const changed = ['thCol', 'applyFilt', 'filterBar'];   /* 本轮（.162）确实改过的三个函数 */
   changed.forEach(function (n) {
-    assert.notEqual(extractFn(INDEX_SRC, n), extractFn(PREV_INDEX_SRC, n),
-      n + ' 在本版确有改动 ⇒ 可作为"提取器敏感"的锚点（两版必须不同）');
+    assert.notEqual(extractFn(INDEX_SRC, n), extractFn(B161_INDEX_SRC, n),
+      n + ' 相对 .161 确有改动 ⇒ 可作为"提取器敏感"的锚点（两版必须不同）');
   });
   /* filterBar 为何也算"改过"：其 semModeOf 由自带实现降为委托 isSemFiltMode 的薄别名（判据单源化）。 */
   assert.ok(extractFn(INDEX_SRC, 'filterBar').indexOf('isSemFiltMode(m,k,mode)') >= 0,
@@ -502,7 +512,7 @@ test('L1 裁决（A4④ 提取器敏感探针换锚点）：必要同步，强�
      故必须同时证明「未被改动的函数两版**相同**」——证明 equal/notEqual 都有判别力。 */
   const untouched = ['tState', 'colVal', 'filterRows', 'invStockLevel', 'openFilter', 'fpModeChange', 'fpModeOptsHtml'];
   untouched.forEach(function (n) {
-    assert.equal(extractFn(INDEX_SRC, n), extractFn(PREV_INDEX_SRC, n),
+    assert.equal(extractFn(INDEX_SRC, n), extractFn(B161_INDEX_SRC, n),
       n + ' 在两版之间未改动 ⇒ 必须逐字相同（这条同时证明提取器不是"恒不相等"的假探针）');
   });
   /* 防对消：基线不得等于 HEAD */
@@ -818,7 +828,10 @@ test('Q1 契约：5 模块 × 全列 × 9 种非语义筛选态，两版 thCol �
 
 test('Q2 契约：语义档下两版 thCol 的差异**恰为一个 ` on` 令牌**（除此之外逐字节相同）', function () {
   const now = bootAll();
-  const prev = boot({ indexHtml: PREV_INDEX_SRC });
+  /* 【.163 同步】「上一版」必须是 .161（未点亮漏斗那一版）：
+     若用 PREV(= .162)，它与当前 thCol 逐字相同，本用例的 notEqual 与"去掉一个 on 后逐字节相同"
+     两条断言会同时失效（前者恒红、后者退化为恒真）。 */
+  const prev = boot({ indexHtml: B161_INDEX_SRC });
   prev.setGlobal('products', clone(SEED.products));
   prev.setGlobal('parts', clone(SEED.parts));
   prev.setGlobal('deliveries', clone(SEED.deliveries));

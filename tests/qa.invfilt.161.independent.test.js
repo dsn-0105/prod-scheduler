@@ -116,6 +116,12 @@ const INDEX_SRC = readRel('index.html');
 const HEAD = git(['rev-parse', 'HEAD']).trim();
 const PREV_REV = revOfBuild(build.PREV);
 const PREV_INDEX_SRC = gitShow(PREV_REV, 'index.html');
+/* 【.163 同步·固定历史基线】下面 A4 的「提取器对修订敏感」探针需要一个**确实与相邻版不同**的参考系。
+   原写法拿 build.PREV 当参考系，会随版本推进漂移：.163 没有改动 thCol / applyFilt ⇒ 与 .162 逐字相同，
+   notEqual 恒红。故固定钉住 .161（.162 相对它确实改过这两个函数）——
+   .161/.162 两个修订是**不可变历史**，往后任何版本推进都不会让这条探针失效，判别力一点没减。 */
+const B161_REV = revOfBuild('2026-11-20.161');
+const B161_INDEX_SRC = gitShow(B161_REV, 'index.html');
 
 /* ---------- 沙箱装载 ---------- */
 
@@ -406,13 +412,14 @@ test('A4 契约：invStockLevel 本体与上一版逐字相同（含两条防抵
   assert.ok(now.indexOf("return 'amber'") >= 0, 'invStockLevel 必须仍含 amber 分支');
   assert.ok(now.indexOf('num(min)>0') >= 0, '「最小=0/空 ⇒ 不设限」的守卫必须仍在（用户拍板第 2 点）');
 
-  /* 防抵消 ④：提取器对修订必须敏感 —— 本次（.162）确实改过的 thCol 两版必须不同。
-     【.162 同步】原探针用的是 fpModeChange（.161 改过），版本推进到 .162 后两版 fpModeChange
-     已经相同，该探针会失去判别力 ⇒ 改钉本版真正改动过的 thCol（判据并入 isSemFiltMode）。 */
-  assert.notEqual(extractFn(INDEX_SRC, 'thCol'), extractFn(PREV_INDEX_SRC, 'thCol'),
-    '提取器必须对修订敏感（thCol 本版被改，两版必须不同；相同则说明提取/基线失效）');
-  assert.notEqual(extractFn(INDEX_SRC, 'applyFilt'), extractFn(PREV_INDEX_SRC, 'applyFilt'),
-    '提取器必须对修订敏感（applyFilt 本版被改：语义档写入前清脏值）');
+  /* 防抵消 ④：提取器对修订必须敏感。
+     【.163 同步·参考系固定】原探针用「上一版 vs 本版」证明敏感，但上一版是**会漂移的**：
+     .163 未改动 thCol / applyFilt ⇒ 与 .162 逐字相同，notEqual 会恒红（且红点指不到真问题）。
+     改为固定比对 .162↔.161 这一对（.162 确实改过这两个函数）：差异是不可变历史，永久有效。 */
+  assert.notEqual(extractFn(PREV_INDEX_SRC, 'thCol'), extractFn(B161_INDEX_SRC, 'thCol'),
+    '提取器必须对修订敏感（thCol 在 .162 被改 ⇒ .162 与 .161 必须不同；相同则说明提取/基线失效）');
+  assert.notEqual(extractFn(PREV_INDEX_SRC, 'applyFilt'), extractFn(B161_INDEX_SRC, 'applyFilt'),
+    '提取器必须对修订敏感（applyFilt 在 .162 被改：语义档写入前清脏值）');
 });
 
 test('A5 契约（单源红线静态面）：invShortOf/invOverOf 函数体零阈值运算', function () {
