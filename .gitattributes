@@ -1,0 +1,19 @@
+# ============================================================
+# .gitattributes —— 只约束「会被传到 Linux 上执行/解析」的文件
+# ------------------------------------------------------------
+# 背景（T04 期间实测发现）：本机 git 配置是 core.autocrlf=true，而仓库此前**没有**
+# .gitattributes。提交时 git 会把 LF 规范化成 LF 存进 blob（所以仓库内没问题），
+# 但**任何人在这台 Windows 上重新 checkout/clone 时，工作树会拿到 CRLF**。
+# 后果（都会在部署时才炸，且报错完全指不到真实原因）：
+#   · deploy-qa.sh / rollback-qa.sh  → bash: $'\r': command not found
+#   · ops/nginx-qa.conf              → nginx -t 报 unexpected ";" / directive 解析失败
+#   · ops/*.service / *.timer        → systemd 203/EXEC（ExecStart 带上了 \r）
+#   · ops/qa-backup.sh               → 同上，备份定时器静默不工作
+# 因此对这些文件强制 eol=lf：仓库与工作树都恒为 LF，scp 上去即可用。
+# 刻意**不管** index.html / js/*.js / tests/*.js：CRLF 不影响它们的解析，
+# 且改动它们的行尾会让既有 1000+ 用例的大段源码断言面对无意义的风险。
+# ============================================================
+
+deploy-qa.sh      text eol=lf
+rollback-qa.sh    text eol=lf
+ops/*             text eol=lf
