@@ -27,6 +27,14 @@ tests/.e2e-tmp/
 # 根治办法：在这两个测试文件里加 test.after(() => fs.rmSync(TMP,{recursive:true,force:true}))。
 .p1tmp-*/
 
+# 质量系统测试的隔离目录（同 .p1tmp-* 机制，由 qa-server 相关用例在仓库根创建）。
+# 【build .163】QA 验收时实测：一次测试被中断后会在仓库根留下 .qatmp-XXXXXX/（内含
+# broken.json / db-404.json / db-concurrency.json 等夹具），若不入 ignore 会被 git add -A 误提交。
+.qatmp-*/
+
+# playwright-cli 的运行目录（QA 真浏览器验收时生成，含截图与临时 profile，非代码资产）
+.playwright-cli/
+
 # 一次性运维脚本（含数据批量操作，仅本地执行）
 _*.js
 !js/**
