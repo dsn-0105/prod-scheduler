@@ -75,7 +75,11 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test tests/*.test.js` → **1129 tests / 1127 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-23.163` 实测；上一版 `.162` 为 1018/1016）。本轮「质量系统」新增 **111 条**：T01 后端进程 + 共享内核 87 条（`qa-core` 25 / `qa-backend` 41 / `qa-server` 21）、T03 生产系统改动守卫 24 条（`qa.systems-switch` 12 / `qa.perm-qa-key` 12）⇒ 1018 + 111 = 1129。
+> **当前规模**：`node --test tests/*.test.js` → **1135 tests / 1133 pass / 0 fail / 2 skipped（既有 skip）**（`2026-11-23.163` 实测；上一版 `.162` 为 1018/1016）。本轮「质量系统」新增 **117 条**：T01 后端进程 + 共享内核 87 条（`qa-core` 25 / `qa-backend` 41 / `qa-server` 21）、T03 生产系统改动守卫 24 条（`qa.systems-switch` 12 / `qa.perm-qa-key` 12）、T04 部署文件行尾守卫 6 条（`qa.ops-eol`）⇒ 1018 + 117 = 1135。
+>
+> ⚠ **本机跑全量请加 `--test-concurrency=4`**：34+ 个测试文件各自装载重沙箱，默认并发在本机实测会长时间无输出（曾卡 6 分钟以上无进展），降到 4 路并发约 40 秒跑完、结果完全一致。别把"没有新输出"误判成"代码把测试挂死了"。
+>
+> ⚠ **行尾/字节类断言请落在字节上，不要用 `grep -c $'\r'`**：本机 Git Bash 实测该写法**恒等于文件总行数**（纯 LF 的 `deploy-qa.sh` 得 383 = 总行数；手工造的 CRLF 探针同样得"总行数"）⇒ 它区分不了 LF 与 CRLF，"验证通过"等于没验证。可靠写法：`tr -cd '\r' < file | wc -c`（CR 字节数）、`od -c file`、`git ls-files --eol`（输出 `i/lf w/lf`）、或直接读字节数 0x0D（见 `tests/qa.ops-eol.test.js` §0 的判定器自检）。
 > ⚠ 本条数字**只在收尾时手写更新**（变化频繁，不做断言），跑回归请用**显式文件列表**，勿用 `node --test tests/` 目录形式（会扫入 `_diag/before*` 造成假失败）。
 >
 > **三个「黄金样例」文件的存在理由**（不是凑覆盖率）：
