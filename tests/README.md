@@ -75,7 +75,9 @@ tests/
     └── verify-result.json       断言明细 + 各动作 /api/tx 次数
 ```
 
-> **当前规模**：`node --test --test-concurrency=4 tests/*.test.js` → **1151 tests / 1149 pass / 0 fail / 2 skipped（既有 skip）**（其中 `qa.quality-module.independent.test.js` 10 条为 QA 侧独立验收、由 QA 提交；本仓库已提交部分为 1141/1139。上一版 `.162` 为 1018/1016）。本轮「质量系统」新增 **123 条**：T01 后端进程 + 共享内核 87 条（`qa-core` 25 / `qa-backend` 41 / `qa-server` 21）、T03 生产改动守卫 24 条（`qa.systems-switch` 12 / `qa.perm-qa-key` 12）、T04 部署文件行尾守卫 6 条（`qa.ops-eol`）、P0/P1 布局缺陷守卫 6 条（`qa-app.structure`）⇒ 1018 + 123 = 1141。
+> **当前规模**：`node --test --test-concurrency=4 tests/*.test.js` → **1157 tests / 1155 pass / 0 fail / 2 skipped（既有 skip）**（其中 `qa.quality-module.independent.test.js` 11 条为 QA 侧独立验收、由 QA 提交；本仓库已提交部分为 1146/1144。上一版 `.162` 为 1018/1016）。本轮「质量系统」新增 **128 条**：T01 后端进程 + 共享内核 87 条（`qa-core` 25 / `qa-backend` 41 / `qa-server` 21）、T03 生产改动守卫 24 条（`qa.systems-switch` 12 / `qa.perm-qa-key` 12）、T04 部署文件行尾守卫 6 条（`qa.ops-eol`）、P0/P1 布局缺陷守卫 6 条（`qa-app.structure`）、**部署布局冒烟 5 条（`qa.deploy-layout`）** ⇒ 1018 + 128 = 1146。
+>
+> ⚠ **「部署态的目录布局能否启动」是独立不变量，必须单独守**：首次真实部署就栽在这上面 —— `server/*.js` 里 `require('../quality/qa-core.js')` 只适用本地兄弟目录布局，而 `deploy-qa.sh` 用的是**扁平布局**（4 个后端文件同放 `/opt/qa-server/`）⇒ 线上 `Cannot find module '../quality/qa-core.js'`，而**全部本地测试都绿**（它们只在本地布局下跑）。`tests/qa.deploy-layout.test.js` 用「复制成扁平结构 + 跑 `--init`」把这个不变量钉住，并带负向对照（移走 `qa-core.js` 必须红）。**凡涉及"文件放在哪、如何被找"的改动（require 路径 / 部署布局 / systemd WorkingDirectory），都必须有一条在目标布局下真跑一次的用例。**
 >
 > ⚠ **本机跑全量请加 `--test-concurrency=4`**：49 个测试文件各自装载重沙箱，默认并发在本机实测会长时间无输出（曾卡 6 分钟以上无进展），降到 4 路并发约 1 分钟跑完、结果完全一致。别把"没有新输出"误判成"代码把测试挂死了"。
 >

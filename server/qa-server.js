@@ -30,7 +30,33 @@ const crypto = require('crypto');
 
 const qaStore = require('./qa-store.js');
 const qaAuth = require('./qa-auth.js');
-const core = require('../quality/qa-core.js');
+
+/* 【.163 部署修复】qa-core.js 有两个落点，require 必须兼容**两种布局**：
+     · 本地仓库：server/ 与 quality/ 是兄弟目录  ⇒ ../quality/qa-core.js
+     · 服务器部署：deploy-qa.sh 把 qa-core.js 与 qa-server.js 放在**同一目录**（/opt/qa-server/）
+       ⇒ ./qa-core.js
+   顺序：**先同目录（部署态）、再回退（开发态）**。两个落点字节相同，由 deploy-qa.sh 的 md5 断言
+   保证「编号只有一份实现」；**禁止**把 qa-core 的实现复制进本文件。
+   只用 MODULE_NOT_FOUND 判定"该落点不存在"，其它错误（语法错/运行期异常）立即抛出 ——
+   否则真故障会被伪装成"路径不对"，把排查引向错误方向。
+   （同一段逻辑在 qa-store.js 中原样存在，两处必须保持一致：删掉任何一处都会让
+     该文件在另一种布局下起不来。） */
+const core = (function loadQaCore() {
+  const candidates = ['./qa-core.js', '../quality/qa-core.js'];
+  let lastErr = null;
+  for (let i = 0; i < candidates.length; i++) {
+    try {
+      return require(candidates[i]);
+    } catch (e) {
+      if (!e || e.code !== 'MODULE_NOT_FOUND') throw e;
+      lastErr = e;
+    }
+  }
+  const err = new Error('无法加载 qa-core.js（已尝试同目录 ./qa-core.js 与 ../quality/qa-core.js 两个落点）');
+  err.code = 'MODULE_NOT_FOUND';
+  err.cause = lastErr;
+  throw err;
+})();
 
 /* ---------- 常量 ---------- */
 
