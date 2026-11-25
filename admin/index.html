@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>管理员后台 · 辰微</title>
+<!-- 【build 2026-11-25.001】管理员后台独立页面。样式全部内联（复制质量系统质量页与生产系统同源的
+     CSS 变量与组件类定义），**不引用**生产系统 index.html 与质量系统 quality/*.js 的任何脚本、
+     不调用其中的任何函数 —— 视觉与交互口径一致、代码零耦合。
+     只加载本目录下的 admin-app.js（本页唯一逻辑）。
+     与生产系统**只共享**一个 sessionStorage 键 `wb_cb_prod_token`（同源同标签页 ⇒ 免二次登录）。 -->
+<style>
+:root{
+  --primary:#4f46e5;--primary-light:#eef2ff;--primary-dark:#4338ca;
+  --bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#94a3b8;--border:#e2e8f0;
+  --green:#10b981;--green-bg:#ecfdf5;--red:#ef4444;--red-bg:#fef2f2;
+  --amber:#f59e0b;--amber-bg:#fffbeb;--blue:#3b82f6;--blue-bg:#eff6ff;
+  --teal:#14b8a6;--purple:#8b5cf6;
+  --shadow:0 1px 3px rgba(0,0,0,.08);
+  --r:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+/* ---------- layout（复制生产系统） ---------- */
+.app{display:flex;min-height:100vh}
+.sidebar{width:210px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:transform .25s}
+.sidebar-header{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+.sidebar-header .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.nav{flex:1;overflow-y:auto;padding:8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;font-size:13px;color:var(--text);border-left:3px solid transparent;transition:all .15s}
+.nav-item:hover{background:var(--primary-light)}
+.nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
+.nav-item svg{width:18px;height:18px;flex-shrink:0}
+.sidebar-collapse{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border:none;background:var(--card);border-top:1px solid var(--border);color:var(--muted);font-size:13px;width:100%;transition:all .15s}
+.sidebar-collapse:hover{color:var(--primary);background:var(--primary-light)}
+.sidebar-collapse svg{width:18px;height:18px;flex-shrink:0;transition:transform .2s}
+.sidebar.collapsed{width:56px}
+.sidebar.collapsed .sidebar-header{padding:18px 0 14px;text-align:center}
+.sidebar.collapsed .sidebar-header h1{justify-content:center}
+.sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:none}
+.sidebar.collapsed .nav-item{justify-content:center;padding:10px 0}
+.sidebar.collapsed .nav-item span{display:none}
+.sidebar.collapsed .sidebar-collapse{justify-content:center;padding:12px 0}
+.sidebar.collapsed .sidebar-collapse span{display:none}
+.sidebar.collapsed .sidebar-collapse svg{transform:rotate(180deg)}
+.sidebar.collapsed~.main{margin-left:56px}
+.main{flex:1;margin-left:210px;min-width:0}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;gap:12px;flex-wrap:wrap}
+.topbar-left{display:flex;align-items:center;gap:10px}
+.topbar h2{font-size:16px;font-weight:700}
+.topbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.content{padding:16px 20px 80px}
+.mobile-header{display:none;background:var(--card);border-bottom:1px solid var(--border);padding:10px 14px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:60}
+.mobile-header h1{font-size:15px;font-weight:700}
+.hamburger{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+.hamburger svg{width:20px;height:20px}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99}
+.overlay.show{display:block}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%);width:240px}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar.collapsed{width:240px}
+  .sidebar.collapsed .sidebar-header{padding:18px 16px 14px}
+  .sidebar.collapsed .sidebar-header h1 span,.sidebar.collapsed .sidebar-header .sub{display:inline}
+  .sidebar.collapsed .nav-item{justify-content:flex-start;padding:10px 16px}
+  .sidebar.collapsed .nav-item span{display:inline}
+  .sidebar.collapsed .sidebar-collapse{justify-content:flex-start;padding:12px 16px}
+  .sidebar.collapsed .sidebar-collapse span{display:inline}
+  .sidebar.collapsed .sidebar-collapse svg{transform:none}
+  .sidebar.collapsed~.main{margin-left:0}
+  .main{margin-left:0}
+  .mobile-header{display:flex}
+  .content{padding:12px 12px 60px}
+}
+/* ---------- 系统切换下拉（结构与质量系统 quality/index.html 同构：.sys-switch 容器 > h1 触发器 + 兄弟 #sysMenu） ---------- */
+/* #sysMenu 必须是 <h1> 的**兄弟**、而不是 h1 的后代：
+   既有规则 `.sidebar.collapsed .sidebar-header h1 span{display:none}` 会在折叠态隐藏 h1 内所有 span
+   ⇒ 面板项里的系统名与 ✓ 一并消失，innerText 退化成空串。移到 h1 外面就完全不受该规则影响。 */
+.sys-switch{position:relative}
+.sys-switch-trigger{cursor:pointer;user-select:none;border-radius:8px;padding:2px 4px;margin:-2px -4px;transition:background .15s}
+.sys-switch-trigger:hover{background:var(--primary-light)}
+.sys-switch-icon{width:20px;height:20px;flex-shrink:0;color:var(--primary)}
+.sys-switch-caret{font-size:10px;color:var(--muted);margin-left:auto;line-height:1}
+.sys-menu{position:absolute;left:0;top:calc(100% + 8px);min-width:184px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.16);padding:6px;z-index:120;display:none}
+.sys-menu.show{display:block}
+.sys-menu-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap;color:var(--text)}
+.sys-menu-item:hover{background:var(--primary-light)}
+.sys-menu-item.cur{color:var(--primary);font-weight:600}
+.sys-menu-item svg{width:16px;height:16px;flex-shrink:0}
+.sys-menu-item .ck{margin-left:auto;color:var(--green);font-weight:700}
+/* 折叠态：标题文字与 ▾ 都被既有规则隐藏（只剩 20px 齿轮图标）⇒ 命中区扩到 36×36 */
+.sidebar.collapsed .sys-switch-trigger{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:8px;margin:0 auto;border-radius:8px}
+.sidebar.collapsed .sys-switch-trigger:hover{background:var(--primary-light)}
+/* 折叠态面板从 56px 侧边栏**右侧**浮出：.sys-switch 折叠态宽 = 侧边栏内容宽 56px
+   ⇒ left:calc(100% + 6px) = 62px，既不出视口左边缘，也不再压在侧边栏上。 */
+.sidebar.collapsed .sys-menu{left:calc(100% + 6px);top:8px}
+/* 移动端必须把面板覆盖回抽屉内、向下展开（与生产 index.html:99 同口径）。
+   缺这一行时：375px 手机先点「收起」（.collapsed）再点齿轮 ⇒ 面板被定位到 246px，
+   落到 240px 抽屉**右侧视口外**，用户看到的是「点不开」。 */
+@media(max-width:768px){.sidebar.collapsed .sys-menu{left:8px;top:calc(100% + 6px)}}
+/* ---------- components（复制生产系统 / 质量系统） ---------- */
+.card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+.card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+/* 卡片标题里的 svg 必须显式定尺寸：无 width/height 约束的 svg 会按容器 100% 撑开，把卡片高度顶飞 */
+.card-title svg{width:18px;height:18px;flex-shrink:0}
+.card-title .desc{font-size:12px;color:var(--muted);font-weight:400}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);font-size:13px;cursor:pointer;color:var(--text);transition:all .15s;min-height:36px;white-space:nowrap}
+.btn:hover{border-color:var(--primary);color:var(--primary)}
+.btn svg{width:15px;height:15px}
+.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn-primary:hover{background:var(--primary-dark);color:#fff}
+.btn-danger{color:var(--red);border-color:var(--red)}
+.btn-danger:hover{background:var(--red);color:var(--red-bg)}
+.btn-sm{padding:4px 10px;min-height:30px;font-size:12px}
+.btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;border-color:var(--border);color:var(--muted);background:var(--card)}
+.btn:disabled:hover,.btn[disabled]:hover{border-color:var(--border);color:var(--muted);background:var(--card)}
+input,select,textarea{font-family:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);width:100%;outline:none;transition:border .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.1)}
+input[type=checkbox]{width:auto}
+input[readonly]{background:#f8fafc;color:var(--muted);cursor:not-allowed}
+label{font-size:12px;color:var(--muted);display:block;margin-bottom:3px}
+.form-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.form-row>div{flex:1;min-width:120px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary-light);color:var(--primary);font-weight:600;text-align:left;padding:8px 10px;white-space:nowrap;border-bottom:2px solid var(--border)}
+td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:#f8fafc}
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+.empty{text-align:center;padding:30px;color:var(--muted);font-size:13px}
+.empty svg{width:40px;height:40px;margin-bottom:8px;opacity:.4}
+.empty .btn{margin-top:10px}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center;padding:16px}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border-radius:12px;width:760px;max-width:96vw;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-head h3{font-size:16px;font-weight:700}
+.modal-body{padding:18px}
+.modal-foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.close-x{width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;color:var(--muted)}
+.close-x:hover{background:#f1f5f9}
+.hint{font-size:11px;color:var(--muted);margin-top:4px}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+.tag-green{background:var(--green-bg);color:var(--green)}
+.tag-red{background:var(--red-bg);color:var(--red)}
+.tag-amber{background:var(--amber-bg);color:var(--amber)}
+.tag-blue{background:var(--blue-bg);color:var(--blue)}
+.tag-gray{background:#f1f5f9;color:var(--muted)}
+/* ---------- 管理员后台专属 ---------- */
+/* 无权访问卡片：非管理员打开 /admin/ 时**唯一**可见内容（不自动跳转，给一条明确的返回路径） */
+.deny-card{max-width:520px;margin:60px auto;background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:32px 28px;text-align:center}
+.deny-card .deny-ico{width:52px;height:52px;margin:0 auto 12px;color:var(--red);opacity:.85}
+.deny-card h2{font-size:18px;font-weight:700;margin-bottom:8px}
+.deny-card p{font-size:13px;color:var(--muted);margin-bottom:6px;line-height:1.7}
+.deny-card .deny-user{color:var(--text);font-weight:600}
+.deny-card .btn{margin-top:16px}
+/* 权限元数据未就绪（/api/perm-meta 404 等）时的降级提示条 */
+.meta-warn{background:var(--amber-bg);color:#92400e;font-size:12px;border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.meta-warn .btn{margin-left:auto}
+.build-mark{position:fixed;right:8px;bottom:6px;font-size:11px;color:#94a3b8;z-index:180;pointer-events:none;user-select:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <!-- 结构对齐生产页与质量页：.sys-switch 容器 > h1 触发器 + **兄弟** #sysMenu。
+           面板绝不放进 h1 —— 折叠态既有规则 `.sidebar.collapsed .sidebar-header h1 span{display:none}`
+           会把 h1 内所有 span 隐藏，面板项文字会整块消失。 -->
+      <div class="sys-switch" id="sysSwitch">
+        <h1 class="sys-switch-trigger" id="sysSwitchBtn" onclick="ADMIN_APP.toggleSysMenu(event)" title="切换系统">
+          <svg class="sys-switch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="sys-switch-name">管理员后台</span>
+          <span class="sys-switch-caret">▾</span>
+        </h1>
+        <div class="sys-menu" id="sysMenu"></div>
+      </div>
+      <div class="sub">智能断路器 · 辰微</div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <button class="sidebar-collapse" id="collapseBtn" onclick="ADMIN_APP.toggleSidebarCollapse()" title="收起/展开侧边栏">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      <span>收起</span>
+    </button>
+  </aside>
+  <div class="overlay" id="overlay" onclick="ADMIN_APP.toggleSidebar()"></div>
+
+  <!-- 主区 -->
+  <div class="main">
+    <div class="mobile-header">
+      <div class="hamburger" onclick="ADMIN_APP.toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg></div>
+      <h1 id="mobileTitle">员工管理</h1>
+      <div style="width:36px"></div>
+    </div>
+    <div class="topbar">
+      <div class="topbar-left"><h2 id="pageTitle">员工管理</h2></div>
+      <div class="topbar-actions">
+        <!-- 顶栏**只有**「退出」：改密留在生产系统（本后台不搬「修改密码」，见派单 §0.6） -->
+        <button class="btn btn-sm" id="logoutBtn" onclick="ADMIN_APP.logout()" title="退出登录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>退出</button>
+      </div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal" id="modal"></div>
+</div>
+
+<div class="build-mark">build 2026-11-25.001</div>
+
+<script src="admin-app.js"></script>
+</body>
+</html>

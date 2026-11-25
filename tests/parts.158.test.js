@@ -36,6 +36,18 @@ const JS_FILES = ['logs.js', 'import.js', 'transfer.js', 'guide.js', 'prodplan-c
 
 const ADMIN = { username: 'pmc', name: 'PMC小张', role: 'admin', perms: {} };
 
+/* 【build .164】需要读生产后端的权限元数据 PERM_META（index.html 里的 PERM_FORMS 已随
+   「员工管理」迁到管理员后台而删除）。照 tests/server.canwrite.test.js 的做法：先把数据/
+   用户文件路径指向仓库内临时目录，再 require —— 不读不写真实的 server/data.json · users.json。 */
+const SRV_TMP = fs.mkdtempSync(path.join(ROOT, '.p1tmp-'));
+process.env.PROD_DATA_FILE = path.join(SRV_TMP, 'data.json');
+process.env.PROD_USERS_FILE = path.join(SRV_TMP, 'users.json');
+fs.writeFileSync(process.env.PROD_USERS_FILE, JSON.stringify([
+  { username: 'admin', name: '管理员', role: 'admin', status: 'active', salt: 's0', hash: 'h0', perms: {} }
+]));
+const srv = require(path.join(ROOT, 'server', 'server.js'));
+test.after(function () { fs.rmSync(SRV_TMP, { recursive: true, force: true }); });
+
 /* ---------------- 源码工具 ---------------- */
 function stripComments(src) {
   return String(src).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
@@ -542,7 +554,15 @@ test('E1 NAV：零部件数据紧跟产品主数据、零部件台账紧跟调�
   assert.ok(idx('parts') > 0, 'NAV 必须含 parts');
   assert.ok(idx('partLogs') > 0, 'NAV 必须含 partLogs');
   assert.ok(idx('parts') > idx('product') && idx('parts') < idx('order'), '零部件数据应在产品主数据之后、订单管理之前');
-  assert.ok(idx('partLogs') > idx('transfers') && idx('partLogs') < idx('users'), '零部件台账应在调拨台账之后');
+  /* 【build .164 读取目标变更】原断言 `idx('partLogs') < idx('users')`（零部件台账在员工管理之前）。
+     「员工管理」已在 .164 整体迁至管理员后台 ⇒ NAV 里不再有 users 项，旧判据必然假失败。
+     判定意图（零部件台账紧跟调拨台账、且不是被随手插在中间）改为**更强**的两条：
+       ① 台账仍在调拨台账之后；② 台账是 NAV 的最后一项（原来只是「在 users 之前」，
+          若有人往台账后面再塞一项，旧判据看不出来，新判据能看出来）。 */
+  assert.ok(idx('partLogs') > idx('transfers'), '零部件台账应在调拨台账之后');
+  assert.strictEqual(idx('users'), -1, '「员工管理」已迁至管理员后台，NAV 不得再有 users 项');
+  assert.strictEqual(nav.slice(idx('partLogs')).indexOf("{id:'"), 0,
+    '零部件台账必须是 NAV 最后一项（其后不得再插入菜单项）');
   assert.ok(nav.indexOf("label:'零部件数据'") >= 0 && nav.indexOf("label:'零部件台账'") >= 0, '菜单文案');
 });
 
@@ -551,12 +571,16 @@ test('E2 renderContent 已接两个新页签', function () {
   assert.match(INDEX_SRC, /case 'partLogs':c\.innerHTML=renderPartLogs\(\);break;/, 'case partLogs');
 });
 
-test('E3 权限注册：formToKey / FORM_ACTS / PERM_FORMS / PAGED_FORMS', function () {
+test('E3 权限注册：formToKey / FORM_ACTS / PERM_META.forms / PAGED_FORMS', function () {
   const ftk = stripComments(extractFn(INDEX_SRC, 'formToKey'));
   assert.match(ftk, /parts:'parts'/, 'formToKey 映射 parts');
   assert.match(ftk, /partLogs:'parts'/, '台账页归到同一权限点');
   assert.match(stripComments(INDEX_SRC), /parts:\{partIn:'入库'\}/, 'FORM_ACTS 注册入库动作键');
-  assert.match(INDEX_SRC, /PERM_FORMS=\{[^}]*parts:'零部件数据'/, 'PERM_FORMS 注册零部件数据');
+  /* 【build .164 读取目标变更】原断言 `assert.match(INDEX_SRC, /PERM_FORMS=\{[^}]*parts:'零部件数据'/)`：
+     PERM_FORMS 已随「员工管理」迁出 index.html，权威副本改为生产后端 PERM_META.forms。
+     判定意图不变（「零部件数据」这个权限点必须被注册、显示名一字不差），且改为断言**运行时值**
+     而非源码正则片段 —— 比原来更严。 */
+  assert.strictEqual(srv.PERM_META.forms.parts, '零部件数据', 'PERM_META.forms 注册零部件数据权限点');
   assert.match(INDEX_SRC, /PAGED_FORMS=\{[^}]*parts:1,partLogs:1\}/, '两页都启用分页');
 });
 

@@ -670,7 +670,9 @@ function ensureWrite(formKey){
   return true;
 }
 /* ===== 2026-09-08.119：按钮级动作权限（perms.acts）——同一表单写权限内的多人二次分工 =====
-   动作键归属表单（与 PERM_FORMS 键一致），员工面板勾选表单=该表单动作全开、可逐个取消收敛。
+   动作键归属表单（与权限点键一致），员工面板勾选表单=该表单动作全开、可逐个取消收敛。
+   【build .164】员工权限面板已随「员工管理」迁至管理员后台（/admin/）；本文件只保留读取 perms.acts
+   做按钮 gate 的能力。权限清单的**权威副本**在生产后端 server.js 的 PERM_META（GET /api/perm-meta）。
    分工口径：经理=销售侧全动作（金蝶导入/调用库存/交付/退货）；PMC=库存·生成交付计划/调用 + 交付·下推 + 排产·编辑齐套/删除整单 + 产品·生成订单；车间=排产·投产反投产/延后提前/报工/编辑删除报工明细。 */
 const FORM_ACTS={
   product:{genOrder:'生成订单（按产品批量建库存订单）'},
@@ -693,7 +695,7 @@ function canAct(key){
 }
 function needAct(key,msg){
   if(canAct(key))return true;
-  alert(msg||'当前账号无此按钮权限（请联系管理员在「员工管理 → 表单写权限」下为该动作授权）');
+  alert(msg||'当前账号无此按钮权限（请联系管理员在「管理员后台 → 员工管理 → 表单写权限」下为该动作授权）');
   return false;
 }
 /* ===== 2026-10-14.151：顶栏「系统级功能」按角色收权 =====
@@ -970,8 +972,9 @@ const NAV=[
   {id:'transfers',label:'调拨台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4M7 4L3 8M7 4l4 4M17 8v12M17 20l4-4M17 20l-4-4"/></svg>'},
   /* 【build .158】零部件台账：紧邻「调拨台账」——同为用户口中的「台账」类只读流水页
      （用户第 1 条选择「要记录入库流水」⇒ 另起一页仿调拨台账展示每次入库）。 */
-  {id:'partLogs',label:'零部件台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11"/><circle cx="4.5" cy="5" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="4.5" cy="19" r="1.5"/></svg>'},
-  {id:'users',label:'员工管理',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>'}
+  {id:'partLogs',label:'零部件台账',icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11"/><circle cx="4.5" cy="5" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="4.5" cy="19" r="1.5"/></svg>'}
+  /* 【build .164】原「员工管理」NAV 项已删除：该功能整体迁至独立页面「管理员后台」(/admin/)，
+     生产单页不再承载员工账号管理（入口走左上角系统切换下拉）。 */
 ];
 
 /* ================================================================
@@ -1993,10 +1996,9 @@ async function resetAllTableLayout(){
 ================================================================ */
 function renderNav(){
   const nav=document.getElementById('nav');
-  let items=NAV.filter(n=>{
-    if(n.id==='users')return currentUser&&currentUser.role==='admin';
-    return true;
-  });
+  /* 【build .164】原「员工管理（仅管理员）」项已迁至「管理员后台」(/admin/)，NAV 里不再有
+     需要按角色过滤的节点 ⇒ 直接整份拷贝（下方 navOrder 的恢复逻辑一行未动）。 */
+  let items=NAV.slice();
   /* 应用已保存的菜单顺序（长按拖动调整），新增/无权限项自动跟随默认顺序 */
   try{
     const saved=JSON.parse(localStorage.getItem(KEY+'navOrder')||'null');
@@ -2112,7 +2114,7 @@ function renderContent(){
     case 'guide':c.innerHTML=renderGuide();break;   /* 2026-08-25.69：使用说明 */
     case 'transfers':c.innerHTML=renderTransfers();break;
     case 'partLogs':c.innerHTML=renderPartLogs();break;   /* 【build .158】零部件台账（只读流水） */
-    case 'users':c.innerHTML=renderUsers();break;
+    /* 【build .164】case 'users' 已删除：员工管理迁至「管理员后台」(/admin/)，生产单页不再渲染该页签 */
     default:c.innerHTML='<div class="empty">未知模块</div>';
   }
   if(restoreScroll){
@@ -3100,7 +3102,7 @@ var __piIdxs=null;   /* 本次入库弹窗中参与的行下标（parts 下标�
 var __piBusy=false;
 function openPartIn(){
   if(!ensureWrite('parts'))return;
-  if(!canAct('parts.partIn')){alert('当前账号无「入库」按钮权限（请联系管理员在「员工管理 → 表单写权限 → 零部件数据」下授权）');return;}
+  if(!canAct('parts.partIn')){alert('当前账号无「入库」按钮权限（请联系管理员在「管理员后台 → 员工管理 → 表单写权限 → 零部件数据」下授权）');return;}
   const s=selSet('parts');
   const idxs=[...s].map(Number).filter(function(i){return !!parts[i];});
   if(idxs.length===0){alert('请先勾选要入库的零部件');return;}
@@ -7870,171 +7872,9 @@ function delTpl(i){
 }
 
 
-/* ================================================================
-   员工管理（仅管理员） + 修改密码
-================================================================ */
-const PERM_FORMS={products:'产品主数据',parts:'零部件数据',saleOrders:'订单管理·销售订单',invOrders:'库存管理·库存订单',dailyPlans:'排产计划',deliveries:'交付计划',processTemplates:'工序模板',transfers:'调拨台账',qa:'质量管理'};   /* .118：orders 拆为 saleOrders（销售）/invOrders（库存）两权限点，按页面分人｜.122：包装排产权限点移除｜.158：新增零部件数据权限点（零部件台账同归此点）｜【build .163】新增 qa:'质量管理'（质量系统写权限；勾选=可编辑，不勾=只读，无该键的存量员工一律只读） */
-async function loadUsers(){
-  try{
-    const r=await apiReq('/users');
-    const j=await r.json();
-    window.__usersCache=j.users||[];
-  }catch(e){window.__usersCache=[];}
-}
-function renderUsers(){
-  let html='<div class="card"><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--primary)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>员工管理 <span class="desc">账号 · 角色 · 按表单写权限（勾选=可编辑，不勾=只读）</span> <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="userModal()">新增员工</button></div>';
-  if(!(window.__usersCache&&window.__usersCache.length)){
-    html+='<div class="empty">加载中...</div></div>';
-    loadUsers().then(function(){renderContent();});
-    return html;
-  }
-  html+='<div class="table-wrap"><table><thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>状态</th><th>表单写权限</th><th style="width:130px">操作</th></tr></thead><tbody>';
-  window.__usersCache.forEach(u=>{
-    const permStr=Object.keys(PERM_FORMS).filter(k=>u.perms&&u.perms[k]===true).map(k=>PERM_FORMS[k]).join('、')||'（无，全部只读）';
-    const admin=u.role==='admin';
-    html+='<tr><td style="font-weight:600">'+esc(u.username)+'</td><td>'+esc(u.name)+'</td>'
-      +'<td>'+(admin?'<span class="tag tag-red">管理员</span>':'<span class="tag tag-blue">员工</span>')+'</td>'
-      +'<td>'+(u.status==='active'?'<span class="tag tag-green">启用</span>':'<span class="tag tag-gray">停用</span>')+'</td>'
-      +'<td style="font-size:12px">'+esc(permStr)+'</td>'
-      +'<td><button class="btn btn-sm" onclick="userModal(\''+u.username+'\')">编辑</button> '
-      +(!admin?'<button class="btn btn-sm btn-danger" onclick="delUser(\''+u.username+'\')">删除</button>':'')
-      +'</td></tr>';
-  });
-  html+='</tbody></table></div></div>';
-  return html;
-}
-/* .120：员工权限面板——左列表（表单三态复选框）+ 右栏（点击表单名查看/勾选其「业务动作」按钮）。
-   三态语义：空框=无该表单写权限；全勾=该表单全部写权限（动作全开）；横杠(indeterminate)=部分写权限（部分动作勾选）。
-   存储不变：perms[form]=bool（半选视为 true，动作落库/按钮 gate 仍需表单写权限）+ perms.acts={form.act:bool}。 */
-let __permActiveForm=null;
-function setActivePermForm(k){
-  __permActiveForm=k;
-  document.querySelectorAll('#modal [id^="permrow_"]').forEach(function(el){
-    el.style.background=(el.id.slice(8)===k)?'#e8f0fe':'';
-    el.style.outline=(el.id.slice(8)===k)?'1px solid #bfdbfe':'';
-  });
-  document.querySelectorAll('#modal [id^="permActs_"]').forEach(function(el){
-    el.style.display=(el.id.slice(9)===k)?'block':'none';
-  });
-}
-/* .121 修复：PERM_FORMS 遍历键=权限键(products/saleOrders…)，FORM_ACTS 键=表单键(product/order_frame…)——面板按权限键匹配动作恒为空。
-   统一经 formToKey 反查：权限键 → 该权限点下承载动作的表单键（dailyPlans 权限点=「排产计划」prodPlan 表单，.122 起不再挂备货 dp_stockup） */
-function permFormKeyOf(permKey){
-  const keys=Object.keys(FORM_ACTS);
-  for(let i=0;i<keys.length;i++){if(formToKey(keys[i])===permKey)return keys[i];}
-  return null;
-}
-/* 动作勾选变化 → 重算表单复选框三态（全勾=勾、部分=横杠、全无=空） */
-function recomputePermTri(k){
-  const fm=permFormKeyOf(k);
-  if(!fm)return;
-  const acts=Object.keys(FORM_ACTS[fm]);
-  if(!acts.length)return;
-  const root=document.querySelector('#modal input[data-perm="'+k+'"]');
-  const bs=document.querySelectorAll('#modal input[data-act^="'+fm+'."]');
-  let n=0;
-  bs.forEach(function(b){if(b.checked)n++;});
-  root.checked=(n>0&&n===bs.length);
-  root.indeterminate=(n>0&&n<bs.length);
-  if(n>0&&__permActiveForm!==k)setActivePermForm(k);
-}
-/* 勾选表单复选框=全开其动作；取消=全关（含半选清空） */
-function permTriToggle(k,checked){
-  const fm=permFormKeyOf(k);
-  if(fm)document.querySelectorAll('#modal input[data-act^="'+fm+'."]').forEach(function(b){b.checked=checked;});
-  const root=document.querySelector('#modal input[data-perm="'+k+'"]');
-  root.checked=checked;
-  root.indeterminate=false;
-  if(checked&&__permActiveForm!==k)setActivePermForm(k);
-}
-/* 弹窗渲染完成后：按存量勾选反推各表单三态 + 默认选中第一个表单 */
-function permInitUI(){
-  Object.keys(PERM_FORMS).forEach(function(k){recomputePermTri(k);});
-  setActivePermForm(Object.keys(PERM_FORMS)[0]);
-}
-function userModal(username){
-  const list=window.__usersCache||[];
-  const u=username?list.find(x=>x.username===username):null;
-  const p=u||{username:'',name:'',role:'staff',status:'active',perms:{}};
-  let body='<div class="form-row"><div><label>用户名（登录名）</label><input id="uf_user" '+(u?'readonly':'')+' value="'+esc(p.username)+'" placeholder="2-20位字母数字下划线"></div>'
-    +'<div><label>姓名</label><input id="uf_name" value="'+esc(p.name)+'"></div></div>'
-    +'<div class="form-row"><div><label>角色</label><select id="uf_role"><option value="staff" '+(p.role!=='admin'?'selected':'')+'>员工</option><option value="admin" '+(p.role==='admin'?'selected':'')+'>管理员</option></select></div>'
-    +'<div><label>状态</label><select id="uf_status"><option value="active" '+(p.status!=='disabled'?'selected':'')+'>启用</option><option value="disabled" '+(p.status==='disabled'?'selected':'')+'>停用</option></select></div></div>'
-    +'<div class="form-row"><div><label>'+(u?'重置密码（留空则不修改）':'初始密码')+'</label><input id="uf_pwd" type="text" value=""></div></div>'
-    +'<div><label style="font-weight:600">表单写权限</label>'
-    +'<div style="font-size:12px;color:var(--muted);margin:2px 0 6px">左侧勾选表单＝整表单可编辑；<b>点表单名</b>，右侧显示其「业务动作」按钮逐个勾选。动作有空窗/全勾/部分三种：空＝无权限 · 全勾＝全部按钮 · <b>横杠＝部分按钮</b>（仍算有该表单写权限）</div>'
-    +'<div style="display:flex;gap:10px;align-items:flex-start">'
-    +'<div style="flex:0 0 188px;border:1px solid var(--border);border-radius:6px;padding:3px;max-height:320px;overflow:auto;background:#fff">'
-    +Object.keys(PERM_FORMS).map(k=>{
-      const fCk=p.perms&&p.perms[k]===true;
-      const fmKey=permFormKeyOf(k);   /* .121：权限键→表单键反查（PERM_FORMS 键 ≠ FORM_ACTS 键） */
-      const hasActs=!!fmKey;
-      return '<div id="permrow_'+k+'" style="display:flex;align-items:center;gap:5px;padding:4px 7px;border-radius:4px;cursor:pointer;font-size:13px" onclick="setActivePermForm(\''+k+'\')" title="'+(hasActs?'点击查看/勾选本表单的业务动作按钮':'本表单无独立业务动作，勾选即整表单可编辑')+'">'
-        +'<input type="checkbox" data-perm="'+k+'" '+(fCk?'checked':'')+' onclick="event.stopPropagation();permTriToggle(\''+k+'\',this.checked)" style="flex:none;cursor:pointer">'
-        +'<span style="color:var(--text);white-space:nowrap">'+PERM_FORMS[k]+'</span>'
-        +(hasActs?'<span style="margin-left:auto;font-size:10px;color:#9ca3af">动作▸</span>':'')
-        +'</div>';
-    }).join('')
-    +'</div>'
-    +'<div style="flex:1;border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:140px;background:#fbfcfe;overflow:auto;max-height:320px">'
-    +Object.keys(PERM_FORMS).map(k=>{
-      const fmKey=permFormKeyOf(k);   /* .121：右栏动作按表单键渲染（data-act 用 fmKey.动作，与 canAct/线上 perms.acts 键一致） */
-      const acts=fmKey?Object.keys(FORM_ACTS[fmKey]):[];
-      const fCk=p.perms&&p.perms[k]===true;
-      const actsObj=p.perms&&p.perms.acts;
-      return '<div id="permActs_'+k+'" style="display:none">'
-        +'<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">'+PERM_FORMS[k]+' · 业务动作按钮</div>'
-        +'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">勾选＝拥有该按钮操作权（保存生效）；按钮可见还需左侧本表单已勾选（横杠=部分也放行）。仅勾「动作」未勾「左侧全选框」时，保存自动视为表单已授权。</div>'
-        +(acts.length
-          ?'<div style="display:flex;flex-direction:column;gap:2px">'+acts.map(a=>'<label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" data-act="'+fmKey+'.'+a+'" '+(fCk&&(!actsObj||actsObj[fmKey+'.'+a]===true)?'checked':'')+' onchange="recomputePermTri(\''+k+'\')" style="cursor:pointer">'+FORM_ACTS[fmKey][a]+'</label>').join('')+'</div>'
-          :'<div style="font-size:12px;color:var(--muted)">该表单无独立业务动作按钮——勾选左侧本表单即拥有其全部写权限（新增/编辑/复制/删除）。</div>')
-        +'</div>';
-    }).join('')
-    +'</div>'
-    +'</div>';
-  showModal(u?'编辑员工':'新增员工',body,
-    '<button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveUser('+(u?"'"+u.username+"'":'null')+')">保存</button>');
-  permInitUI();
-}
-async function saveUser(username){
-  const uname=document.getElementById('uf_user').value.trim();
-  const name=document.getElementById('uf_name').value.trim();
-  const role=document.getElementById('uf_role').value;
-  const status=document.getElementById('uf_status').value;
-  const pwd=document.getElementById('uf_pwd').value;
-  const perms={};
-  /* .120：三态收集——全勾/横杠(部分动作)=表单有写权限（动作按钮可见与落库均需表单写权限）；空框=无权限 */
-  document.querySelectorAll('#modal input[data-perm]').forEach(c=>{perms[c.dataset.perm]=(c.checked||c.indeterminate);});
-  /* .119：按钮级动作权限收集——勾选的「业务动作」子项写入 perms.acts（未勾=该动作收敛；保存后 canAct 即严格生效） */
-  const acts={};
-  document.querySelectorAll('#modal input[data-act]').forEach(c=>{acts[c.dataset.act]=c.checked;});
-  perms.acts=acts;
-  /* .118：权限点拆分固化——编辑历史员工若曾勾「订单管理(orders)」则自动转为销售/库存双开（该员工权限面板不再有 orders 项） */
-  if(username){
-    const _ou=(window.__usersCache||[]).find(x=>x.username===username);
-    if(_ou&&_ou.perms&&_ou.perms.orders===true){perms.saleOrders=true;perms.invOrders=true;}
-  }
-  const payload={username:uname||username,name:name||uname||username,role:role,status:status,perms:perms};
-  if(pwd)payload.password=pwd;
-  try{
-    const r=await apiReq('/users',{method:username?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const j=await r.json();
-    if(!r.ok){alert(j.error||'保存失败');return;}
-    closeModal();
-    await loadUsers();
-    if(currentUser&&currentUser.username===uname&&role==='staff')currentUser.role='staff';
-    renderContent();
-  }catch(e){alert('保存失败，请检查网络');}
-}
-async function delUser(username){
-  if(!confirm('确认删除员工「'+username+'」？此操作不可恢复。'))return;
-  try{
-    const r=await apiReq('/users?username='+encodeURIComponent(username),{method:'DELETE'});
-    const j=await r.json();
-    if(!r.ok){alert(j.error||'删除失败');return;}
-    await loadUsers();renderContent();
-  }catch(e){alert('删除失败');}
-}
+/* 【build .164】员工管理已迁至「管理员后台」（/admin/），本文件不再保留其实现。
+   ★ 此处只写短令牌 `build .164`（不写完整版本号）：`qa.import-nodelivered §? / buildAnyRe(BUILD)`
+   与 `qa.parts-ledger §F6` 会统计全文完整版本号出现次数并断言**恰 1 处**（仅水印）。 */
 /* 修改本人密码 */
 function pwdModal(){
   const body='<div class="form-row"><div><label>原密码</label><input id="cp_old" type="password"></div></div>'
@@ -9103,7 +8943,7 @@ bootstrap();
 })();
 </script>
 <div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
-<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-23.163</div>
+<div style="position:fixed;right:8px;bottom:18px;font-size:11px;color:#9ca3af;z-index:50;pointer-events:none">build 2026-11-25.164</div>
 <!-- ================================================================
      系统切换下拉（左上角标题）—— 新增系统只改下方 SYSTEMS 数组一行
      ================================================================ -->
@@ -9120,12 +8960,16 @@ bootstrap();
       直接破坏「只登录一次」这条硬需求。详见设计 §9.3 与 deploy-qa.sh 的 nginx 片段。 */
 var SYSTEMS=[
   {key:'prod',name:'生产排单系统',url:'/',icon:'house'},
-  {key:'qa',name:'质量系统',url:'/quality/',icon:'shield'}
+  {key:'qa',name:'质量系统',url:'/quality/',icon:'shield'},
+  /* 【build .164】管理员后台（原生产单页内的「员工管理」已整体迁入该独立页面） */
+  {key:'admin',name:'管理员后台',url:'/admin/',icon:'gear'}
 ];
 (function(){
   var ICONS={
     house:'<path d="M2 20h20M5 20V8l7-5 7 5v12M9 20v-6h6v6"/>',
-    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'
+    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    /* 【build .164】齿轮：管理员后台图标（与 admin/index.html、quality/qa-app.js 的 gear 同形） */
+    gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
   };
   function svgIcon(name){
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '

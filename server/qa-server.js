@@ -66,8 +66,10 @@ const TABLE_KEY = qaStore.TABLE_KEY;
 const MAX_BODY_BYTES = 64 * 1024;          /* 设计 §1.2.3d：body > 64KB ⇒ 413 */
 const RETRY_AFTER_SEC = '3';               /* 503 时告知前端 3 秒后自动重试一次 */
 
-/** 403 文案与前端 alert 文案逐字一致（PRD 7.3） */
-const WRITE_FORBIDDEN_TEXT = '无「质量管理」编辑权限，请联系管理员在「员工管理 → 表单写权限」中授权';
+/** 403 文案与前端 alert 文案逐字一致（PRD 7.3）
+    【build .164】指路前缀补「管理员后台 →」：员工管理已从生产单页迁到独立后台（/admin/），
+    原句只写「员工管理 → 表单写权限」会让用户在生产系统左侧菜单里找不到入口。 */
+const WRITE_FORBIDDEN_TEXT = '无「质量管理」编辑权限，请联系管理员在「管理员后台 → 员工管理 → 表单写权限」中授权';
 
 /* 数值型 env 归一：非法回落默认值（运维手滑写错不该让服务起不来） */
 function envInt(v, def, min) {

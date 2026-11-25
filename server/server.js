@@ -124,6 +124,79 @@ Object.keys(data).forEach(k => revs[k] = 0);
 const STAFF_PERMS = { products: false, saleOrders: false, invOrders: false, dailyPlans: false, deliveries: false, processTemplates: false, fields: false, acts: {} };   /* .118：orders 拆为 saleOrders(销售)/invOrders(库存)；.119：acts=按钮级业务动作（空=仅 CRUD，由管理员在员工面板按动作授权） */
 /* .119：按钮级动作键全集（与前端 FORM_ACTS 键一致，供存量员工迁移全开与前端逐键收敛） */
 const ACT_KEYS = ['product.genOrder', 'order_frame.saleDeliver', 'order_frame.saleReturn', 'order_frame.kingdeeImport', 'order_frame.saleCall', 'order_frame.saleReturnStock', 'order_inv.invGenDelivery', 'order_inv.invCall', 'delivery.delPushPlan', 'prodPlan.ppEdit', 'prodPlan.ppLaunch', 'prodPlan.ppShift', 'prodPlan.ppReport', 'prodPlan.ppReportEdit', 'prodPlan.ppDel'];
+/* ============================================================
+   【build .164】PERM_META —— 管理员后台（/admin/）的**唯一**权限元数据来源
+   ------------------------------------------------------------
+   结构三份：
+     forms    : 权限点键 → 显示名（9 项，顺序即界面顺序）
+     formKeys : 数据表表单键 → 权限点键（12 项；formToKey 的映射表，回查用）
+     acts     : 表单键 → { 动作键 → 显示名 }（6 项；按钮级动作清单）
+   由 GET /api/perm-meta（仅管理员）下发给 admin/admin-app.js，权限面板左栏复选框、
+   右栏动作、列表「表单写权限」列**全部**由它派生 —— 后台页面不得自建第二份权限清单字面量。
+
+   ★ 生产前端 index.html 里的同名常量（PERM_FORMS / formToKey / FORM_ACTS）是
+     「按钮 gate 用的**运行时副本**」——它们被 canAct()/needAct() 在每次点击时同步调用，
+     不能改成异步拉接口。两份内容必须**逐键逐字一致**，由
+     tests/qa.admin-console.independent.test.js 与 tests/qa.perm-qa-key.test.js 钉死。
+   ============================================================ */
+const PERM_META = {
+  /* 权限点：键 → 显示名（.118 orders 拆为 saleOrders/invOrders；.122 包装排产移除；
+     .158 新增 parts；.163 新增 qa） */
+  forms: {
+    products: '产品主数据',
+    parts: '零部件数据',
+    saleOrders: '订单管理·销售订单',
+    invOrders: '库存管理·库存订单',
+    dailyPlans: '排产计划',
+    deliveries: '交付计划',
+    processTemplates: '工序模板',
+    transfers: '调拨台账',
+    qa: '质量管理'
+  },
+  /* 表单键 → 权限点键（与 index.html formToKey 的映射表逐键一致；
+     零部件 parts/partLogs 两表同归 parts 权限点） */
+  formKeys: {
+    product: 'products',
+    order_frame: 'saleOrders',
+    order_inv: 'invOrders',
+    delivery: 'deliveries',
+    prodPlan: 'dailyPlans',
+    processTpl: 'processTemplates',
+    fields: 'fields',
+    report: 'report',
+    logs: 'logs',
+    transfers: 'transfers',
+    parts: 'parts',
+    partLogs: 'parts'
+  },
+  /* 按钮级动作键（与 index.html FORM_ACTS 逐键逐字一致）。qa 刻意不注册动作键：
+     质量系统本期只有 CRUD，没有可细分的按钮 */
+  acts: {
+    product: { genOrder: '生成订单（按产品批量建库存订单）' },
+    order_frame: {
+      saleDeliver: '交付登记',
+      saleReturn: '退货',
+      kingdeeImport: '导入金蝶订单',
+      saleCall: '调用库存',
+      saleReturnStock: '退回库存'
+    },
+    order_inv: {
+      invGenDelivery: '生成交付计划',
+      invCall: '调用库存（改装/移库补库）',
+      invAdjust: '库存调整（盘盈/盘亏）'
+    },
+    delivery: { delPushPlan: '下推排产计划' },
+    prodPlan: {
+      ppEdit: '编辑排产/物料齐套',
+      ppLaunch: '投产/反投产',
+      ppShift: '延后/提前计划日期',
+      ppReport: '报工',
+      ppReportEdit: '编辑/删除报工明细',
+      ppDel: '删除排产'
+    },
+    parts: { partIn: '入库' }
+  }
+};
 let users = load(USERS_FILE, null);
 if (!users || !Array.isArray(users)) {
   /* 【安全 P0·②】首次初始化分支（仅在 users.json 不存在/非法时进入）。
@@ -738,6 +811,13 @@ function handleRequest(req, res) {
   /* ============ 员工管理（仅管理员） ============ */
   if (user.role !== 'admin') return send(res, 403, { error: '无权限' });
 
+  /* 【build .164】管理员后台：只读权限元数据（仅管理员）
+     位置刻意在管理员硬闸**之后**、/api/users **之前** —— 非管理员走到这里已 403，
+     因此本端点无需再自行判角色（单一闸门，不重复实现）。 */
+  if (p === '/api/perm-meta' && req.method === 'GET') {
+    return send(res, 200, { ok: true, meta: PERM_META });
+  }
+
   /* 员工列表 */
   if (p === '/api/users' && req.method === 'GET') {
     return send(res, 200, { users: users.map(publicUser) });
@@ -811,5 +891,6 @@ module.exports = {
   deepEq,                         /* (a, b) → boolean；键序无关深度等价 */
   handleRequest,                  /* (req, res) → void；HTTP 处理器（供端到端测试自建 server） */
   auth, publicUser,
-  DEFAULT_DATA, MAX_OPS, LOG_MAX
+  DEFAULT_DATA, MAX_OPS, LOG_MAX,
+  PERM_META                       /* 【build .164】{forms, formKeys, acts}；管理员后台权限元数据的唯一来源 */
 };

@@ -29,11 +29,11 @@ const { createApp, ROOT } = require('./harness/sandbox');
      · BUILD_NO   = BUILD 的 `.NNN` 段（guide.js 与注释里只许用「build .NNN」短形态）；
      · BUILD_DATE = BUILD 的日期段（guide.js 文首「更新：YYYY-MM-DD（build .NNN）」）。
    刻意**不**把 `.159` / `2026-10-31` 分散写死在断言里 —— .148 就因清单/计数不同步假失败过一次。 */
-const BUILD = '2026-11-23.163';
-const PREV = '2026-11-20.162';
-const BUILD_NO = String(BUILD).split('.')[1];       /* '163' */
-const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-23' */
-const PREV_NO = String(PREV).split('.')[1];         /* '162' */
+const BUILD = '2026-11-25.164';
+const PREV = '2026-11-23.163';
+const BUILD_NO = String(BUILD).split('.')[1];       /* '164' */
+const BUILD_DATE = String(BUILD).split('.')[0];     /* '2026-11-25' */
+const PREV_NO = String(PREV).split('.')[1];         /* '163' */
 
 const readRel = function (rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); };
 const INDEX_SRC = readRel('index.html');
@@ -1210,11 +1210,17 @@ test('E1 服务端 canWrite：parts / partLogs 只听 p.parts（admin 恒放行�
   assert.ok(Array.isArray(srv.DEFAULT_DATA.parts) && Array.isArray(srv.DEFAULT_DATA.partLogs), '两表初值必须是数组');
 });
 
-test('E2 前端权限映射：formToKey / PERM_FORMS / FORM_ACTS / canAct', function () {
+test('E2 前端权限映射：formToKey / PERM_META.forms / FORM_ACTS / canAct', function () {
   const app = mkApp();
   assert.equal(app.run("formToKey('parts')"), 'parts', "formToKey('parts') === 'parts'");
   assert.equal(app.run("formToKey('partLogs')"), 'parts', "formToKey('partLogs') === 'parts'（台账归同一权限点）");
-  assert.equal(app.run("PERM_FORMS['parts']"), '零部件数据', 'PERM_FORMS.parts 存在且文案正确');
+  /* 【build .164 读取目标变更】原断言 `app.run("PERM_FORMS['parts']") === '零部件数据'`：
+     PERM_FORMS 已随「员工管理」迁出 index.html，权限清单的**权威副本**改为生产后端的
+     PERM_META.forms（GET /api/perm-meta 下发给管理员后台）。判定意图不变 ——
+     仍是「parts 这个权限点存在、且显示名恰为『零部件数据』」，只是改成从权威来源读，
+     且比原来更严：同时钉住 formKeys.parts 映射（原来是 formToKey 单侧）。 */
+  assert.equal(srv.PERM_META.forms.parts, '零部件数据', 'PERM_META.forms.parts 存在且文案正确');
+  assert.equal(srv.PERM_META.formKeys.parts, 'parts', 'PERM_META.formKeys.parts 映射一致');
   assert.equal(app.run("FORM_ACTS['parts'] && FORM_ACTS['parts'].partIn"), '入库', 'FORM_ACTS.parts.partIn 存在');
   /* 写权限映射 */
   app.setGlobal('currentUser', { username: 'x', role: 'staff', perms: { parts: true } });
@@ -1299,17 +1305,23 @@ test('E4b [KNOWN GAP] savePart 无函数级写权限守卫（与 saveProduct 同
    §R 菜单与路由接线
    ================================================================ */
 
-test('R1 菜单位置：零部件数据紧随产品主数据、零部件台账紧随调拨台账（共 12 项）', function () {
+test('R1 菜单位置：零部件数据紧随产品主数据、零部件台账紧随调拨台账（共 11 项）', function () {
   const s = INDEX_SRC.indexOf('const NAV=[');
   const nav = INDEX_SRC.slice(s, INDEX_SRC.indexOf('];', s));
   const ids = (nav.match(/\{id:'[^']+'/g) || []).map(function (x) { return x.slice(5, -1); });
-  assert.equal(ids.length, 12, '菜单共 12 项（README 同步声明 12 项），实际: ' + ids.join(','));
+  /* 【build .164 读取目标变更】原断言「菜单共 12 项（README 同步声明 12 项）」：
+     .164 把「员工管理」整体迁到独立页面「管理员后台」(/admin/)，NAV 少一项 ⇒ 12 减为 11。
+     判定意图（菜单项数必须与 README 声明一致、且零部件两页位置正确）**完全保留**，
+     只把**事实数字**同步为 11 —— 这不是放宽：数量仍是硬等式（11 vs 11），
+     且下方新增「NAV 不得再有 users 项」的负向断言，比原来更严。 */
+  assert.equal(ids.length, 11, '菜单共 11 项（README 同步声明 11 项），实际: ' + ids.join(','));
+  assert.equal(ids.indexOf('users'), -1, '「员工管理」已迁至管理员后台，NAV 不得再有 users 项');
   const at = function (id) { const i = ids.indexOf(id); assert.ok(i >= 0, '菜单缺少 ' + id); return i; };
   assert.equal(at('parts'), at('product') + 1, '零部件数据必须**紧邻**产品主数据之后');
   assert.equal(at('partLogs'), at('transfers') + 1, '零部件台账必须**紧邻**调拨台账之后');
   assert.ok(nav.indexOf("label:'零部件数据'") >= 0 && nav.indexOf("label:'零部件台账'") >= 0, '菜单文案');
-  /* README 的「共 12 项」必须与实现一致（文档漂移守卫） */
-  assert.ok(README_SRC.indexOf('左侧菜单共 **12 项**') >= 0, 'README 菜单项数声明应为 12');
+  /* README 的「共 11 项」必须与实现一致（文档漂移守卫；数字随员工管理迁出同步为 11） */
+  assert.ok(README_SRC.indexOf('左侧菜单共 **11 项**') >= 0, 'README 菜单项数声明应为 11');
   /* 路由接线 + 分页 + 筛选栏启用 */
   const flat = stripComments(INDEX_SRC);
   assert.ok(/case 'parts':\s*c\.innerHTML=renderParts\(\);/.test(flat), 'renderContent 必须接 parts');

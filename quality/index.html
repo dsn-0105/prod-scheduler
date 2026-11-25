@@ -95,6 +95,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
    ⇒ left:calc(100% + 6px) = 62px，既不出视口左边缘（旧写法 left:0 叠 margin:-4px 会到 x=-4），
    也不再压在侧边栏上（overlap 由 60px 降到 0）。 */
 .sidebar.collapsed .sys-menu{left:calc(100% + 6px);top:8px}
+/* 【build .164】与生产 index.html 同口径补移动端覆盖：.163 引入折叠态面板时漏了这一行，
+   375px 手机上先「收起」再点左上图标 ⇒ 面板被定位到 246px、落在 240px 抽屉右侧视口外
+   ⇒ 表现为「点不开」。补回后移动端仍在抽屉内向下展开。 */
+@media(max-width:768px){.sidebar.collapsed .sys-menu{left:8px;top:calc(100% + 6px)}}
 /* ---------- components（复制生产系统） ---------- */
 .card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
 .card-title{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}

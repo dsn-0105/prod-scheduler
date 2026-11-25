@@ -7,21 +7,28 @@
    "顺手重构一下标题" 就可能把「折叠态图标可点」「同标签页跳转」「不接入 tab」
    这三个前提之一改坏，而这类破坏在浏览器里只表现为"点不动"，很难被回归发现。
 
+   【build .164】第三个系统「管理员后台」(/admin/) 接入同一个下拉。本轮变化：
+     · SYSTEMS 由 2 项变 3 项（生产 index.html / quality/qa-app.js / admin/admin-app.js **三处副本**）
+     · url 正则从「/ 或 /quality/」扩为「/ 或 /quality/ 或 /admin/」
+     · 「两处副本 key 一致」扩为「三处副本 key 与 url 全一致」
+     · 原 §四 的 PERM_FORMS 断言改为读服务端 PERM_META.forms（员工管理已迁出 index.html），
+       并保留「不得硬编码权限键清单」这条**判定意图**（指向 admin/admin-app.js）
+
    测什么（逐条照设计 §1.2.6d 清单）：
-     · SYSTEMS 数组存在且 key/name/url/icon 四字段齐全；含 prod + qa；qa.url === '/quality/'
+     · SYSTEMS 数组存在且 key/name/url/icon 四字段齐全；含 prod + qa + admin；qa.url === '/quality/'
      · 下拉 DOM 结构：#sysSwitch / #sysSwitchBtn / #sysMenu
      · `▾` 在 <span> 内（折叠态才被既有规则自动隐藏）
      · 无 window.open / target=_blank（sessionStorage 按标签页隔离，新窗口必掉登录态）
      · SYSTEMS 未接入 activeTab（负向：禁止把 'qa' 塞进 TABS/NAV）
-     · PERM_FORMS 含 qa:'质量管理'；formToKey('qa') === 'qa'
+     · PERM_META.forms 含 qa:'质量管理'；formToKey('qa') === 'qa'
      · .sidebar 规则行内不含 overflow（守护「absolute 可逃逸 56px」这个前提）
 
-   另加两条本文件自己的交叉守卫（设计未列，但两套 SYSTEMS 副本无其它守护）：
-     · index.html 的 SYSTEMS 与 quality/qa-app.js 的 SYSTEMS **key 集合一致**
+   另加两条本文件自己的交叉守卫（设计未列，但三套 SYSTEMS 副本无其它守护）：
+     · index.html / quality/qa-app.js / admin/admin-app.js 的 SYSTEMS **key 集合与 url 全一致**
      · 新增的内联块内**不得**出现主脚本末尾那个自动执行调用（否则 harness 定位漂移）
 
    运行：node --test tests/qa.systems-switch.test.js
-   边界：文本级 + 隔离 vm 求值；不启动浏览器、不启动后端。
+   边界：文本级 + 隔离 vm 求值；不启动浏览器、不启动后端（require 生产后端时路径已指向临时目录）。
    ============================================================ */
 
 const { test } = require('node:test');
@@ -35,6 +42,18 @@ const domStub = require('./harness/dom-stub');
 
 const INDEX_SRC = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const QA_APP_SRC = fs.readFileSync(path.join(ROOT, 'quality', 'qa-app.js'), 'utf8');
+const ADMIN_APP_SRC = fs.readFileSync(path.join(ROOT, 'admin', 'admin-app.js'), 'utf8');
+
+/* 【build .164】PERM_META 的权威来源：生产后端导出（隔离临时目录，不读不写真实 server/*.json） */
+const SRV_TMP = fs.mkdtempSync(path.join(ROOT, '.p1tmp-'));
+process.env.PROD_DATA_FILE = path.join(SRV_TMP, 'data.json');
+process.env.PROD_USERS_FILE = path.join(SRV_TMP, 'users.json');
+fs.writeFileSync(process.env.PROD_USERS_FILE, JSON.stringify([
+  { username: 'admin', name: '管理员', role: 'admin', status: 'active', salt: 's0', hash: 'h0', perms: {} }
+]));
+const srv = require(path.join(ROOT, 'server', 'server.js'));
+const PERM_META = srv.PERM_META;
+test.after(function () { fs.rmSync(SRV_TMP, { recursive: true, force: true }); });
 
 /** 跨 realm 归一化 */
 function plain(v) {
@@ -73,18 +92,18 @@ function evalSysSwitchBlock() {
 /* ============================================================
    一、SYSTEMS 常量
    ============================================================ */
-test('SYSTEMS：数组存在、四字段齐全、含 prod + qa、qa.url === "/quality/"', function () {
+test('SYSTEMS：数组存在、四字段齐全、含 prod + qa + admin、qa.url === "/quality/"', function () {
   const r = evalSysSwitchBlock();
   const SYSTEMS = r.systems;
   assert.ok(Array.isArray(SYSTEMS), 'SYSTEMS 必须是数组');
-  assert.strictEqual(SYSTEMS.length, 2, '本轮恰两个系统');
+  assert.strictEqual(SYSTEMS.length, 3, '本轮恰三个系统（生产 / 质量 / 管理员后台）');
 
   SYSTEMS.forEach(function (s) {
     assert.deepStrictEqual(Object.keys(s).sort(), ['icon', 'key', 'name', 'url'],
       '每项必须且只能有 key/name/url/icon 四个字段：' + JSON.stringify(s));
     assert.ok(typeof s.key === 'string' && s.key, 'key 必须是非空字符串');
     assert.ok(typeof s.name === 'string' && s.name, 'name 必须是非空字符串');
-    assert.ok(/^\/(quality\/)?$/.test(s.url), 'url 必须是站内绝对路径（同标签页跳转）：' + s.url);
+    assert.ok(/^\/(quality\/|admin\/)?$/.test(s.url), 'url 必须是站内绝对路径（同标签页跳转）：' + s.url);
     assert.ok(typeof s.icon === 'string' && s.icon, 'icon 必须是非空字符串');
   });
 
@@ -92,10 +111,16 @@ test('SYSTEMS：数组存在、四字段齐全、含 prod + qa、qa.url === "/qu
   SYSTEMS.forEach(function (s) { byKey[s.key] = s; });
   assert.ok(byKey.prod, '必须含 prod');
   assert.ok(byKey.qa, '必须含 qa');
+  assert.ok(byKey.admin, '必须含 admin（.164 新增管理员后台）');
   assert.strictEqual(byKey.prod.url, '/', '生产系统根路径');
   assert.strictEqual(byKey.qa.url, '/quality/', '质量系统必须带尾斜杠（否则多一次 301）');
+  assert.strictEqual(byKey.admin.url, '/admin/', '管理员后台必须带尾斜杠（否则相对资源 admin-app.js 解析失败白屏）');
   assert.strictEqual(byKey.prod.name, '生产排单系统');
   assert.strictEqual(byKey.qa.name, '质量系统');
+  assert.strictEqual(byKey.admin.name, '管理员后台');
+  /* icon 键必须真的在 ICONS 表里有对应 path（漏加 ⇒ 面板项渲染成空图标） */
+  const ICONS_BLOCK = INDEX_SRC.slice(INDEX_SRC.indexOf('var ICONS='), INDEX_SRC.indexOf('function svgIcon'));
+  assert.ok(ICONS_BLOCK.indexOf('gear:') >= 0, 'index.html 的 ICONS 必须增加 gear（管理员后台图标）');
 });
 
 test('SYSTEMS：用 var 声明（禁 const —— 重复声明会让整页白屏）', function () {
@@ -105,22 +130,34 @@ test('SYSTEMS：用 var 声明（禁 const —— 重复声明会让整页白屏
   assert.strictEqual(/let\s+SYSTEMS\s*=/.test(block.code), false, '不得用 let 声明 SYSTEMS');
 });
 
-test('SYSTEMS：与质量系统 quality/qa-app.js 的同构副本 key 集合一致', function () {
-  /* 两处各自维护副本（PRD P0-2 明文不做跨文件共享）⇒ 只能靠断言守住一致性 */
+test('SYSTEMS：三处同构副本（index.html / quality/qa-app.js / admin/admin-app.js）key 与 url 全一致', function () {
+  /* 三处各自维护副本（PRD P0-2 明文不做跨文件共享）⇒ 只能靠断言守住一致性。
+     【build .164】由「两处」扩为「三处」：管理后台也有一份下拉清单，缺一处即互相跳不过去。 */
   const r = evalSysSwitchBlock();
   const prodKeys = r.systems.map(function (s) { return s.key; }).sort();
+  const byKeyProd = {};
+  r.systems.forEach(function (s) { byKeyProd[s.key] = s.url; });
+
+  /* ① 质量系统副本 */
   assert.ok(QA_APP_SRC.indexOf('var SYSTEMS') >= 0, 'qa-app.js 必须有同构副本');
   const m = /var SYSTEMS = (\[[\s\S]*?\]);/.exec(QA_APP_SRC);
   assert.ok(m, 'qa-app.js 的 SYSTEMS 字面量必须可解析');
-  /* qa-app.js 里是 JS 对象字面量（键不带引号），用 vm 求值成真值 */
   const qaSystems = plain(vm.runInNewContext('(' + m[1] + ')'));
-  const qaKeys = qaSystems.map(function (s) { return s.key; }).sort();
-  assert.deepStrictEqual(qaKeys, prodKeys, '两套副本的 key 集合必须一致');
-  /* url 也必须一致（跳转目标错了两边互相跳不过去） */
-  const byKeyProd = {};
-  r.systems.forEach(function (s) { byKeyProd[s.key] = s.url; });
+  assert.deepStrictEqual(qaSystems.map(function (s) { return s.key; }).sort(), prodKeys,
+    '质量系统副本的 key 集合必须与生产一致');
   qaSystems.forEach(function (s) {
-    assert.strictEqual(s.url, byKeyProd[s.key], '系统 ' + s.key + ' 两处 url 必须一致');
+    assert.strictEqual(s.url, byKeyProd[s.key], '系统 ' + s.key + ' 质量系统副本 url 必须一致');
+  });
+
+  /* ② 管理员后台副本 */
+  assert.ok(ADMIN_APP_SRC.indexOf('var SYSTEMS =') >= 0, 'admin-app.js 必须有同构副本');
+  const m2 = /var SYSTEMS = (\[[\s\S]*?\]);/.exec(ADMIN_APP_SRC);
+  assert.ok(m2, 'admin-app.js 的 SYSTEMS 字面量必须可解析');
+  const adminSystems = plain(vm.runInNewContext('(' + m2[1] + ')'));
+  assert.deepStrictEqual(adminSystems.map(function (s) { return s.key; }).sort(), prodKeys,
+    '管理员后台副本的 key 集合必须与生产一致');
+  adminSystems.forEach(function (s) {
+    assert.strictEqual(s.url, byKeyProd[s.key], '系统 ' + s.key + ' 管理员后台副本 url 必须一致');
   });
 });
 
@@ -242,14 +279,18 @@ test('红线：新增内联块内不得出现主脚本的自动执行调用（ha
 });
 
 /* ============================================================
-   四、权限点（PERM_FORMS.qa）—— 与 qa.perm-qa-key.test.js 互补
+   四、权限点（PERM_META.forms.qa）—— 与 qa.perm-qa-key.test.js 互补
    ============================================================ */
-test('PERM_FORMS：追加 qa:"质量管理"（第 9 项，排在 transfers 之后）', function () {
-  const app = createApp({ installRecorder: false });
-  const forms = plain(app.run('Object.keys(PERM_FORMS)'));
+test('PERM_META.forms：qa:"质量管理"（第 9 项，排在 transfers 之后）', function () {
+  /* 【build .164 读取目标变更】原断言用 createApp().run('PERM_FORMS') 读 index.html 里的常量；
+     PERM_FORMS 已随「员工管理」迁出 index.html（该功能整体搬到 admin/），权限清单的权威副本
+     改为生产后端 PERM_META（GET /api/perm-meta）。判定尺度**一条未降**：
+     仍是「9 个权限点 / qa 在末尾 / 显示名逐字 / 既有 8 项一名不改」，只换了读取来源。 */
+  assert.ok(PERM_META && PERM_META.forms, 'server.js 必须导出 PERM_META.forms');
+  const forms = Object.keys(PERM_META.forms);
   assert.strictEqual(forms.length, 9, '权限点应为 9 个：' + forms.join(','));
   assert.strictEqual(forms[forms.length - 1], 'qa', 'qa 必须追加在末尾（不打乱既有面板顺序）');
-  assert.strictEqual(app.run("PERM_FORMS['qa']"), '质量管理', '显示名必须是「质量管理」');
+  assert.strictEqual(PERM_META.forms['qa'], '质量管理', '显示名必须是「质量管理」');
   /* 既有 8 项一个都不能少、名字不能变 */
   const expected = {
     products: '产品主数据', parts: '零部件数据', saleOrders: '订单管理·销售订单',
@@ -257,7 +298,7 @@ test('PERM_FORMS：追加 qa:"质量管理"（第 9 项，排在 transfers 之�
     processTemplates: '工序模板', transfers: '调拨台账', qa: '质量管理',
   };
   Object.keys(expected).forEach(function (k) {
-    assert.strictEqual(app.run('PERM_FORMS[' + JSON.stringify(k) + ']'), expected[k], k + ' 显示名被改');
+    assert.strictEqual(PERM_META.forms[k], expected[k], k + ' 显示名被改');
   });
 });
 

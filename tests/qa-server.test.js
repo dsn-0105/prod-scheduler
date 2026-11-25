@@ -251,7 +251,9 @@ test('GET /api/qa/next-no：403 无写权限 / 200 有写权限且格式正确',
   const forbidden = await req('GET', '/api/qa/next-no', { token: T_RO });
   assert.strictEqual(forbidden.status, 403);
   assert.match(forbidden.json.error, /无「质量管理」编辑权限/);
-  assert.match(forbidden.json.error, /员工管理 → 表单写权限/, '文案必须指路，否则用户只会报障');
+  /* 【build .164】字面量同步为「管理员后台 → 员工管理 → 表单写权限」（员工管理已迁到 /admin/）；
+     判定方式不变：仍是「文案必须指路」的匹配断言，只是把指路路径补全。 */
+  assert.match(forbidden.json.error, /管理员后台 → 员工管理 → 表单写权限/, '文案必须指路，否则用户只会报障');
 
   const ok = await req('GET', '/api/qa/next-no', { token: T_QA });
   assert.strictEqual(ok.status, 200);
@@ -429,8 +431,9 @@ test('DELETE /api/qa/exceptions/:id ⇒ 三档鉴权：无 token 401 / 无 qa �
   /* ② 有 token 但无「质量管理」写权限 ⇒ 403，且文案与 POST/PUT 完全一致 */
   const forbidden = await req('DELETE', url, { token: T_RO });
   assert.strictEqual(forbidden.status, 403, '无写权限的 DELETE 必须 403');
+  /* 【build .164】逐字相等断言，字面量随服务端常量同步补「管理员后台 →」前缀（判定方式不变） */
   assert.strictEqual(forbidden.json.error,
-    '无「质量管理」编辑权限，请联系管理员在「员工管理 → 表单写权限」中授权',
+    '无「质量管理」编辑权限，请联系管理员在「管理员后台 → 员工管理 → 表单写权限」中授权',
     '403 文案必须与 POST/PUT 同一句（前端只维护一份）');
 
   /* ③ 有权限 ⇒ 405（功能本身本轮未开放） */

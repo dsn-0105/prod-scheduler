@@ -18,10 +18,12 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { extractInlineScripts, ROOT } = require('./harness/sandbox');
 
-/* 【build .163】新增质量系统 JS（设计 §1.2.6d 注）：与 js/*.js 同批逐文件 node --check。 */
+/* 【build .163】新增质量系统 JS（设计 §1.2.6d 注）：与 js/*.js 同批逐文件 node --check。
+   【build .164】新增管理员后台 JS（admin/admin-app.js）：同上，纳入逐文件语法校验。 */
 const files = [
   'js/logs.js', 'js/import.js', 'js/transfer.js', 'js/guide.js', 'js/prodplan-core.js',
-  'quality/qa-core.js', 'quality/qa-app.js', 'server/qa-server.js', 'server/qa-auth.js', 'server/qa-store.js'
+  'quality/qa-core.js', 'quality/qa-app.js', 'admin/admin-app.js',
+  'server/qa-server.js', 'server/qa-auth.js', 'server/qa-store.js'
 ];
 let fail = 0;
 
