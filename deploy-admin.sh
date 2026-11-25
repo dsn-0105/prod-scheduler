@@ -61,7 +61,16 @@ die()  { printf '\n❌ %s\n' "$*" >&2; exit 1; }
 rsh()  { ssh "${SSH_OPTS[@]}" "$HOST" "$@"; }
 md5_local()  { md5sum "$1" | awk '{print $1}'; }
 md5_remote() { rsh "md5sum $(printf '%q' "$1")" | awk '{print $1}'; }
-http_code()  { "${CURL[@]}" -o /dev/null -w '%{http_code}' "$1"; }
+# 【.164 部署修复】断言必须**在服务器本地**执行，不能在开发机上跑：
+#   SITE=https://127.0.0.1 指的是**服务器**的回环地址；在 Windows 开发机上 curl 它必然
+#   CURLE_COULDNT_CONNECT(7)，而 curl 的 `-s` 静默会把错误吞掉 ⇒ 表现为「脚本静默退出、无任何
+#   错误提示」，极易被误判成"部署脚本跑完了"。deploy-qa.sh 之所以没这问题，是它的断言全写在
+#   rsh heredoc 里。故此处统一走 rsh（`|| echo 000` 防 curl 失败把 set -e 打断，
+#   `tr -d` 去掉远端可能带回的换行）。
+http_code()  {
+  rsh "curl -sk --max-time 15 -o /dev/null -w '%{http_code}' $(printf '%q' "$1") || echo 000" \
+    | tr -d '[:space:]'
+}
 
 # ============================================================
 # [1/5] 前置检查
@@ -223,7 +232,7 @@ ok "nginx 配置就位（marker 幂等），nginx -t 通过并已 reload"
 step "4/5" "线上断言：/admin/ 200 + 水印 · /admin 301 · admin-app.js 200 · /api/users 401"
 
 # ① 后台页面 200 且水印恰 1 处
-A_PAGE="$("${CURL[@]}" "$SITE/admin/")"
+A_PAGE="$(rsh "curl -sk --max-time 15 $(printf '%q' "$SITE/admin/")" || true)"
 [ -n "$A_PAGE" ] || die "① /admin/ 返回空（页面未就位）"
 A_HITS="$(printf '%s' "$A_PAGE" | grep -cF ">$AVER<" || true)"
 [ "$A_HITS" = "1" ] || die "① 后台水印断言失败：期望 1 处「>$AVER<」，实际 $A_HITS 处"
