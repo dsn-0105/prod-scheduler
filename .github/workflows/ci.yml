@@ -1,0 +1,71 @@
+# ============================================================
+# CI —— 只做校验，绝不部署
+# ------------------------------------------------------------
+# 存在理由（2026-11-26 定稿）：
+#   本地守卫全部依赖 `.git/hooks/pre-commit`，而 `.git/hooks/` **不入版本库**。
+#   后果：新 clone、换机器、新同事、网页端合并 —— 全部是「零守卫」状态。
+#   `.144 / .148 / .159` 三次版本漂移假失败，正是发生在「没人装钩子」的窗口里。
+#
+# 边界（刻意不做的事，别加回来）：
+#   · 不部署任何环境（生产由 deploy.sh + release.sh 人工执行）
+#   · 不碰 index.html 的版本水印（上一版 workflow 用 github.run_number 重写水印，
+#     与腾讯云生产的手工水印形成两套版本号体系 —— 那是本项目已明确废止的分叉源）
+#   · 不 require 任何 secrets
+# ============================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 校验（语法 / 版本一致 / 测试清单 / 全量回归）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 1) 语法：index.html 的 3 个内联 <script> 不经过 node --check，必须逐块提取校验
+      - name: 语法校验
+        run: node tests/check-syntax.js
+
+      # 2) 版本：单一真源 VERSION 与全部落点必须一致（落点清单在 scripts/version.js 的 TARGETS）
+      #    注意这里用无参 check（工作树口径）。CI 跑的是 checkout 出来的干净工作树，
+      #    与 pre-commit 的暂存区口径互为补充：CI 防「推上来的东西是坏的」。
+      - name: 版本一致性
+        run: node scripts/version.js check
+
+      # 3) 清单与磁盘必须一致：有人新增了测试却没登记 → 直接红，不进入下一步
+      - name: 测试清单与磁盘一致
+        run: bash scripts/test.sh --check-manifest
+
+      # 4) 全量回归（清单驱动，不退化为通配自动发现）
+      - name: 全量回归
+        run: bash scripts/test.sh
+
+      # 5) 钩子体检 —— 这里是「POSIX 执行位」唯一能被真正验证的地方。
+      #    开发机是 Windows，core.fileMode=false，chmod 不落地、test -x 恒真，
+      #    所以本机永远给不出「钩子会被 git 静默跳过」的告警。Linux runner 可以。
+      #    continue-on-error：它的作用是「环境探针」，不该因 runner 差异阻断主流程；
+      #    红了要人去点开看，但代码质量由前 4 步把关。
+      - name: 本地钩子体检（Linux 才可验证执行位）
+        continue-on-error: true
+        run: |
+          bash scripts/install-hooks.sh
+          bash scripts/install-hooks.sh --status
