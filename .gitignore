@@ -45,9 +45,12 @@ _inv_*.js
 _*.json
 
 # 一次性诊断产物（线上数据快照、改动前构建 A/B 对照副本、探针报告）
-# 两点原因：①内含生产数据，绝不入库；②其 tests/ 子目录会被 `node --test`（自动发现模式）
-# 一并扫入并报「变异注入失败：源码形态已变」假失败 —— 跑回归请用显式文件列表：
-# `node --test tests/*.test.js`（详见 docs/系统知识.md §9 的 .138 工程教训）
+# 两点原因：①内含生产数据，绝不入库；②若放入含 tests/ 的对照副本，会被 `node --test`
+# （自动发现模式）一并扫入并报「变异注入失败：源码形态已变」假失败。
+# 2026-11-26：`_diag/before`、`_diag/before136` 两个旧仓库快照已移至工作区
+# `_snap/repo-snapshots/`，全仓恢复 51 个 test 文件（与 manifest 一致，裸 `node --test` 也安全）。
+# 跑回归统一用 `bash scripts/test.sh`（按 tests/manifest.txt 逐项执行）。
+# 会改写生产数据的历史脚本已隔离在 `_diag/dangerous/`，见该目录 README，禁止重跑。
 _diag/
 
 # 工作区记忆（本地数据，非代码资产）
