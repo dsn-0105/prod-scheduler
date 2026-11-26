@@ -1,0 +1,69 @@
+# ============================================================
+# tests/manifest.txt —— 回归测试清单（scripts/test.sh 的唯一输入）
+# ------------------------------------------------------------
+# 为什么需要它：`node --test tests/*.test.js` 依赖 shell 通配符自动发现，
+# 好处是「新文件自动被跑」，坏处也是「新文件自动被跑」—— 一旦有人把临时探针
+# 写进 tests/（.138 就发生过：_diag/ 下的副本被一并扫入并报假失败），或反过来
+# 新建了测试却没人跑，通配符模式都不会报错，属于静默风险。
+# 故本文件把「要跑哪些」显式登记下来。
+#
+# 纪律：**新增 / 删除 / 改名 tests/*.test.js 时，必须同步本文件**。
+#   漏登记 → bash scripts/test.sh --check-manifest 退出码 1 并列出差异（pre-commit 之外的
+#            第二道哨兵，建议 CI / 收尾时显式跑一次）。
+#   登记了不存在的文件 → 同上。
+#
+# 约定：以 # 开头为注释；空行忽略；每行一个文件名（相对 tests/，不含路径前缀）。
+# 顺序：按文件名升序（ls tests/*.test.js | sed 's|tests/||' | sort 的产物）。
+# 当前条数：51
+# ============================================================
+db.tx.test.js
+delivery.planno.test.js
+delivery.taskno.test.js
+harness.smoke.test.js
+import.idempotent.test.js
+invadjust.143.test.js
+invbalance.139.test.js
+invcall-cap.test.js
+invfilt.161.test.js
+invlevel.160.test.js
+layout.scoped.independent.test.js
+layout.scoped.test.js
+logs.coalesce.test.js
+order.line-carry.test.js
+order.status.test.js
+overpush.140.test.js
+overpushdel.142.test.js
+parts.158.test.js
+parts.159.test.js
+prodplan.dlidx-relink.test.js
+product-order-drag.156.test.js
+projection.sync.test.js
+qa-app.structure.test.js
+qa-backend.test.js
+qa-core.test.js
+qa-server.test.js
+qa.admin-console.independent.test.js
+qa.delivery-planno.independent.test.js
+qa.delivery-taskno.independent.test.js
+qa.deploy-layout.test.js
+qa.import-nodelivered.test.js
+qa.invfilt.161.independent.test.js
+qa.invfilt.162.independent.test.js
+qa.logs-coalesce.independent.test.js
+qa.ops-eol.test.js
+qa.orig-product.test.js
+qa.parts-ledger.independent.test.js
+qa.parts-ledger.validate.159.test.js
+qa.perm-qa-key.test.js
+qa.ppshift-advance.independent.test.js
+qa.prodplan-query.independent.test.js
+qa.quality-module.independent.test.js
+qa.return-cap.independent.test.js
+qa.systems-switch.test.js
+server.canwrite.test.js
+server.tx.test.js
+subst-rank.153.test.js
+transfer.helpers.test.js
+transfer.return-cap.test.js
+tx-hardening.test.js
+write-points.test.js

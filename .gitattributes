@@ -17,3 +17,15 @@
 deploy-qa.sh      text eol=lf
 rollback-qa.sh    text eol=lf
 ops/*             text eol=lf
+
+# 【2026-11-26】scripts/ 下的工程脚本同样会在 Linux 或 Git Bash 里被执行：
+#   test.sh / release.sh / sync-expert-doc.sh / install-hooks.sh / hooks/pre-commit
+# 本机 core.autocrlf=true，若不加这条，别的机器 checkout 后工作树会是 CRLF，
+# 执行时炸 bash: $'\r': command not found（与上面 deploy-qa.sh 同款事故）。
+scripts/*.sh      text eol=lf
+scripts/hooks/*   text eol=lf
+
+# 【2026-11-26】VERSION 是纯机器解析文件（version.js / release.sh / pre-commit 都读它）。
+# 虽然三个解析器当前都能容忍行尾 \r，但「机器解析的文件必须钉 LF」是本文件自己的纪律，
+# 留一个例外就是留一颗地雷 —— 显式钉住。
+VERSION           text eol=lf

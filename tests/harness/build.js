@@ -11,29 +11,30 @@
      const { BUILD, PREV } = require('./harness/build');
      assert.equal((INDEX_SRC.match(new RegExp('>build '+BUILD.replace('.','\\.')+'<','g'))||[]).length, 1);
 
-   版本推进纪律（**本文件为主来源，但非唯一改动点**）：
-     · BUILD 前移为新版本号；
-     · PREV  记为上一个版本号（供「旧形态应 0 处」断言引用）；
-     · 二者**必须手写**，严禁从 index.html 反推 —— 否则断言退化为恒真、失去守卫意义。
-     · ⚠ **另有多处硬编码字面量副本必须同步**（.148 复核订正：原文为「1 处」，`.147` 新增
-       `qa.prodplan-query` 后未同步计数，导致 `.148` 推进时该文件 §E2/§E4 会假失败；
-       `.159` 再次复核，实际副本清单见下，**缺一处即回归 FAIL**）：
-       ① `tests/qa.ppshift-advance.independent.test.js` §E2（两处 assert 直接写死 BUILD/PREV 字符串）；
-       ② `tests/qa.prodplan-query.independent.test.js` —— §E2（同款 BUILD/PREV 字面量）
-          **且** §E4（`js/guide.js` 文首「更新：YYYY-MM-DD（build .NNN）」行字面量）；
-       ③ `tests/layout.scoped.independent.test.js` §C5（水印正则 + BUILD/PREV 字面量）；
-       ④ `tests/qa.parts-ledger.independent.test.js`（.158 新增的 QA 资产：本文件 BUILD/PREV
-          **以及** §F1/F3/F4/F5/F6 的版本字面量副本）。
-       以上 4 处用于反向防「测了个寂寞」，均需**手改**。**漏改任一处 → 回归 FAIL**
-       （.144、.148、.159 各复核确认一次）。
-     · 📌 **`tests/parts.<NNN>.test.js` 这类 per-version 用例一律「派生」，不再手抄字面量。**
-       .159 已把 `parts.159.test.js` C7（改吃 `build.buildMarkRe(build.BUILD)`）与
-       `parts.158.test.js` F1（吃 `build.BUILD` 的日期段 + `.NNN` 段）改成派生写法。
-       理由：per-version 文件每版都会新增一个，若各自抄字面量，**每新增一个就多一处「下一版必红」的锚点**
-       （.144/.148 正是被这种漂移坑过）。故上面的「4 处」是**稳定值**，不会随新增 per-version 文件增长。
-       写新 per-version 用例时请照抄这两种派生写法，不要把版本号写死。
-   与 deploy.sh 的一致性：deploy.sh 用 `build [0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+<`
-   从 index.html 提取版本，本文件的 BUILD 即该提取结果，二者必须相等（有测试锚点钉住）。
+   版本推进纪律（**值来自单一真源；不要手改下面两行常量**）：
+     · 真源 = 仓库根 `VERSION`（`BUILD=` / `PREV=` 行），与 index.html **物理独立**；改版本只改它，
+       再执行 `node scripts/version.js sync` 由脚本代笔写回全部落点（写完自动 `check` 自证，钩子也拦）。
+     · `PREV` 记为上一个版本号（供「旧形态应 0 处」断言引用）。
+     · ★ **仍然严禁从 index.html 反推 BUILD**（原禁令的内核继续有效，不是被自动化废掉）：若 BUILD
+       取自 index.html，`index.html 水印 == BUILD` 就退化成恒真断言、失去守卫意义。代笔**不违反**这条
+       —— 值来自独立的 `VERSION`，脚本只负责搬运，两处物理来源的比对关系完整保留
+       （`qa.parts-ledger.validate.159 §D3`、`qa.invfilt.161 §H2`、`qa.invfilt.162 §O2` 仍钉
+       「本文件不得读盘取版本 / 不得 require 其它模块」，请勿破坏）。
+     · ⚠ **除本文件外还有多处字面量副本**（.148 复核订正：原文为「1 处」，`.147` 新增
+       `qa.prodplan-query` 后未同步计数，导致 `.148` 推进时该文件 §E2/§E4 会假失败；`.159`
+       再次复核，实际副本清单见下，**缺一处即回归 FAIL**）：
+       ① `tests/qa.ppshift-advance.independent.test.js` §E2（两处 assert 写死 BUILD/PREV）；
+       ② `tests/qa.prodplan-query.independent.test.js` §E2 同款字面量**且** §E4（`js/guide.js`
+          文首「更新：YYYY-MM-DD（build .NNN）」行）；③ `tests/layout.scoped.independent.test.js`
+          §C5（水印正则 + BUILD/PREV 字面量）；④ `tests/qa.parts-ledger.independent.test.js`
+          （.158 新增 QA 资产：本文件 BUILD/PREV**以及** §F1/F3/F4/F5/F6 的版本字面量副本）。
+       以上 4 处用于反向防「测了个寂寞」，**一律由 `node scripts/version.js sync` 代笔，勿手改**（该脚本的
+       `TARGETS` 数组是全仓库落点的唯一定义处，覆盖 `index.html` 水印、`README.md` 首屏、`js/guide.js`
+       文首以及上述 4 个测试文件；**具体条数/处数请跑 `node scripts/version.js list`，本注释刻意不写死数字**
+       —— 绝对计数会随新增测试文件腐化，.144/.148/.159 三次假失败都源于此）。**漏一处 → 回归 FAIL**（各版复核过）。
+     · 📌 **`tests/parts.<NNN>.test.js` 这类 per-version 用例一律「派生」，不再手抄字面量**：.159 已把
+       `parts.159.test.js` C7（吃 `build.buildMarkRe(build.BUILD)`）与 `parts.158.test.js` F1 改成派生写法。
+       理由：per-version 文件每版新增一个，各自抄字面量＝每新增一个就多一处「下一版必红」的锚点（.144/.148 踩过）。
    ================================================================ */
 
 const BUILD = '2026-11-25.164';

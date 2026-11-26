@@ -1,0 +1,68 @@
+#!/bin/sh
+# ================================================================
+# scripts/hooks/pre-commit —— 提交前双闸（语法 + 版本一致性）
+# ================================================================
+# 安装：bash scripts/install-hooks.sh   （幂等，可重复执行）
+# 手动试跑（不提交）：sh scripts/hooks/pre-commit
+# 临时绕过（不建议）：git commit --no-verify
+#
+# 两道闸：
+#   ① node tests/check-syntax.js      —— js/*.js、quality/、admin/、server/ 逐文件语法
+#                                        + index.html 内联 script 逐块提取校验
+#                                        （防「Edit 报告成功但磁盘未生效 / 漏改一处调用点」）
+#   ② node scripts/version.js check --staged
+#                                    —— 版本号 18 条规则 / 23 处落点全部等于真源 VERSION。
+#                                        ★ 必须带 `--staged`：commit 提交进库里的是**暂存区**的内容，
+#                                        不是工作树。若校验工作树，就能这样绕过：
+#                                          把某落点改成错的 → git add 暂存这份坏的 →
+#                                          再把工作树改回正确 → 钩子校验工作树通过 →
+#                                          进库的仍是暂存区那份坏的。
+#                                        （P2·D2 修复；`sync` 与无参 `check` 仍读写工作树，口径显式区分）
+#
+# 设计取舍：两道闸都跑「只读校验」，**不自动 sync**。
+#   理由：钩子自动改文件会让人对"我到底提交了什么"失去掌控，且可能把
+#   「忘了改 VERSION」这种真实错误静默掩盖。故只拦不修，修复动作由人显式执行。
+# ================================================================
+set -u
+
+# 钩子可能被 git 以仓库根为 cwd 调用，但仍显式定位，避免 worktree / 子目录调用时路径错位
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "[pre-commit] 无法定位仓库根（git rev-parse --show-toplevel 失败），已中止提交。" >&2
+  exit 1
+}
+cd "$ROOT" || {
+  echo "[pre-commit] 无法进入仓库根：$ROOT，已中止提交。" >&2
+  exit 1
+}
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pre-commit] 未找到 node，无法执行提交前校验。" >&2
+  echo "             请安装 Node.js 并确保它在 PATH 中，或在终端里临时用 --no-verify 绕过（不建议）。" >&2
+  exit 1
+fi
+
+echo "[pre-commit] ① 语法校验：node tests/check-syntax.js"
+if ! node tests/check-syntax.js; then
+  echo "" >&2
+  echo "[pre-commit] ✗ 语法校验未通过，已拒绝提交。" >&2
+  echo "             修复方法：按上面 FAIL 的文件与行号改正语法；" >&2
+  echo "             只想单独复跑本闸：node tests/check-syntax.js" >&2
+  exit 1
+fi
+
+echo ""
+echo "[pre-commit] ② 版本一致性（暂存区口径）：node scripts/version.js check --staged"
+if ! node scripts/version.js check --staged; then
+  echo "" >&2
+  echo "[pre-commit] ✗ 暂存区里的版本号落点与真源 VERSION 不一致，已拒绝提交。" >&2
+  echo "             修复方法（推荐直接让脚本代笔，不要手抄）：" >&2
+  echo "               node scripts/version.js sync     # 把 VERSION 的值写回工作树全部落点（写完自动再 check 一次）" >&2
+  echo "               git add <被改动的落点文件>        # ★ 别漏这步：闸门看的是暂存区，sync 只改工作树" >&2
+  echo "             若是新增/改写了落点形态，请先改 scripts/version.js 里的 TARGETS 定义再 sync。" >&2
+  echo "             只想单独复跑本闸：node scripts/version.js check --staged" >&2
+  exit 1
+fi
+
+echo ""
+echo "[pre-commit] ✓ 两道闸全部通过，允许提交。"
+exit 0
