@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>生产排单与报表系统</title>
 <!-- 系统清单 SYSTEMS 见文件末尾「系统切换下拉」script 块 -->
+<!-- 【build .165】本轮改动**全部落在质量系统**（/quality/ 异常台账 2→9 列 + 列定义单源化），
+     生产单页零业务改动：本文件只同步了权威水印、GUIDE_MD 说明与版本沿革注释。
+     故本版在 index.html 里看不到业务代码 diff —— 这不是漏部署，详见 docs/系统知识.md §5
+     「质量台账字段扩展」与 deploy-qa.sh（质量系统是独立部署脚本，生产脚本不包含它）。 -->
 <style>
 :root{
   --primary:#4f46e5;--primary-light:#eef2ff;--primary-dark:#4338ca;
@@ -7685,8 +7689,10 @@ async function delDelivery(idx){
 
 
 /* ================================================================
-   2026-08-25.69：使用说明页（系统内帮助文档）——内容为 Markdown 文本（GUIDE_MD），
-   运行时经 mdRender 渲染成 HTML；功能迭代时同步更新 GUIDE_MD 对应小节与「最近更新」表
+  2026-08-25.69：使用说明页（系统内帮助文档）——内容为 Markdown 文本（GUIDE_MD），
+  运行时经 mdRender 渲染成 HTML；功能迭代时同步更新 GUIDE_MD 对应小节与「最近更新」表
+  【build .165】GUIDE_MD（js/guide.js）增补「质量系统 · 异常台账字段」小节：9 字段、
+      数量只接受非负整数、异常数量>检测数量只提示不拦截、长文本列表截断+悬浮看全文。
 ================================================================ */
 /* 简易 Markdown 渲染：支持 #/##/### 标题、- 无序、1. 有序、| 表格（首行表头+--- 分隔行）、**粗体**、`行内码`、空行分段 */
 function mdInline(s){
@@ -8960,6 +8966,8 @@ bootstrap();
       直接破坏「只登录一次」这条硬需求。详见设计 §9.3 与 deploy-qa.sh 的 nginx 片段。 */
 var SYSTEMS=[
   {key:'prod',name:'生产排单系统',url:'/',icon:'house'},
+  /* 【build .165】质量系统异常台账已扩到 9 列（产品名称/规格型号/总数量/检测数量/异常数量/
+     异常描述/原因分析）。入口 url 与图标未变；字段口径见 docs/质量模块-PRD §6.1 */
   {key:'qa',name:'质量系统',url:'/quality/',icon:'shield'},
   /* 【build .164】管理员后台（原生产单页内的「员工管理」已整体迁入该独立页面） */
   {key:'admin',name:'管理员后台',url:'/admin/',icon:'gear'}

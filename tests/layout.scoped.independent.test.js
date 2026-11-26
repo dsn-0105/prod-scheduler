@@ -782,10 +782,13 @@ test('C4 顶栏按钮：重置=全员可见；重置所有人=admin-only；apply
     'applyTopbarPerm 相对改前基线（' + base.rev.slice(0, 7) + '）逐字不变');
 });
 
-test('C5 水印 7 锚点齐全；.164 权威水印恰 1 处、.163 水印 0 处（逐条解释 .152 残留）', () => {
-  /* ① index.html 权威水印 */
-  assert.strictEqual((INDEX_SRC.match(/>build 2026-11-25\.164</g) || []).length, 1, '① index.html >build …< 恰 1 处');
-  assert.strictEqual((INDEX_SRC.match(/build 2026-11-23\.163/g) || []).length, 0, 'index.html 不得残留 .163 权威水印');
+test('C5 水印 7 锚点齐全；.165 权威水印恰 1 处、.164 水印 0 处（逐条解释 .152 残留）', () => {
+  /* ① index.html 权威水印
+     ⚠ 这两行是**转义点正则形态**，node scripts/version.js 的 18 条落点规则覆盖不到，
+        每版 bump 后必须手工同步（漏改即 D3 ①③ / O2 ⑧ / C5 连带变红）。
+        【build .165】已核对：本版确为手工同步。 */
+  assert.strictEqual((INDEX_SRC.match(/>build 2026-11-26\.165</g) || []).length, 1, '① index.html >build …< 恰 1 处');
+  assert.strictEqual((INDEX_SRC.match(/build 2026-11-25\.164/g) || []).length, 0, 'index.html 不得残留 .164 权威水印');
   /* ② harness/build.js */
   assert.strictEqual(BUILD.BUILD, '2026-11-26.165');
   assert.strictEqual(BUILD.PREV, '2026-11-25.164');
