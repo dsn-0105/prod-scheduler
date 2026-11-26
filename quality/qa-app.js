@@ -40,6 +40,74 @@
     { key: 'qaLog', name: '异常台账', title: '异常台账', icon: 'list' }
   ];
 
+  /* ============================================================
+     异常台账列定义 —— **全工程唯一一份**（表头 / 表体 / CSV 导出 /
+     编辑后行内更新 / 新增编辑表单 五处消费者全部由本数组派生）
+     ------------------------------------------------------------
+     【build .165】为什么必须单源：加字段之前这五处各写一份硬编码，
+       `applyRowUpdate` 更用 `tds[1]`/`tds[2]` 取单元格 —— 多一列就静默
+       只刷新前两格、新字段保存后不显示（不报错，只让用户以为没存上）。
+     新增字段的**唯一**正确做法 = 在下面加一条，然后同步 PRD §6.1。
+     ------------------------------------------------------------
+     key          落库键。后端 qa-store.collectExtras 刻意透传未知顶层标量键，
+                  故加字段**不需要改后端**；但 key 必须与需求逐字一致（改 key = 历史数据丢字段）
+     label        表头与 CSV 列名
+     type         'date' | 'text' | 'num' | 'long'
+                  · num  表格右对齐
+                  · long 表格截断 + 悬浮看全文（多行文本不撑爆行高）
+     sortable     仅 date / no 允许：qa-core.sortRecords 只认这两个键（共享内核，本文件不许自造排序）
+     inTable      是否占列表列
+     formKind     表单控件：'date' | 'readonly' | 'text' | 'number' | 'textarea'
+     formRow      表单分行序号（同号并排，行内 flex:1 等分）
+     required     表单必填标记（仅日期；其余留空可存）
+     hint         仅编号用：hint 提示条（新增/编辑文案不同，由 openAddModal 覆写）
+     ============================================================ */
+  var QA_COLUMNS = [
+    /* ① 既有两列（PRD 原始需求，不可删改顺序与 key） */
+    { key: 'date', label: '日期', type: 'date', sortable: true, inTable: true, formKind: 'date', formRow: 1, required: true },
+    { key: 'no', label: '编号', type: 'text', sortable: true, inTable: true, formKind: 'readonly', formRow: 1,
+      hint: '系统自动生成，不可修改' },
+    /* ② 【build .165】用户新增 7 字段：产品名称、规格型号、总数量、检测数量、异常数量、异常描述、原因分析。
+          产品名称/规格型号 = 自由文本（质量系统禁止读生产全局，不联动产品主数据，由录入人填写）。 */
+    { key: 'productName', label: '产品名称', type: 'text', sortable: false, inTable: true, formKind: 'text', formRow: 2 },
+    { key: 'specModel', label: '规格型号', type: 'text', sortable: false, inTable: true, formKind: 'text', formRow: 2 },
+    { key: 'totalQty', label: '总数量', type: 'num', sortable: false, inTable: true, formKind: 'number', formRow: 3 },
+    { key: 'inspectedQty', label: '检测数量', type: 'num', sortable: false, inTable: true, formKind: 'number', formRow: 3 },
+    { key: 'defectQty', label: '异常数量', type: 'num', sortable: false, inTable: true, formKind: 'number', formRow: 3 },
+    { key: 'defectDesc', label: '异常描述', type: 'long', sortable: false, inTable: true, formKind: 'textarea', formRow: 4 },
+    { key: 'causeAnalysis', label: '原因分析', type: 'long', sortable: false, inTable: true, formKind: 'textarea', formRow: 5 }
+  ];
+
+  /** 列表列（inTable）—— 表头、表体、CSV 的同一份输入 */
+  function tableCols() {
+    return QA_COLUMNS.filter(function (c) { return c.inTable; });
+  }
+
+  /** 表单字段（有 formKind 的都上表单，顺序即 QA_COLUMNS 顺序） */
+  function formCols() {
+    return QA_COLUMNS.filter(function (c) { return !!c.formKind; });
+  }
+
+  /** 按 key 取列定义（排序白名单由此派生，不再手写 key 比较） */
+  function colOf(key) {
+    for (var i = 0; i < QA_COLUMNS.length; i++) {
+      if (QA_COLUMNS[i].key === key) return QA_COLUMNS[i];
+    }
+    return null;
+  }
+
+  /**
+   * 单元格纯文本 —— 表格 td / CSV / 行内更新**共用**的取值函数。
+   * 刻意不返回 HTML：这里一旦包含标签，CSV 就会把标签导出到 Excel 里。
+   * @param {object} col 列定义
+   * @param {object} rec 记录
+   * @returns {string} 缺字段/null 一律空串（语义 = 未填，与 0 区分）
+   */
+  function cellText(col, rec) {
+    var v = rec ? rec[col.key] : '';
+    return (v === undefined || v === null) ? '' : String(v);
+  }
+
   /* ---------- 状态（单一 source of truth，全部渲染从它派生） ---------- */
   var state = {
     token: '',
@@ -613,16 +681,26 @@
       + '<span class="sort-ico' + (on ? ' on' : '') + '">' + arrow + '</span></th>';
   }
 
+  /** 表头类名：数量列与表体同样右对齐（否则"总数量"标题居左、数字居右，视觉上像错列） */
+  function thClassOf(col) {
+    return col.type === 'num' ? ' class="col-num"' : '';
+  }
+
   function tableHtml() {
     var pg = CORE.paginate(orderedRecords(), state.page, state.pageSize);
     state.page = pg.page;                    /* 夹紧后的页码回写，保证分页器与表体一致 */
     var rows = pg.rows;
     if (!rows.length) return emptyHtml();
+    var cols = tableCols();
     var h = '<div class="table-wrap"><table><thead><tr>'
-      + '<th class="sel-col"></th>'
-      + sortTh('date', '日期')
-      + sortTh('no', '编号')
-      + '</tr></thead><tbody>';
+      + '<th class="sel-col"></th>';
+    /* 表头：可排序列走 sortTh，其余普通 th —— 白名单来自 QA_COLUMNS.sortable */
+    for (var c = 0; c < cols.length; c++) {
+      h += cols[c].sortable
+        ? sortTh(cols[c].key, cols[c].label)
+        : '<th' + thClassOf(cols[c]) + '>' + esc(cols[c].label) + '</th>';
+    }
+    h += '</tr></thead><tbody>';
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       var id = esc(r.id);
@@ -631,12 +709,33 @@
         + ' onclick="QA_APP.toggleRow(\'' + id + '\')">';
       h += '<td class="sel-col"><input type="checkbox"' + (state.sel[r.id] ? ' checked' : '')
         + ' onclick="event.stopPropagation();QA_APP.toggleRow(\'' + id + '\')"></td>';
-      h += '<td>' + esc(r.date) + '</td>';
-      h += '<td>' + esc(r.no) + '</td>';
+      /* 表体：每格带 data-col，供 applyRowUpdate 精确定位（**不再按 td 下标**） */
+      for (var j = 0; j < cols.length; j++) {
+        h += cellHtml(cols[j], r);
+      }
       h += '</tr>';
     }
     h += '</tbody></table></div>';
     return h;
+  }
+
+  /**
+   * 单个单元格 HTML。所有值必须过 esc()（外部录入的文本一律不可信）。
+   * long 列额外带 title=全文（3A：表格截断、悬浮看全文，避免多行文本把行高撑得参差不齐）。
+   * @param {object} col 列定义
+   * @param {object} rec 记录
+   * @returns {string}
+   */
+  function cellHtml(col, rec) {
+    var text = cellText(col, rec);
+    var attr = ' data-col="' + esc(col.key) + '"';
+    if (col.type === 'long') {
+      return '<td class="col-clip"' + attr + ' title="' + esc(text) + '">' + esc(text) + '</td>';
+    }
+    if (col.type === 'num') {
+      return '<td class="col-num"' + attr + '>' + esc(text) + '</td>';
+    }
+    return '<td' + attr + '>' + esc(text) + '</td>';
   }
 
   function emptyHtml() {
@@ -650,7 +749,9 @@
 
   /* ---------- 排序 / 分页 ---------- */
   function sortBy(key) {
-    if (key !== 'date' && key !== 'no') return;
+    /* 白名单从列定义派生：只有 sortable 的列可排（qa-core.sortRecords 只认 date/no） */
+    var col = colOf(key);
+    if (!col || !col.sortable) return;
     if (state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
     else { state.sortKey = key; state.sortDir = 'desc'; }
     state.page = 1;                       /* 排序后回第 1 页 */
@@ -686,12 +787,14 @@
    * @param {string=} okHandler 主按钮点击调用的 QA_APP 方法调用串
    *        （异常台账弹窗与改密弹窗共用外壳，但提交函数不同 —— 必须由调用方指定，
    *          否则改密会误触台账的日期校验）
+   * @param {boolean=} wide 是否用加宽外壳（台账 9 个字段，420px 装不下三列数量并排）
    */
-  function openModalShell(title, bodyHtml, okText, okHandler) {
+  function openModalShell(title, bodyHtml, okText, okHandler, wide) {
     var m = $('modal');
     var bg = $('modalBg');
     if (!m || !bg) return;
     var handler = okHandler || 'QA_APP.saveModal()';
+    m.className = 'modal' + (wide ? ' modal-wide' : '');
     m.innerHTML = '<div class="modal-head"><h3>' + esc(title) + '</h3>'
       + '<div class="close-x" onclick="QA_APP.closeModal()">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M18 6L6 18M6 6l12 12"/></svg>'
@@ -711,12 +814,127 @@
     state.modalNoLoading = false;
   }
 
-  function recordFormHtml(date, no, noHint) {
-    return '<div class="form-row"><div><label>日期 *</label>'
-      + '<input type="date" id="qa_f_date" value="' + esc(date) + '"></div></div>'
-      + '<div class="form-row"><div><label>编号</label>'
-      + '<input id="qa_f_no" value="' + esc(no) + '" readonly>'
-      + '<div class="hint" id="qa_f_no_hint">' + esc(noHint) + '</div></div></div>';
+  /**
+   * 台账表单（新增 / 编辑共用）。字段清单、控件类型、分行**全部**来自 QA_COLUMNS ——
+   * 加字段只改列定义，本函数一个字都不用动（这是 PRD §二「加字段成本近乎为零」的落地形态）。
+   * @param {object|null} rec 编辑时的原记录；null = 新增
+   * @param {string} noHint 编号提示文案（新增态="正在申请"，编辑态="自动生成不可修改"）
+   * @returns {string}
+   */
+  function recordFormHtml(rec, noHint) {
+    var cols = formCols();
+    var rows = {};
+    var order = [];
+    cols.forEach(function (c) {
+      if (!rows[c.formRow]) { rows[c.formRow] = []; order.push(c.formRow); }
+      rows[c.formRow].push(c);
+    });
+    order.sort(function (a, b) { return a - b; });
+    var h = '';
+    order.forEach(function (rn) {
+      h += '<div class="form-row">';
+      rows[rn].forEach(function (c) {
+        h += '<div>' + formFieldHtml(c, rec, c.key === 'no' ? noHint : '') + '</div>';
+      });
+      h += '</div>';
+    });
+    /* 【build .165】数量关系提示位（5A：只提示不拦截，见 checkQtyHint） */
+    h += '<div class="hint hint-warn" id="qa_qty_hint"></div>';
+    return h;
+  }
+
+  /**
+   * 单个表单控件。
+   * @param {object} col 列定义
+   * @param {object|null} rec 原记录（回填值来源）
+   * @param {string} hintText 覆盖列定义里的默认 hint 文案（空则用 col.hint）
+   * @returns {string}
+   */
+  function formFieldHtml(col, rec, hintText) {
+    var v = cellText(col, rec);
+    var id = 'qa_f_' + col.key;
+    var label = '<label>' + esc(col.label) + (col.required ? ' *' : '') + '</label>';
+    var ctrl;
+    if (col.formKind === 'readonly') {
+      ctrl = '<input id="' + id + '" value="' + esc(v) + '" readonly>';
+    } else if (col.formKind === 'date') {
+      ctrl = '<input type="date" id="' + id + '" value="' + esc(v) + '">';
+    } else if (col.formKind === 'number') {
+      /* 1A：数量按 number 落库；min/step 只是浏览器提示，真正的格式校验在 collectFormBody */
+      ctrl = '<input type="number" min="0" step="1" id="' + id + '" value="' + esc(v) + '"'
+        + ' oninput="QA_APP.checkQtyHint()" onchange="QA_APP.checkQtyHint()">';
+    } else if (col.formKind === 'textarea') {
+      /* 长文本用 textarea：内容放标签体内而不是 value 属性（属性里的换行会被浏览器吃掉） */
+      ctrl = '<textarea rows="3" id="' + id + '">' + esc(v) + '</textarea>';
+    } else {
+      ctrl = '<input id="' + id + '" value="' + esc(v) + '">';
+    }
+    var hint = '';
+    if (col.hint !== undefined) {
+      hint = '<div class="hint" id="' + id + '_hint">' + esc(hintText || col.hint) + '</div>';
+    }
+    return label + ctrl + hint;
+  }
+
+  /** 表单里某字段的当前数值（空/非法 ⇒ null，用于提示计算，不参与落库） */
+  function numOf(key) {
+    var el = $('qa_f_' + key);
+    if (!el) return null;
+    var raw = String(el.value === undefined || el.value === null ? '' : el.value).trim();
+    if (raw === '') return null;
+    var n = Number(raw);
+    return isFinite(n) ? n : null;
+  }
+
+  /**
+   * 【build .165 · 5A】数量关系**只提示不拦截**。
+   * 「异常数量 > 检测数量」「检测数量 > 总数量」在现实里是**可能真实发生**的
+   * （超检、复检、抽样口径不同），硬拦会让用户被迫填假数字 —— 那比数据可疑更糟。
+   * @returns {undefined}
+   */
+  function checkQtyHint() {
+    var el = $('qa_qty_hint');
+    if (!el) return;
+    var t = numOf('totalQty');
+    var i = numOf('inspectedQty');
+    var d = numOf('defectQty');
+    var msgs = [];
+    if (d !== null && i !== null && d > i) msgs.push('异常数量大于检测数量');
+    if (i !== null && t !== null && i > t) msgs.push('检测数量大于总数量');
+    el.textContent = msgs.length ? ('⚠ ' + msgs.join('；') + '，请确认无误后保存（不阻止保存）') : '';
+  }
+
+  /**
+   * 表单 → 请求体。
+   * 空值语义（1A 决策：**未填 ≠ 0**）：
+   *   · 新增：空值不落键 ⇒ 数据文件里根本没有该键，列表显示空白
+   *   · 编辑：空值发 null ⇒ 显式清空。**必须发**，否则 qa-store.applyUpdate 的
+   *     `Object.assign({}, rec, extras)` 会把旧值原样留下，用户清空后保存看起来"没生效"
+   * @param {object|null} rec 编辑时的原记录（null = 新增）
+   * @returns {{body: object}|{error: string}}
+   */
+  function collectFormBody(rec) {
+    var body = {};
+    var err = '';
+    formCols().forEach(function (c) {
+      if (c.formKind === 'readonly') return;      /* 编号由服务端权威，绝不进 body（服务端会 400） */
+      var el = $('qa_f_' + c.key);
+      if (!el) return;
+      var raw = String(el.value === undefined || el.value === null ? '' : el.value).trim();
+      if (c.formKind === 'number') {
+        if (raw === '') { if (rec) body[c.key] = null; return; }
+        var n = Number(raw);
+        if (!isFinite(n) || n < 0 || Math.floor(n) !== n) {
+          if (!err) err = '「' + c.label + '」必须是非负整数';
+          return;
+        }
+        body[c.key] = n;
+        return;
+      }
+      if (raw === '') { if (rec) body[c.key] = null; return; }
+      body[c.key] = raw;
+    });
+    return err ? { error: err } : { body: body };
   }
 
   function openAddModal() {
@@ -726,7 +944,7 @@
     state.modalNo = '';
     state.modalNoLoading = true;
     openModalShell('新增异常记录',
-      recordFormHtml(CORE.todayStr(), '', '正在向服务端申请编号…'), '保存');
+      recordFormHtml({ date: CORE.todayStr() }, '正在向服务端申请编号…'), '保存', 'QA_APP.saveModal()', true);
     setSaveBtnEnabled(false);
     /* 打开弹窗即预生成编号并只读展示（让用户保存前就看到号，PRD 5.5） */
     apiQa('/next-no').then(function (j) {
@@ -764,7 +982,8 @@
     state.modalNo = rec.no;
     state.modalNoLoading = false;
     openModalShell('编辑异常记录',
-      recordFormHtml(rec.date, rec.no, '系统自动生成，不可修改'), '保存');
+      recordFormHtml(rec, '系统自动生成，不可修改'), '保存', 'QA_APP.saveModal()', true);
+    checkQtyHint();
     setSaveBtnEnabled(true);
   }
 
@@ -783,26 +1002,31 @@
       if (dateEl) dateEl.focus();
       return;
     }
-    if (state.modalMode === 'add') await submitAdd(date);
-    else if (state.modalMode === 'edit') await submitEdit(date);
+    var rec = state.modalMode === 'edit' ? findRec(state.modalId) : null;
+    var got = collectFormBody(rec);
+    if (got.error) { alert(got.error); return; }
+    var body = got.body;
+    body.date = date;                       /* 日期已单独校验，以校验后的值为准 */
+    if (state.modalMode === 'add') await submitAdd(body);
+    else if (state.modalMode === 'edit') await submitEdit(body);
   }
 
-  async function submitAdd(date) {
+  async function submitAdd(body) {
     if (state.modalNoLoading) { alert('编号申请中，请稍候…'); return; }
     if (state.busy) return;
     state.busy = true;
     setSaveBtnEnabled(false);
-    var body = { date: date };
-    if (state.modalNo) body.no = state.modalNo;
+    var payload = Object.assign({}, body);
+    if (state.modalNo) payload.no = state.modalNo;
     try {
       var j;
       try {
-        j = await apiQa('/exceptions', { method: 'POST', body: JSON.stringify(body) });
+        j = await apiQa('/exceptions', { method: 'POST', body: JSON.stringify(payload) });
       } catch (e) {
         /* 409：编号被别人抢先占用 ⇒ 用服务端 suggest **静默重提交一次**，用户无感（PRD P0-10） */
         if (e.status === 409 && e.json && e.json.suggest) {
-          body.no = e.json.suggest;
-          j = await apiQa('/exceptions', { method: 'POST', body: JSON.stringify(body) });
+          payload.no = e.json.suggest;
+          j = await apiQa('/exceptions', { method: 'POST', body: JSON.stringify(payload) });
         } else {
           throw e;
         }
@@ -824,14 +1048,14 @@
     }
   }
 
-  async function submitEdit(date) {
+  async function submitEdit(body) {
     if (state.busy) return;
     state.busy = true;
     setSaveBtnEnabled(false);
     try {
       var j = await apiQa('/exceptions/' + encodeURIComponent(state.modalId), {
         method: 'PUT',
-        body: JSON.stringify({ date: date })
+        body: JSON.stringify(body)
       });
       var rec = (j && j.record) || null;
       closeModal();
@@ -847,17 +1071,27 @@
     }
   }
 
-  /** 用服务端返回的权威记录替换本地副本，并只重绘那一行的两个单元格 */
+  /**
+   * 用服务端返回的权威记录替换本地副本，并只重绘那一行的单元格。
+   * 【build .165】定位方式从「td 下标」改为 `td[data-col]`：
+   * 旧写法 `tds[1]/tds[2]` 在台账从 2 列扩到 9 列后**只会刷新日期与编号**，
+   * 新字段保存后界面纹丝不动 —— 用户会以为没保存，实际已落库（静默不一致）。
+   * @param {object} rec 服务端返回的权威记录
+   * @returns {undefined}
+   */
   function applyRowUpdate(rec) {
     for (var i = 0; i < state.records.length; i++) {
       if (state.records[i].id === rec.id) { state.records[i] = rec; break; }
     }
     var tr = document.querySelector('#content .table-wrap tbody tr[data-id="' + rec.id + '"]');
     if (!tr) { renderMain(); return; }
-    var tds = tr.querySelectorAll('td');
-    if (tds.length >= 3) {
-      tds[1].textContent = rec.date;
-      tds[2].textContent = rec.no;
+    var cols = tableCols();
+    for (var j = 0; j < cols.length; j++) {
+      var td = tr.querySelector('td[data-col="' + cols[j].key + '"]');
+      if (!td) continue;
+      var text = cellText(cols[j], rec);
+      td.textContent = text;
+      if (cols[j].type === 'long') td.setAttribute('title', text);
     }
     tr.classList.add('row-flash');
     setTimeout(function () { tr.classList.remove('row-flash'); }, 1600);
@@ -871,7 +1105,15 @@
       return;
     }
     var sorted = CORE.sortRecords(rows, state.sortKey, state.sortDir);
-    var csv = CORE.buildCsv(sorted, [{ key: 'date', label: '日期' }, { key: 'no', label: '编号' }]);
+    /* 列名与取值同源于 QA_COLUMNS + cellText：与界面永远一致，不会出现"界面有、导出没有" */
+    var cols = tableCols().map(function (c) {
+      return {
+        key: c.key,
+        label: c.label,
+        get: function (rec) { return cellText(c, rec); }
+      };
+    });
+    var csv = CORE.buildCsv(sorted, cols);
     var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -951,6 +1193,7 @@
     openEditModal: openEditModal,
     saveModal: saveModal,
     closeModal: closeModal,
+    checkQtyHint: checkQtyHint,
     /* 导出 / 提示 */
     exportSelected: exportSelected,
     retryNow: function () { hideNotice(); reloadAll(); },

@@ -163,6 +163,17 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .tag-green{background:var(--green-bg);color:var(--green)}
 .tag-amber{background:var(--amber-bg);color:var(--amber)}
 /* ---------- 质量系统专属 ---------- */
+/* 【build .165】台账扩到 9 列后新增三个类，勿删：
+   .col-clip  长文本列（异常描述/原因分析）截断 + 悬浮看全文 —— 不截断会把行高撑得参差不齐、
+              1000 条/页时表格高到无法浏览。table-cell 的 max-width 在部分引擎会被忽略，
+              故同时给 width 作为列宽建议（以 auto layout 下 table-cell 取值规则为准）。
+   .col-num   数量列右对齐 + 等宽数字，便于按位数竖排比对（1 与 1000 混排时肉眼可读）
+   .hint-warn 数量关系提示（5A：只提示不拦截） */
+.col-clip{width:200px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.col-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.hint-warn{color:#b45309;font-weight:600;min-height:16px}
+.modal-wide{width:560px}
+textarea{resize:vertical;min-height:62px}
 /* 只读提示条：不可关闭，有 qa 权限时不渲染 */
 .readonly-bar{background:#fef3c7;color:#92400e;font-size:12px;border-radius:6px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:flex-start;gap:6px}
 .qa-notice{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;display:none;align-items:center;gap:8px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:9px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px;max-width:86vw}
@@ -226,7 +237,7 @@ thead .sel-col{background:#eef2ff;z-index:6}
 <!-- 顶部非阻塞提示（鉴权服务不可用等） -->
 <div class="qa-notice" id="qaNotice"></div>
 
-<div class="build-mark">build 2026-11-23.001</div>
+<div class="build-mark">build 2026-11-26.165</div>
 
 <script src="qa-core.js"></script>
 <script src="qa-app.js"></script>
