@@ -9,8 +9,8 @@
    .159 各踩过一次，见 tests/harness/build.js 版本推进纪律）。
 
    真源：仓库根的 `VERSION` 文件（与 index.html **物理独立**）。
-     BUILD = 本次版本号       形如 2026-11-25.164
-     PREV  = 上一版本号       形如 2026-11-23.163
+     BUILD = 本次版本号       形如 YYYY-MM-DD.NNN
+     PREV  = 上一版本号       形如 YYYY-MM-DD.NNN
 
    ★ 与「严禁从 index.html 反推」的关系（这条禁令必须继续成立）：
      tests/harness/build.js 的原禁令本意是**禁止从被测对象（index.html）反推**
@@ -32,8 +32,8 @@
                                                写完立刻自动再跑一次 check 自证；**绝不写暂存区**
 
    两种形态的派生规则（短形态用于注释 / 版本行，完整形态用于水印与常量）：
-     完整形态 = BUILD 原样                     →  2026-11-25.164
-     短形态   = 日期段 + （build . + NNN + ）   →  2026-11-25（build .164）
+     完整形态 = BUILD 原样                     →  YYYY-MM-DD.NNN
+     短形态   = 日期段 + （build . + NNN + ）   →  YYYY-MM-DD（build .NNN）
    ================================================================ */
 
 const fs = require('node:fs');
@@ -50,7 +50,7 @@ const VER_SHAPE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$/;
    --------------------------------------------------------------- */
 
 /**
- * 把完整版本号渲染为「短形态」：2026-11-25.164 -> 2026-11-25（build .164）
+ * 把完整版本号渲染为「短形态」：YYYY-MM-DD.NNN -> YYYY-MM-DD（build .NNN）
  * @param {string} ver 完整版本号（YYYY-MM-DD.NNN）
  * @returns {string} 短形态
  */
@@ -319,7 +319,7 @@ function makeReader(staged, notes) {
  */
 function readVersions(read) {
   const reader = read || function (relPath, hint) { return readWorktree(relPath, hint); };
-  const text = reader('VERSION', '版本单一真源（仓库根）：应为 BUILD=2026-11-25.164 / PREV=2026-11-23.163 两行');
+  const text = reader('VERSION', '版本单一真源（仓库根）：应为 BUILD=YYYY-MM-DD.NNN / PREV=YYYY-MM-DD.NNN 两行');
   const vars = {};
   text.split('\n').forEach(function (raw) {
     const line = raw.replace(/\r$/, '').trim();
