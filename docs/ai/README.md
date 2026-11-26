@@ -69,7 +69,7 @@ sed -n '2844,2847p' index.html
 
 > 附：`_tools/validate.py` —— 手册自校验工具（非业务代码，不参与部署）。跑法：`python docs/ai/_tools/validate.py`。
 
-### 1.3 与 `docs/系统知识.md` 的分工（双维护）
+### 1.3 与 `docs/系统知识.md` / `docs/kb/` 的分工（三层 + 双维护）
 
 | 文件 | 面向 | 内容形态 | 更新时机 |
 |---|---|---|---|
@@ -77,6 +77,14 @@ sed -n '2844,2847p' index.html
 | `docs/ai/*` | **AI agent**（也供人快速反查） | 机器可读的 YAML 索引、`file:行号` 证据 | 代码结构/依赖/不变量变化时 |
 
 **两者必须双维护**：只改一份会导致 AI 与人形成认知分歧。若两者冲突，**以代码为准**，并同时修正两份文档。
+
+> **2026-11-26 起业务知识分三层**（详见 `docs/kb/README.md`）：
+> `docs/kb/00-铁律速查.md`（**L0，冷启动必读**，~8KB）
+> → `docs/系统知识.md`（L1，按章节读，勿整读）
+> → `docs/kb/版本时间线.md`（L2，只 grep 不整读）。
+> 原 `§9 版本时间线` 已迁至 L2，主文件 521KB → 193KB、单行超 2000 字符的记录 26 → 0（超长行会被读取静默截断）。
+> 专家包 `chenwei-prod-scheduler/skills/chenwei-knowledge/references/` 是**由本仓库单向生成的副本**，
+> 用 `bash scripts/sync-expert-doc.sh`（默认 dry-run，`--apply` 才覆盖），**禁止手改副本**。
 
 ---
 
