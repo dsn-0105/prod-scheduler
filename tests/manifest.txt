@@ -14,7 +14,7 @@
 #
 # 约定：以 # 开头为注释；空行忽略；每行一个文件名（相对 tests/，不含路径前缀）。
 # 顺序：按文件名升序（ls tests/*.test.js | sed 's|tests/||' | sort 的产物）。
-# 当前条数：52
+# 当前条数：53
 # ============================================================
 db.tx.test.js
 delivery.planno.test.js
@@ -50,6 +50,7 @@ qa.import-nodelivered.test.js
 qa.invfilt.161.independent.test.js
 qa.invfilt.162.independent.test.js
 qa.ledger-fields.independent.test.js
+qa.ledger-filter-sort.independent.test.js
 qa.logs-coalesce.independent.test.js
 qa.ops-eol.test.js
 qa.orig-product.test.js

@@ -108,14 +108,19 @@ test('§A3 两个长文本字段必须是 long + textarea（3A：表格截断悬
   });
 });
 
-test('§A4 可排序列只能是 date/no（qa-core.sortRecords 只认这两个键，多标一个=点了没反应）', function () {
+test('§A4 可排序列 = 全部 9 列（【build .166 契约变更】原「只许 date/no」已被用户"所有字段都能排序"替代）', function () {
+  /* 历史沿革（别把这条当成"测试被放宽了"）：
+     .165 的契约是「sortable 只能是 date/no」，理由当时成立 —— qa-core.sortRecords 只认这两个键，
+     给别的列标 sortable 会渲染出排序图标却点了没反应。
+     .166 用户明确要求「所有字段加排序」，于是**引擎先扩**（sortRecords 支持 types 类型感知，
+     由 qa.ledger-filter-sort §A1~§A7 逐条守），再放开白名单 —— 顺序反过来就是"图标能点但没效果"。
+     故本条现在断言的是「放开得完整」：9 列一个不漏。 */
   const sortable = columnEntries()
     .filter(function (e) { return /sortable:\s*true/.test(e.raw); })
     .map(function (e) { return e.key; })
     .sort();
-  assert.deepStrictEqual(sortable, ['date', 'no'],
-    'sortable 白名单必须是 [date, no]：qa-core.js 是前后端共享同一份字节，'
-    + 'sortRecords 只认这两个键；给数量列标 sortable 会渲染出排序图标但点击无效（4A 明确本批不扩排序）');
+  assert.deepStrictEqual(sortable, EXPECT_KEYS.slice().sort(),
+    '9 列必须全部 sortable: true（漏一列 ⇒ 该列表头没有排序图标，用户会以为"这列特殊"）');
 });
 
 /* ================================================================

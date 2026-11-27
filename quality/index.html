@@ -174,6 +174,24 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .hint-warn{color:#b45309;font-weight:600;min-height:16px}
 .modal-wide{width:560px}
 textarea{resize:vertical;min-height:62px}
+/* ---------- 【build .166】表头排序+漏斗 / 筛选浮层 / 筛选条 ----------
+   规格**逐条照抄生产系统 index.html**（.th-flex/.filt-ico/.filt-pop/.fp-*/.tbl-fbar/.fchip），
+   用户要求「漏斗大小跟订单管理一样、可视化风格统一」⇒ 尺寸与色值不许自创。
+   漏斗图标本身在 qa-app.js 的 FILT_SVG 里行内写死 12×12（与生产一致，不靠 CSS 约束）。 */
+.th-sort .th-flex{display:inline-flex;align-items:center;max-width:100%}
+.th-sort .th-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;min-width:0}
+.th-sort .sort-ico,.th-sort .filt-ico{flex:0 0 auto}
+.filt-ico{margin-left:5px;display:inline-flex;vertical-align:-2px;cursor:pointer;opacity:.4;border-radius:4px;padding:1px}
+.filt-ico:hover{opacity:1;background:rgba(79,70,229,.15)}
+.filt-ico.on{opacity:1;color:var(--primary);background:var(--primary-light)}
+.filt-pop{position:absolute;z-index:300;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.18);padding:12px;width:230px;font-size:12px}
+.filt-pop .fp-title{font-weight:700;margin-bottom:8px;color:var(--text)}
+.filt-pop select,.filt-pop input{font-size:12px;padding:5px 8px;margin-bottom:8px}
+.filt-pop .fp-btns{display:flex;gap:6px;justify-content:flex-end;margin-top:4px}
+.tbl-fbar{display:flex;align-items:center;gap:6px;margin:8px 0;flex-wrap:wrap;font-size:12px;background:var(--card);border-radius:6px;padding:2px 4px}
+.fchip{display:inline-flex;align-items:center;gap:4px;background:var(--primary-light);color:var(--primary);border-radius:12px;padding:3px 10px;font-weight:600}
+.fchip b{cursor:pointer;font-weight:700;margin-left:2px}
+.fchip b:hover{color:var(--red)}
 /* 只读提示条：不可关闭，有 qa 权限时不渲染 */
 .readonly-bar{background:#fef3c7;color:#92400e;font-size:12px;border-radius:6px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:flex-start;gap:6px}
 .qa-notice{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:300;display:none;align-items:center;gap:8px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:9px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px;max-width:86vw}
@@ -237,7 +255,7 @@ textarea{resize:vertical;min-height:62px}
 <!-- 顶部非阻塞提示（鉴权服务不可用等） -->
 <div class="qa-notice" id="qaNotice"></div>
 
-<div class="build-mark">build 2026-11-26.165</div>
+<div class="build-mark">build 2026-11-27.166</div>
 
 <script src="qa-core.js"></script>
 <script src="qa-app.js"></script>

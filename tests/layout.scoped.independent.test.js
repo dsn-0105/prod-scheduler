@@ -782,29 +782,29 @@ test('C4 顶栏按钮：重置=全员可见；重置所有人=admin-only；apply
     'applyTopbarPerm 相对改前基线（' + base.rev.slice(0, 7) + '）逐字不变');
 });
 
-test('C5 水印 7 锚点齐全；.165 权威水印恰 1 处、.164 水印 0 处（逐条解释 .152 残留）', () => {
+test('C5 水印 7 锚点齐全；.166 权威水印恰 1 处、.165 水印 0 处（逐条解释 .152 残留）', () => {
   /* ① index.html 权威水印
      ⚠ 这两行是**转义点正则形态**，node scripts/version.js 的 18 条落点规则覆盖不到，
         每版 bump 后必须手工同步（漏改即 D3 ①③ / O2 ⑧ / C5 连带变红）。
-        【build .165】已核对：本版确为手工同步。 */
-  assert.strictEqual((INDEX_SRC.match(/>build 2026-11-26\.165</g) || []).length, 1, '① index.html >build …< 恰 1 处');
-  assert.strictEqual((INDEX_SRC.match(/build 2026-11-25\.164/g) || []).length, 0, 'index.html 不得残留 .164 权威水印');
+        【build .166】已核对：本版确为手工同步（.165 起连续两版均为手工，建议给 version.js 加第 19 条规则）。 */
+  assert.strictEqual((INDEX_SRC.match(/>build 2026-11-27\.166</g) || []).length, 1, '① index.html >build …< 恰 1 处');
+  assert.strictEqual((INDEX_SRC.match(/build 2026-11-26\.165/g) || []).length, 0, 'index.html 不得残留 .165 权威水印');
   /* ② harness/build.js */
-  assert.strictEqual(BUILD.BUILD, '2026-11-26.165');
-  assert.strictEqual(BUILD.PREV, '2026-11-25.164');
+  assert.strictEqual(BUILD.BUILD, '2026-11-27.166');
+  assert.strictEqual(BUILD.PREV, '2026-11-26.165');
   /* ③④⑤ 两个测试文件的字面量副本 */
   const pp = fs.readFileSync(path.join(ROOT, 'tests', 'qa.ppshift-advance.independent.test.js'), 'utf8');
   const pq = fs.readFileSync(path.join(ROOT, 'tests', 'qa.prodplan-query.independent.test.js'), 'utf8');
-  assert.ok(pp.indexOf("assert.equal(build.BUILD, '2026-11-26.165'") >= 0, '③ §E2 BUILD');
-  assert.ok(pp.indexOf("assert.equal(build.PREV, '2026-11-25.164'") >= 0, '③ §E2 PREV');
-  assert.ok(pq.indexOf("assert.equal(build.BUILD, '2026-11-26.165'") >= 0, '④ §E2 BUILD');
-  assert.ok(pq.indexOf("assert.equal(build.PREV, '2026-11-25.164'") >= 0, '④ §E2 PREV');
-  assert.ok(pq.indexOf('2026-11-26（build .165）') >= 0, '⑤ §E4 guide 版本行');
+  assert.ok(pp.indexOf("assert.equal(build.BUILD, '2026-11-27.166'") >= 0, '③ §E2 BUILD');
+  assert.ok(pp.indexOf("assert.equal(build.PREV, '2026-11-26.165'") >= 0, '③ §E2 PREV');
+  assert.ok(pq.indexOf("assert.equal(build.BUILD, '2026-11-27.166'") >= 0, '④ §E2 BUILD');
+  assert.ok(pq.indexOf("assert.equal(build.PREV, '2026-11-26.165'") >= 0, '④ §E2 PREV');
+  assert.ok(pq.indexOf('2026-11-27（build .166）') >= 0, '⑤ §E4 guide 版本行');
   /* ⑥ js/guide.js 文首 */
-  assert.ok(GUIDE_SRC.indexOf('更新：2026-11-26（build .165）') >= 0, '⑥ guide.js 文首更新行');
-  assert.strictEqual(GUIDE_SRC.indexOf('更新：2026-11-25（build .164）'), -1, 'guide.js 不得残留上一版更新行');
+  assert.ok(GUIDE_SRC.indexOf('更新：2026-11-27（build .166）') >= 0, '⑥ guide.js 文首更新行');
+  assert.strictEqual(GUIDE_SRC.indexOf('更新：2026-11-26（build .165）'), -1, 'guide.js 不得残留上一版更新行');
   /* ⑦ README.md */
-  assert.ok(README_SRC.indexOf('build 2026-11-26.165') >= 0, '⑦ README.md 当前版本');
+  assert.ok(README_SRC.indexOf('build 2026-11-27.166') >= 0, '⑦ README.md 当前版本');
 
   /* .152 残留逐条解释：index.html 中每一处 .152 都必须落在注释内（历史沿革注释，非水印） */
   const lines = INDEX_SRC.split('\n');

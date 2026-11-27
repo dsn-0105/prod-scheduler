@@ -26,6 +26,13 @@
   var PAGE_SIZES = [10, 100, 1000];
   var RETRY_DELAY_MS = 3000;                       /* 503 后 3 秒自动重试一次 */
 
+  /* 【build .166】漏斗图标 —— 与生产系统 index.html 的 FILT_SVG **逐字节一致**（含行内 12×12 尺寸）。
+     用户要求「漏斗大小跟订单管理一样、可视化风格统一」⇒ 尺寸与 path 都不许自创：
+     生产侧是 `style="width:12px;height:12px"` 行内写死（不靠 CSS 类），本文件照抄同一形态，
+     由 tests/qa.ledger-filter-sort.independent.test.js §D1 与生产源码直接对拍。
+     注意：这里是**同构改写**而非共享代码 —— 质量系统禁止加载生产脚本（设计 §9.3）。 */
+  var FILT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>';
+
   /* 系统清单：与生产侧、管理员后台各自维护**同构副本**（PRD P0-2 明文，不做跨文件共享）。
      【build .164】新增第三项「管理员后台」(/admin/)：三处副本的 key 与 url 必须全一致，
      由 tests/qa.systems-switch.test.js 钉死。 */
@@ -55,7 +62,10 @@
      type         'date' | 'text' | 'num' | 'long'
                   · num  表格右对齐
                   · long 表格截断 + 悬浮看全文（多行文本不撑爆行高）
-     sortable     仅 date / no 允许：qa-core.sortRecords 只认这两个键（共享内核，本文件不许自造排序）
+     sortable     【build .166】9 列全部 true（用户要求"所有字段都能排序"）：
+                  排序比较器在 qa-core.sortRecords（类型感知，空值恒沉底），本文件**不许**自造比较逻辑
+     filterType   筛选模式档：'text'（8 模式）| 'num'（6 模式：生产 4 + 为空/不为空）| 'date'（8 快捷）
+                  缺省从 type 推导（long→text、num→num、date→date），故多数列不用写
      inTable      是否占列表列
      formKind     表单控件：'date' | 'readonly' | 'text' | 'number' | 'textarea'
      formRow      表单分行序号（同号并排，行内 flex:1 等分）
@@ -69,13 +79,13 @@
       hint: '系统自动生成，不可修改' },
     /* ② 【build .165】用户新增 7 字段：产品名称、规格型号、总数量、检测数量、异常数量、异常描述、原因分析。
           产品名称/规格型号 = 自由文本（质量系统禁止读生产全局，不联动产品主数据，由录入人填写）。 */
-    { key: 'productName', label: '产品名称', type: 'text', sortable: false, inTable: true, formKind: 'text', formRow: 2 },
-    { key: 'specModel', label: '规格型号', type: 'text', sortable: false, inTable: true, formKind: 'text', formRow: 2 },
-    { key: 'totalQty', label: '总数量', type: 'num', sortable: false, inTable: true, formKind: 'number', formRow: 3 },
-    { key: 'inspectedQty', label: '检测数量', type: 'num', sortable: false, inTable: true, formKind: 'number', formRow: 3 },
-    { key: 'defectQty', label: '异常数量', type: 'num', sortable: false, inTable: true, formKind: 'number', formRow: 3 },
-    { key: 'defectDesc', label: '异常描述', type: 'long', sortable: false, inTable: true, formKind: 'textarea', formRow: 4 },
-    { key: 'causeAnalysis', label: '原因分析', type: 'long', sortable: false, inTable: true, formKind: 'textarea', formRow: 5 }
+    { key: 'productName', label: '产品名称', type: 'text', sortable: true, inTable: true, formKind: 'text', formRow: 2 },
+    { key: 'specModel', label: '规格型号', type: 'text', sortable: true, inTable: true, formKind: 'text', formRow: 2 },
+    { key: 'totalQty', label: '总数量', type: 'num', sortable: true, inTable: true, formKind: 'number', formRow: 3 },
+    { key: 'inspectedQty', label: '检测数量', type: 'num', sortable: true, inTable: true, formKind: 'number', formRow: 3 },
+    { key: 'defectQty', label: '异常数量', type: 'num', sortable: true, inTable: true, formKind: 'number', formRow: 3 },
+    { key: 'defectDesc', label: '异常描述', type: 'long', sortable: true, inTable: true, formKind: 'textarea', formRow: 4 },
+    { key: 'causeAnalysis', label: '原因分析', type: 'long', sortable: true, inTable: true, formKind: 'textarea', formRow: 5 }
   ];
 
   /** 列表列（inTable）—— 表头、表体、CSV 的同一份输入 */
@@ -122,6 +132,10 @@
     pageSize: 100,
     sortKey: 'date',
     sortDir: 'desc',
+    /* 【build .166】列筛选条件：key → {mode, val, from, to}。Q3A：**仅内存**，刷新即清
+       （与生产 tblState[m].filters 同口径；落 localStorage 会让"昨天筛过的东西"明天悄悄生效） */
+    filters: {},
+    filtKey: '',
     tab: 'qaLog',
     flashId: '',
     modalMode: '',
@@ -545,7 +559,43 @@
   }
 
   function orderedRecords() {
-    return CORE.sortRecords(state.records, state.sortKey, state.sortDir);
+    return CORE.sortRecords(filteredRecords(), state.sortKey, state.sortDir, sortTypes());
+  }
+
+  /** 列 key → 排序/筛选类型映射（每次从列定义派生，不缓存：加列后缓存必失效） */
+  function sortTypes() {
+    var t = {};
+    QA_COLUMNS.forEach(function (c) {
+      t[c.key] = c.type === 'num' ? 'num' : (c.type === 'date' ? 'date' : 'text');
+    });
+    return t;
+  }
+
+  /** 筛选后的记录（未排序）—— 判定全在 qa-core.applyFilters，本文件不写任何匹配逻辑 */
+  function filteredRecords() {
+    return CORE.applyFilters(state.records, QA_COLUMNS, state.filters);
+  }
+
+  /** 当前是否有生效筛选 */
+  function hasFilter() {
+    return Object.keys(state.filters).some(function (k) { return CORE.filtActive(state.filters[k]); });
+  }
+
+  /**
+   * 【build .166 · Q4A】把「已被筛掉、当前看不见的行」从选中集合里剔除。
+   * 不剔的后果：用户先全选 100 条 → 再加筛选只剩 3 条 → 点「导出选中」，
+   * 导出的是 100 条（含 97 条肉眼不可见的行）。这是最容易让人"以为系统坏了"的一类 bug。
+   * 只由**筛选变化**触发；排序不改变可见集合，故排序不剔。
+   * @returns {number} 清掉的条数（供调用方决定是否提示）
+   */
+  function pruneSelToVisible() {
+    var alive = {};
+    filteredRecords().forEach(function (r) { if (r && r.id) alive[r.id] = true; });
+    var n = 0;
+    Object.keys(state.sel).forEach(function (id) {
+      if (!alive[id]) { delete state.sel[id]; n++; }
+    });
+    return n;
   }
 
   function currentPageIds() {
@@ -619,6 +669,7 @@
     h += '<div class="card-title">' + ico('list') + '异常台账'
       + '<span class="desc">异常记录 · 质量问题登记与追溯</span></div>';
     h += toolbarHtml();
+    h += filterBarHtml();
     h += tableHtml();
     h += '</div>';
     el.innerHTML = h;
@@ -653,13 +704,18 @@
   }
 
   function pagerHtml() {
+    var shown = filteredRecords().length;
     var total = state.records.length;
     var size = state.pageSize;
-    var pages = total === 0 ? 1 : Math.ceil(total / size);
+    var pages = shown === 0 ? 1 : Math.ceil(shown / size);
     var pg = state.page > pages ? pages : state.page;
     if (pg < 1) pg = 1;
+    /* 【build .166】有筛选时改口径为「筛选后 X / 全部 Y」——只写「共 3 条」会让用户以为数据丢了 */
+    var countTxt = hasFilter()
+      ? ('筛选后 ' + shown + ' / 全部 ' + total + ' 条')
+      : ('共 ' + total + ' 条明细');
     var h = '<span class="tbl-pager">';
-    h += '<span>共 ' + total + ' 条明细 · 第 '
+    h += '<span>' + countTxt + ' · 第 '
       + '<input type="text" value="' + pg + '" onkeydown="if(event.key===\'Enter\')QA_APP.jumpPage(this.value)"'
       + ' onchange="QA_APP.jumpPage(this.value)"> 页 / 共 ' + pages + ' 页</span>';
     h += '<button class="btn btn-sm"' + (pg <= 1 ? ' disabled' : '') + ' onclick="QA_APP.goPage(1)" title="第一页">|◀</button>';
@@ -674,11 +730,24 @@
     return h;
   }
 
-  function sortTh(key, label) {
+  /**
+   * 可排序表头（【build .166】改为「排序图标 + 漏斗」双图标，结构与生产 thCol 同构）。
+   * 漏斗尺寸/样式由 FILT_SVG 行内 12×12 + `.filt-ico` 类共同决定，**与订单管理列表逐像素一致**。
+   * @param {object} col 列定义
+   * @returns {string}
+   */
+  function sortTh(col) {
+    var key = col.key;
     var on = state.sortKey === key;
     var arrow = on ? (state.sortDir === 'asc' ? '▲' : '▼') : '⇅';
-    return '<th class="th-sort" onclick="QA_APP.sortBy(\'' + key + '\')">' + esc(label)
-      + '<span class="sort-ico' + (on ? ' on' : '') + '">' + arrow + '</span></th>';
+    var fact = CORE.filtActive(state.filters[key]);
+    return '<th class="th-sort' + (col.type === 'num' ? ' col-num' : '') + '"'
+      + ' onclick="QA_APP.sortBy(\'' + key + '\')">'
+      + '<span class="th-flex"><span class="th-label">' + esc(col.label) + '</span>'
+      + '<span class="sort-ico' + (on ? ' on' : '') + '">' + arrow + '</span>'
+      + '<span class="filt-ico' + (fact ? ' on' : '') + '" title="筛选"'
+      + ' onclick="event.stopPropagation();QA_APP.openFilter(this,\'' + key + '\')">' + FILT_SVG + '</span>'
+      + '</span></th>';
   }
 
   /** 表头类名：数量列与表体同样右对齐（否则"总数量"标题居左、数字居右，视觉上像错列） */
@@ -690,14 +759,16 @@
     var pg = CORE.paginate(orderedRecords(), state.page, state.pageSize);
     state.page = pg.page;                    /* 夹紧后的页码回写，保证分页器与表体一致 */
     var rows = pg.rows;
-    if (!rows.length) return emptyHtml();
+    /* 【build .166】两种空要分开：真的没数据 vs 被筛没了。后者必须给「清除筛选」入口，
+       否则用户看到"暂无异常记录"会以为台账被清空了（Q4/PRD 均要求可见性） */
+    if (!rows.length) return hasFilter() ? noMatchHtml() : emptyHtml();
     var cols = tableCols();
     var h = '<div class="table-wrap"><table><thead><tr>'
       + '<th class="sel-col"></th>';
-    /* 表头：可排序列走 sortTh，其余普通 th —— 白名单来自 QA_COLUMNS.sortable */
+    /* 表头：可排序列走 sortTh（排序+漏斗），其余普通 th —— 白名单来自 QA_COLUMNS.sortable */
     for (var c = 0; c < cols.length; c++) {
       h += cols[c].sortable
-        ? sortTh(cols[c].key, cols[c].label)
+        ? sortTh(cols[c])
         : '<th' + thClassOf(cols[c]) + '>' + esc(cols[c].label) + '</th>';
     }
     h += '</tr></thead><tbody>';
@@ -748,14 +819,21 @@
   }
 
   /* ---------- 排序 / 分页 ---------- */
+  /**
+   * 排序（【build .166 · Q1A】三态循环，与生产 toggleSort 同口径）：
+   *   其他列 → 升序 → 降序 → **取消（回默认：日期倒序）**
+   * 初始方向是**升序**（生产 `s.sort={key,dir:1}` 同为 1=升），连点两次即降序，第三次取消。
+   * @param {string} key 列 key
+   * @returns {undefined}
+   */
   function sortBy(key) {
-    /* 白名单从列定义派生：只有 sortable 的列可排（qa-core.sortRecords 只认 date/no） */
     var col = colOf(key);
     if (!col || !col.sortable) return;
-    if (state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
-    else { state.sortKey = key; state.sortDir = 'desc'; }
-    state.page = 1;                       /* 排序后回第 1 页 */
-    renderMain();
+    if (state.sortKey !== key) { state.sortKey = key; state.sortDir = 'asc'; }
+    else if (state.sortDir === 'asc') { state.sortDir = 'desc'; }
+    else { state.sortKey = 'date'; state.sortDir = 'desc'; }   /* 取消 → 回默认视图 */
+    state.page = 1;                       /* 排序后回第 1 页（生产同款） */
+    renderMain();                         /* 排序不改变可见集合 ⇒ **不**清选中（Q4A 只管筛选） */
   }
 
   function goPage(p) {
@@ -776,6 +854,187 @@
     writePageSize(n);
     state.page = 1;
     renderMain();
+  }
+
+  /* ============================================================
+     筛选（【build .166】仿生产订单管理列表 · 同构改写，不共享代码）
+     ------------------------------------------------------------
+     分工铁律（与生产 filterBar/thCol/applyFilt 同一套思路）：
+       · **判定**全在 qa-core（matchFilter / applyFilters / filtActive / modeNeedsVal）；
+         本区块只负责「收集 f」「拼 DOM」「写 state」，**一行匹配逻辑都不许写在这里**
+       · 漏斗点亮判据 = CORE.filtActive(同一份)，禁止在 sortTh 里另写一套
+         （生产 .161 就栽在「筛选条放行」与「漏斗点亮」各写一份，出现"筛了但图标不亮"）
+       · 模式清单来自 CORE.filtModesOf(type)，本文件不写模式字面量
+     ============================================================ */
+
+  /** 当前打开的面板对应的列 key（fpModeChange 需要知道列类型） */
+  var filtPop = null;
+
+  /** 关闭筛选浮层（幂等） */
+  function closeFilt() {
+    if (filtPop && filtPop.parentNode) filtPop.parentNode.removeChild(filtPop);
+    filtPop = null;
+    state.filtKey = '';
+  }
+
+  /**
+   * 筛选状态条：有生效筛选时出现在工具栏与表格之间。
+   * @returns {string} 无筛选时返回空串（不占位）
+   */
+  function filterBarHtml() {
+    var keys = Object.keys(state.filters).filter(function (k) {
+      return CORE.filtActive(state.filters[k]);
+    });
+    if (!keys.length) return '';
+    var chips = keys.map(function (k) {
+      var col = colOf(k);
+      if (!col) return '';
+      var f = state.filters[k];
+      var txt;
+      if (f.mode === 'range') txt = col.label + ' ' + f.from + '~' + f.to;
+      else if (!CORE.modeNeedsVal(f.mode)) txt = col.label + ' ' + (CORE.FILT_MODE_NAME[f.mode] || '');
+      else txt = col.label + ' ' + (CORE.FILT_MODE_NAME[f.mode] || '') + f.val;
+      return '<span class="fchip">' + esc(txt)
+        + ' <b title="移除该筛选" onclick="QA_APP.clearFilt(\'' + esc(k) + '\')">×</b></span>';
+    }).join('');
+    return '<div class="tbl-fbar">' + chips
+      + '<button class="btn btn-sm" onclick="QA_APP.clearAllFilt()">清除全部</button></div>';
+  }
+
+  /** 筛选无匹配时的空状态（必须给「清除筛选」出口，否则用户以为台账被清空了） */
+  function noMatchHtml() {
+    return '<div class="table-wrap"><div class="empty">' + ico('list')
+      + '<div>当前筛选条件下没有匹配的记录</div>'
+      + '<button class="btn btn-sm" style="margin-top:10px" onclick="QA_APP.clearAllFilt()">清除全部筛选</button>'
+      + '</div></div>';
+  }
+
+  /**
+   * 打开某列的筛选浮层。
+   * 交互与生产 openFilter 一致：点漏斗弹出、点外部/取消关闭、确定/清除生效。
+   * @param {Element} el 漏斗元素（用于定位）
+   * @param {string} key 列 key
+   * @returns {undefined}
+   */
+  function openFilter(el, key) {
+    closeFilt();
+    var col = colOf(key);
+    if (!col) return;
+    state.filtKey = key;
+    var f = state.filters[key] || null;
+    var modes = CORE.filtModesOf(col.type);
+    var curMode = (f && f.mode) ? f.mode : modes[0][0];
+    if (modes.every(function (x) { return x[0] !== curMode; })) curMode = modes[0][0];
+
+    var inner = '<select id="qa_fp_mode" onchange="QA_APP.fpModeChange()">'
+      + modes.map(function (x) {
+        return '<option value="' + x[0] + '"' + (curMode === x[0] ? ' selected' : '') + '>'
+          + esc(x[1]) + '</option>';
+      }).join('')
+      + '</select>';
+
+    /* 输入控件按列类型生成（不在运行时改 input.type —— 部分浏览器改 type 会丢当前值） */
+    var vType = col.type === 'num' ? 'number' : (col.type === 'date' ? 'date' : 'text');
+    var vPh = col.type === 'num' ? '输入数值' : (col.type === 'date' ? '' : '输入关键字');
+    inner += '<input type="' + vType + '" id="qa_fp_val" placeholder="' + vPh + '"'
+      + ' value="' + esc(f && f.val != null ? f.val : '') + '"'
+      + ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();QA_APP.applyFilt(\'' + esc(key) + '\');}">';
+    if (col.type === 'date') {
+      inner += '<span id="qa_fp_drange" style="display:none;align-items:center;gap:4px">'
+        + '<input type="date" id="qa_fp_from" value="' + esc(f && f.from ? f.from : '') + '" style="width:auto">'
+        + '<span style="color:var(--muted)">~</span>'
+        + '<input type="date" id="qa_fp_to" value="' + esc(f && f.to ? f.to : '') + '" style="width:auto">'
+        + '</span>';
+    }
+
+    var pop = document.createElement('div');
+    pop.className = 'filt-pop';
+    pop.innerHTML = '<div class="fp-title">筛选：' + esc(col.label) + '</div>' + inner
+      + '<div class="fp-btns">'
+      + '<button class="btn btn-sm" onclick="QA_APP.closeFilt()">取消</button>'
+      + '<button class="btn btn-sm" onclick="QA_APP.clearFilt(\'' + esc(key) + '\')">清除</button>'
+      + '<button class="btn btn-sm btn-primary" onclick="QA_APP.applyFilt(\'' + esc(key) + '\')">确定</button>'
+      + '</div>';
+    document.body.appendChild(pop);
+    pop.addEventListener('click', function (e) { e.stopPropagation(); });
+
+    var r = el.getBoundingClientRect();
+    var left = r.left;
+    if (left + 240 > window.innerWidth - 8) left = window.innerWidth - 248;
+    if (left < 8) left = 8;
+    pop.style.left = left + 'px';
+    pop.style.top = (r.bottom + 6 + window.scrollY) + 'px';
+    filtPop = pop;
+    fpModeChange();                        /* 按当前模式初始化输入区显隐（二次打开要回显） */
+    var inp = $('qa_fp_val');
+    if (inp && inp.style.display !== 'none') { try { inp.focus(); } catch (e) { /* 无焦点权限时忽略 */ } }
+  }
+
+  /** 模式切换：需要值的模式显示输入框；日期「从…到…」显示双日期并隐藏单值框 */
+  function fpModeChange() {
+    var col = colOf(state.filtKey);
+    var mEl = $('qa_fp_mode'), vEl = $('qa_fp_val'), rEl = $('qa_fp_drange');
+    if (!col || !mEl) return;
+    var mode = mEl.value;
+    var isRange = (col.type === 'date' && mode === 'range');
+    if (rEl) rEl.style.display = isRange ? 'inline-flex' : 'none';
+    if (vEl) vEl.style.display = (CORE.modeNeedsVal(mode) && !isRange) ? '' : 'none';
+  }
+
+  /**
+   * 应用当前面板的筛选。
+   * 空值语义：需要值的模式但输入框是空 ⇒ **视为清除该列筛选**（不 alert、不写入无效筛选）。
+   * 理由：写一条"无效筛选"进 state 会让漏斗图标与 chips 出现却不生效，
+   * 用户会反复点「确定」怀疑系统坏了。要清就干脆清掉。
+   * @param {string} key 列 key
+   * @returns {undefined}
+   */
+  function applyFilt(key) {
+    var col = colOf(key);
+    if (!col) { closeFilt(); return; }
+    var mEl = $('qa_fp_mode');
+    var mode = mEl ? mEl.value : (CORE.filtModesOf(col.type)[0][0]);
+    var f = { mode: mode, val: '' };
+    if (col.type === 'date' && mode === 'range') {
+      var fromEl = $('qa_fp_from'), toEl = $('qa_fp_to');
+      f.from = fromEl ? String(fromEl.value || '') : '';
+      f.to = toEl ? String(toEl.value || '') : '';
+      if (!f.from || !f.to) { alert('请选择「从…到…」的起止日期'); return; }
+    } else if (CORE.modeNeedsVal(mode)) {
+      var vEl = $('qa_fp_val');
+      f.val = vEl ? String(vEl.value || '').trim() : '';
+      if (f.val === '') {                   /* 空输入 ⇒ 等同清除本列筛选 */
+        delete state.filters[key];
+        afterFiltChange();
+        return;
+      }
+    }
+    state.filters[key] = f;
+    afterFiltChange();
+  }
+
+  /**
+   * 筛选变化后的统一收尾（【build .166】唯一入口，禁止各调用方自己拼这三步）。
+   * 顺序有意义：先关浮层（否则重绘后浮层挂在旧坐标上）→ 清隐藏行勾选（Q4A）→ 回第 1 页 → 重绘。
+   * @returns {undefined}
+   */
+  function afterFiltChange() {
+    closeFilt();
+    pruneSelToVisible();                   /* Q4A：被筛掉的行不得继续处于选中态 */
+    state.page = 1;                        /* 筛选变化回第 1 页（生产同款） */
+    renderMain();
+  }
+
+  /** 清除单列筛选 */
+  function clearFilt(key) {
+    delete state.filters[key];
+    afterFiltChange();
+  }
+
+  /** 清除全部筛选 */
+  function clearAllFilt() {
+    state.filters = {};
+    afterFiltChange();
   }
 
   /* ---------- 弹窗 ---------- */
@@ -1141,10 +1400,22 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         if (state.sysMenuOpen) closeSysMenu();
+        if (filtPop) closeFilt();                   /* 【build .166】ESC 关筛选浮层 */
         var mb = $('modalBg');
         if (mb && mb.classList.contains('show')) closeModal();
       }
     });
+    /* 【build .166】筛选浮层点外部关闭：mousedown 与 mouseup **都在面板外**才关。
+       与生产 index.html 同款双判定 —— 若只判 click，「在面板里按下、拖到面板外松开」
+       会误关（用户正在选日期区间时手一抖，面板就没了）。capture 先于面板内 stopPropagation。 */
+    var __qaFiltFromOutside = false;
+    document.addEventListener('mousedown', function (e) {
+      __qaFiltFromOutside = !!(filtPop && !filtPop.contains(e.target));
+    }, true);
+    document.addEventListener('mouseup', function (e) {
+      if (filtPop && __qaFiltFromOutside && !filtPop.contains(e.target)) closeFilt();
+      __qaFiltFromOutside = false;
+    }, true);
     renderSysMenu();
     renderNav();
     boot();
@@ -1188,6 +1459,13 @@
     goPage: goPage,
     jumpPage: jumpPage,
     changePageSize: changePageSize,
+    /* 【build .166】列筛选 */
+    openFilter: openFilter,
+    closeFilt: closeFilt,
+    fpModeChange: fpModeChange,
+    applyFilt: applyFilt,
+    clearFilt: clearFilt,
+    clearAllFilt: clearAllFilt,
     /* 增改 */
     openAddModal: openAddModal,
     openEditModal: openEditModal,
