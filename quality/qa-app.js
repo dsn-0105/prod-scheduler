@@ -674,6 +674,13 @@
     h += '</div>';
     el.innerHTML = h;
     updateSelUI();
+    /* 【build .167】双表结构就位后的三件同步（顺序不可颠倒）：
+       ① syncHeadBody —— 用表头 th 的**实测宽度**写表体 colgroup（必须在 DOM 已插入后做，
+          提前做拿到的是 0）；② fixStickyHeadTop —— 吸附位置随操作栏/筛选条高度自适应；
+       ③ syncBottomScrollbar —— 表体横向溢出时启用页面底部固定滚动条。 */
+    syncHeadBody();
+    fixStickyHeadTop();
+    syncBottomScrollbar();
   }
 
   /** 只读提示条：不可关闭；有 qa 权限时不渲染（PRD 7.3）
@@ -733,6 +740,9 @@
   /**
    * 可排序表头（【build .166】改为「排序图标 + 漏斗」双图标，结构与生产 thCol 同构）。
    * 漏斗尺寸/样式由 FILT_SVG 行内 12×12 + `.filt-ico` 类共同决定，**与订单管理列表逐像素一致**。
+   * 【build .167】补 `data-col="<key>"`：表头的**列身份**统一走 data-col（与表体 cellHtml 的
+   * `data-col` 同一套标识）。**严禁**在本系统引入 `data-key` —— 生产用 data-key、质量用 data-col，
+   * 两套并存必然在双表结构（表头表 / 表体表）里错位；`qa.ledger-fields §B2` 已把 data-col 钉死。
    * @param {object} col 列定义
    * @returns {string}
    */
@@ -742,6 +752,7 @@
     var arrow = on ? (state.sortDir === 'asc' ? '▲' : '▼') : '⇅';
     var fact = CORE.filtActive(state.filters[key]);
     return '<th class="th-sort' + (col.type === 'num' ? ' col-num' : '') + '"'
+      + ' data-col="' + esc(key) + '"'
       + ' onclick="QA_APP.sortBy(\'' + key + '\')">'
       + '<span class="th-flex"><span class="th-label">' + esc(col.label) + '</span>'
       + '<span class="sort-ico' + (on ? ' on' : '') + '">' + arrow + '</span>'
@@ -755,23 +766,48 @@
     return col.type === 'num' ? ' class="col-num"' : '';
   }
 
+  /**
+   * 表格 HTML（【build .167】升级为生产同构的**双表结构**）。
+   * ------------------------------------------------------------
+   * 为什么双表（照抄生产 index.html 订单列表的做法，设计见生产 L4724-4729 注释）：
+   *   · 表头独立成表放进 `.sticky-head`（div sticky）随页面滚动吸附，**不用** `thead{position:sticky}` ——
+   *     那在 `table-layout:fixed` + 大表格下会踩 Chrome 渲染 bug；
+   *   · 表体表独立承载 tbody，两表**各带一份 colgroup**，列宽由 `syncHeadBody()` 把表头 th 的
+   *     实测宽度写回表体 colgroup，从而滚动时列严格对齐。
+   * 列数口径：`colN = 1（勾选列 sel-col）+ tableCols().length`。两表必须**同列数**，
+   * 否则表头与表体在 fixed 布局下会整体错位（不是"差一点"，是逐列偏移）。
+   * ⚠ 表头渲染循环必须留在本函数内，且保持「三元分支里调用 sortTh(cols[c])」这一写法 ——
+   *   `qa.ledger-fields §B5` 的变异锚点就锚在这个串上（命中必须恰 1 次）。
+   * @returns {string}
+   */
   function tableHtml() {
     var pg = CORE.paginate(orderedRecords(), state.page, state.pageSize);
     state.page = pg.page;                    /* 夹紧后的页码回写，保证分页器与表体一致 */
     var rows = pg.rows;
     /* 【build .166】两种空要分开：真的没数据 vs 被筛没了。后者必须给「清除筛选」入口，
-       否则用户看到"暂无异常记录"会以为台账被清空了（Q4/PRD 均要求可见性） */
+       否则用户看到"暂无异常记录"会以为台账被清空了（Q4/PRD 均要求可见性）
+       【build .167】空态**不**渲染 `.sticky-head`（没有表体可对齐，空挂一条吸附表头会露出无落点的表头带） */
     if (!rows.length) return hasFilter() ? noMatchHtml() : emptyHtml();
     var cols = tableCols();
-    var h = '<div class="table-wrap"><table><thead><tr>'
-      + '<th class="sel-col"></th>';
+    /* 两表各带一份 colgroup（内容一致；宽度稍后由 syncHeadBody 写入表体那份） */
+    var colN = cols.length + 1;
+    var colg = '<colgroup>';
+    for (var g = 0; g < colN; g++) colg += '<col>';
+    colg += '</colgroup>';
+
+    /* ---- 表头表（sticky） ---- */
+    var h = '<div class="sticky-head"><div class="head-scroll"><table class="head-tbl">' + colg
+      + '<thead><tr><th class="sel-col"></th>';
     /* 表头：可排序列走 sortTh（排序+漏斗），其余普通 th —— 白名单来自 QA_COLUMNS.sortable */
     for (var c = 0; c < cols.length; c++) {
       h += cols[c].sortable
         ? sortTh(cols[c])
-        : '<th' + thClassOf(cols[c]) + '>' + esc(cols[c].label) + '</th>';
+        : '<th' + thClassOf(cols[c]) + ' data-col="' + esc(cols[c].key) + '">' + esc(cols[c].label) + '</th>';
     }
-    h += '</tr></thead><tbody>';
+    h += '</tr></thead></table></div></div>';
+
+    /* ---- 表体表 ---- */
+    h += '<div class="table-wrap"><table class="body-tbl">' + colg + '<tbody>';
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       var id = esc(r.id);
@@ -816,6 +852,190 @@
     }
     h += '</div></div>';
     return h;
+  }
+
+  /* ============================================================
+     【build .167】表格骨架 · 表头/表体/底部条 的同步（照抄生产语义，不共享代码）
+     ------------------------------------------------------------
+     设计 §9.3 / PRD 5.3 明文「代码共享——明确禁止」：质量系统不加载生产脚本，
+     故四个函数是**同构改写**（逐行照抄 + 改选择器），每个函数头都标了来源行号。
+     选择器一律收敛在 `#content` 内（与生产一致）：本页只有主区一个 content，
+     这样不会误抓弹窗/侧栏里可能出现的表格。
+     模块级状态：底部滚动条要"记住"上一批可滚动的表体与最大可滚距，
+     故用 __bsWraps/__bsRange/__bsWrap 三个闭包变量（与生产同名同义）。
+     ============================================================ */
+  var __bsWraps = [];      /* 当前参与底部条联动的表体容器 */
+  var __bsRange = 0;       /* 其中最大的可滚动距离（底部条的滚动范围基准） */
+  var __bsWrap = null;     /* 最近一次被用户操作的容器（用于回写底部条位置） */
+
+  /**
+   * 底部固定横向滚动条（来源：生产 index.html `syncBottomScrollbar`）。
+   * 表体已用 `scrollbar-width:none` 隐藏自身横条 ⇒ 由页面底部这一条统一驱动，
+   * 多表并存时按"最大可滚距"等比映射（保证一一对应，不出现拖动跳变）。
+   * @returns {undefined}
+   */
+  function syncBottomScrollbar() {
+    var sb = document.getElementById('bottomScrollbar');
+    var inner = document.getElementById('bottomScrollbarInner');
+    if (!sb || !inner) return;
+    var wraps = Array.prototype.slice.call(document.querySelectorAll('#content .table-wrap'));
+    var targets = [];
+    for (var i = 0; i < wraps.length; i++) {
+      var w = wraps[i];
+      if (w.offsetParent === null) continue;              /* 隐藏（如折叠区块）跳过 */
+      if (w.scrollWidth > w.clientWidth + 2) targets.push(w);
+    }
+    if (!targets.length) {
+      sb.style.display = 'none'; __bsWraps = []; __bsRange = 0; __bsWrap = null; return;
+    }
+    var range = 0;
+    targets.forEach(function (t) { var r = t.scrollWidth - t.clientWidth; if (r > range) range = r; });
+    __bsWraps = targets; __bsRange = range;
+    sb.style.display = 'block';
+    /* 可滚动范围 = 各表最大可滚距（inner 铺成「视口宽 + 最大可滚距」） */
+    inner.style.width = (sb.clientWidth + range) + 'px';
+    /* 首次绑定底部条拖动事件（只绑一次） */
+    if (!sb._barBound) {
+      sb._barBound = true;
+      sb.addEventListener('scroll', function () {
+        if (sb._sync) return;
+        sb._sync = true;
+        var R = __bsRange || 1;
+        __bsWraps.forEach(function (t) {
+          var tr = t.scrollWidth - t.clientWidth;
+          if (tr > 0) t.scrollLeft = Math.round((sb.scrollLeft / R) * tr);
+        });
+        sb._sync = false;
+      });
+    }
+    /* 用最近操作的（或第一个）表格位置来定位底部滚动条 */
+    var active = (__bsWrap && targets.indexOf(__bsWrap) >= 0) ? __bsWrap : targets[0];
+    __bsWrap = active;
+    if (sb._sync) return;
+    sb._sync = true;
+    var ar = active.scrollWidth - active.clientWidth;
+    sb.scrollLeft = ar > 0 ? (active.scrollLeft / ar) * range : 0;
+    sb._sync = false;
+  }
+
+  /**
+   * 统一恢复表格横向/纵向滚动位置（来源：生产 index.html `restoreTableScroll`）。
+   * 双 rAF + 150ms 兜底：布局完全稳定后再精确设回，避免浏览器提前钳制 scrollLeft 跳最前。
+   * 程序设回会触发 scroll 事件，从而自动联动表头与底部条。
+   * @param {Array<{el:object,left:(number|null),top:(number|null)}>} records 待恢复的滚动记录
+   * @returns {undefined}
+   */
+  function restoreTableScroll(records) {
+    if (!records || !records.length) return;
+    var apply = function () {
+      records.forEach(function (rec) {
+        if (!rec.el) return;
+        if (rec.left != null) rec.el.scrollLeft = rec.left;
+        if (rec.top != null) rec.el.scrollTop = rec.top;
+      });
+      syncBottomScrollbar();
+    };
+    requestAnimationFrame(function () {
+      apply();
+      requestAnimationFrame(function () {
+        apply();
+        setTimeout(apply, 150);      /* 兜底：字体/图片/悬停态等延迟 reflow 后再校正一次 */
+      });
+    });
+  }
+
+  /**
+   * 吸附位置计算（来源：生产 index.html `fixStickyHeadTop`）。
+   * `.sticky-head` 的 top = 顶栏(58 / 768px 下 48) + 操作栏高度与上下 margin；
+   * 若操作栏与表头之间还有筛选条 `.tbl-fbar`，则把筛选条也设为 sticky 并接在同一条吸附带上，
+   * 避免"筛选条夹在中间把表头顶下去"或"两者叠在同一个 top 互相遮挡"。
+   * @returns {undefined}
+   */
+  function fixStickyHeadTop() {
+    var base = window.innerWidth <= 768 ? 48 : 58;
+    document.querySelectorAll('#content .sticky-head').forEach(function (hd) {
+      var bb = hd.previousElementSibling;
+      while (bb && !bb.classList.contains('bulk-bar')) bb = bb.previousElementSibling;
+      var top = base;
+      if (bb) {
+        var mT = parseFloat(getComputedStyle(bb).marginTop) || 0;
+        var mB = parseFloat(getComputedStyle(bb).marginBottom) || 0;
+        /* sticky top 是 margin box 顶 ⇒ 顶栏 + 操作栏上下 margin + 高度，正好贴住操作栏边框盒底 */
+        top += mT + bb.offsetHeight + mB;
+        var fbar = bb.nextElementSibling;
+        while (fbar && fbar !== hd && !fbar.classList.contains('tbl-fbar')) fbar = fbar.nextElementSibling;
+        if (fbar && fbar !== hd && fbar.classList.contains('tbl-fbar')) {
+          fbar.style.position = 'sticky';
+          fbar.style.margin = '0';       /* 去上下 margin，贴住操作栏与表头 */
+          fbar.style.top = top + 'px';
+          fbar.style.zIndex = 30;
+          var fT = parseFloat(getComputedStyle(fbar).marginTop) || 0;
+          var fB = parseFloat(getComputedStyle(fbar).marginBottom) || 0;
+          top += fT + fbar.offsetHeight + fB;
+        }
+      }
+      hd.style.top = top + 'px';
+    });
+  }
+
+  /**
+   * 表头/表体列宽同步（来源：生产 index.html `syncHeadBody`）。
+   * 把表头表 th 的**实测宽度**写进表体表的 colgroup，并令表体表总宽 = 表头表总宽；
+   * `table-layout:fixed` 下两表列宽因此逐列一致，横向滚动时表头/表体严格对齐。
+   * ⚠ 必须在表头表已插入 DOM 且完成布局后调用（renderMain 的 el.innerHTML 之后）。
+   * @returns {undefined}
+   */
+  function syncHeadBody() {
+    document.querySelectorAll('#content .sticky-head').forEach(function (hd) {
+      var ht = hd.querySelector('table.head-tbl');
+      var bw = hd.nextElementSibling;
+      if (!bw || !bw.classList.contains('table-wrap')) return;
+      var bt = bw.querySelector('table.body-tbl');
+      if (!ht || !bt) return;
+      var hc = ht.tHead && ht.tHead.rows[0] ? Array.prototype.slice.call(ht.tHead.rows[0].cells) : [];
+      var cg = bt.querySelector('colgroup');
+      if (!cg || !hc.length) return;
+      var cols = cg.querySelectorAll('col');
+      var total = 0;
+      hc.forEach(function (th, idx) {
+        var w = th.offsetWidth || 0;
+        if (cols[idx]) cols[idx].style.width = w + 'px';
+        total += w;
+      });
+      if (total > 0) bt.style.width = total + 'px';
+    });
+  }
+
+  /**
+   * 注册表格滚动的 capture 委托 + 窗口尺寸变化联动（来源：生产 index.html 的
+   * `document.addEventListener('scroll', fn, true)` 与 `window resize` 两段）。
+   * 为什么 capture：元素自身的 scroll **不冒泡**，只能在捕获阶段截到。
+   * 只注册一次（由 init() 调用），不随 renderMain 重复绑定。
+   * @returns {undefined}
+   */
+  function bindTableScrollFollow() {
+    document.addEventListener('scroll', function (e) {
+      var t = e.target;
+      if (!t || !t.classList || !t.classList.contains('table-wrap')) return;
+      /* 表体横向滚动 → 表头容器跟随（双表结构列对齐） */
+      var hd = t.previousElementSibling;
+      if (hd && hd.classList.contains('sticky-head')) {
+        var hs = hd.querySelector('.head-scroll');
+        if (hs && hs.scrollLeft !== t.scrollLeft) hs.scrollLeft = t.scrollLeft;
+      }
+      var sb = document.getElementById('bottomScrollbar');
+      if (sb && sb.style.display === 'block' && __bsWraps && __bsWraps.indexOf(t) >= 0) {
+        __bsWrap = t;
+        if (sb._sync) return;
+        sb._sync = true;
+        var wr = t.scrollWidth - t.clientWidth;
+        sb.scrollLeft = (__bsRange > 0 && wr > 0) ? (t.scrollLeft / wr) * __bsRange : 0;
+        sb._sync = false;
+      }
+    }, true);
+    window.addEventListener('resize', function () {
+      syncBottomScrollbar(); syncHeadBody(); fixStickyHeadTop();
+    });
   }
 
   /* ---------- 排序 / 分页 ---------- */
@@ -1418,6 +1638,8 @@
     }, true);
     renderSysMenu();
     renderNav();
+    /* 【build .167】表格滚动联动只注册一次（capture 委托 + resize），不随 renderMain 重复绑定 */
+    bindTableScrollFollow();
     boot();
   }
 

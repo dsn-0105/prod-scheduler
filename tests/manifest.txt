@@ -62,6 +62,7 @@ qa.prodplan-query.independent.test.js
 qa.quality-module.independent.test.js
 qa.return-cap.independent.test.js
 qa.systems-switch.test.js
+qa.table-standard.independent.test.js
 server.canwrite.test.js
 server.tx.test.js
 subst-rank.153.test.js

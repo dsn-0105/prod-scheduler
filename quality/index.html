@@ -131,7 +131,26 @@ tr:hover td{background:#f8fafc}
 .sel-col{position:sticky;left:0;z-index:5;background:#fff;text-align:center;width:44px;vertical-align:middle;padding:6px 4px}
 thead .sel-col{background:#eef2ff;z-index:6}
 .sel-col input{cursor:pointer;width:16px;height:16px}
-.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);scrollbar-width:none}
+/* 【build .167】双表结构：表头独立表随页面滚动吸附（照抄生产 index.html 同款规则）。
+   1) 表体自身横条隐藏（scrollbar-width:none + ::-webkit-scrollbar）⇒ 横向滚动统一交给页面底部
+      固定条，否则会出现「表体一条 + 底部一条」的双横条（生产 L193/L205 有这两条，质量侧原先缺）； */
+.table-wrap::-webkit-scrollbar{display:none;height:0}
+.sticky-head{position:sticky;top:58px;z-index:20;background:var(--primary-light);border-radius:0;overflow:hidden}
+.head-scroll{overflow-x:auto;scrollbar-width:none}
+.head-scroll::-webkit-scrollbar{display:none;height:0}
+.head-tbl,.body-tbl{table-layout:fixed}
+.sticky-head+.table-wrap{border-radius:0 0 8px 8px;border-top:none}
+@media(max-width:768px){.sticky-head{top:48px}}
+/* 卡片内操作栏去阴影/圆角/下 margin：与 sticky 表头未滚动时 0 空隙贴住（生产 L199 有，
+   质量侧原先缺 ⇒ 操作栏与表头间会露 6px 缝，生产 .14 踩过同一坑） */
+.card .bulk-bar{box-shadow:none;border-radius:0;margin-bottom:0}
+/* 页面底部固定横向滚动条（不随页面/表格滚动位移）—— 照抄生产 L207-211 全套 */
+.bottom-scrollbar{position:fixed;left:0;right:0;bottom:0;height:14px;overflow-x:auto;overflow-y:hidden;background:#fff;border-top:1px solid var(--border);z-index:150;display:none;scrollbar-width:thin}
+.bottom-scrollbar::-webkit-scrollbar{height:10px}
+.bottom-scrollbar::-webkit-scrollbar-thumb{background:#c7cdd8;border-radius:5px;border:2px solid #fff}
+.bottom-scrollbar::-webkit-scrollbar-thumb:hover{background:#a8b1c0}
+.bottom-scrollbar::-webkit-scrollbar-track{background:transparent}
 .table-wrap tbody tr{cursor:pointer}
 .table-wrap tbody tr:hover{background:#f5f7ff}
 #content .table-wrap tbody tr.row-sel td{background:rgba(59,130,246,.16)}
@@ -254,6 +273,9 @@ textarea{resize:vertical;min-height:62px}
 
 <!-- 顶部非阻塞提示（鉴权服务不可用等） -->
 <div class="qa-notice" id="qaNotice"></div>
+
+<!-- 【build .167】页面底部固定横向滚动条（双表结构配套：表体横条已隐藏，横向滚动由本条统一驱动） -->
+<div class="bottom-scrollbar" id="bottomScrollbar"><div style="height:1px" id="bottomScrollbarInner"></div></div>
 
 <div class="build-mark">build 2026-11-27.166</div>
 
