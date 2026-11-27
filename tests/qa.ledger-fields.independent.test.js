@@ -186,10 +186,12 @@ test('§B4 表单由 formCols() 派生，字段 id 统一为 qa_f_<key>', functi
 });
 
 test('§B5 变异注入判别力：三处回潮形态必须都能让 §B1/§B2/§B3 的判据变红', function () {
-  /* ① 表头回退成硬编码 sortTh */
-  const thNeedle = '? sortTh(cols[c].key, cols[c].label)';
+  /* ① 表头回退成硬编码 sortTh
+     【build .166 已更新锚点】sortTh 的签名从 (key,label) 改成 (col)，锚点随之变化 ——
+     这正是变异注入的价值：签名一变，锚点命中数归零，用例立刻红而不是静默跳过。 */
+  const thNeedle = '? sortTh(cols[c])';
   assert.strictEqual(countOcc(APP, thNeedle), 1, '表头变异锚点必须命中恰 1 处');
-  const thMut = APP.replace(thNeedle, "? sortTh('date', '日期')");
+  const thMut = APP.replace(thNeedle, "? sortTh('date')");
   assert.notStrictEqual(thMut, APP, '表头变异注入必须生效');
   assert.strictEqual(badTableHeader(thMut), true, '表头回退成硬编码后，§B1 判据必须变红');
 
