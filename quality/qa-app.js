@@ -23,6 +23,12 @@
   var API_PROD = '/api';                           /* 生产接口：仅用登录 / 改密两个端点 */
   var API_QA = '/api/qa';                          /* 质量系统接口 */
   var PAGE_SIZE_KEY = 'wb_cb_qa_pageSize_qaLog';   /* PRD 5.3 指定的分页键 */
+  /* 【build .167】列布局本地存储键。质量系统的本地键一律 `wb_cb_qa_` 前缀（三条硬约束之三）；
+     `_v1` 是**形状版本**，与"生产 tblLayout v2"是两套独立演进的东西（见下方 normalizeLayout 注释）。 */
+  var LAYOUT_KEY = 'wb_cb_qa_tblLayout_v1';
+  /* 本系统的表格模块名：生产按 data-m 区分多个模块，质量只有「异常台账」一张表 ⇒ 固定一个名字。
+     用常量而非字面量散落各处，是为了将来真出现第二张表时有唯一改动点。 */
+  var TBL_M = 'qaLog';
   var PAGE_SIZES = [10, 100, 1000];
   var RETRY_DELAY_MS = 3000;                       /* 503 后 3 秒自动重试一次 */
 
@@ -674,10 +680,12 @@
     h += '</div>';
     el.innerHTML = h;
     updateSelUI();
-    /* 【build .167】双表结构就位后的三件同步（顺序不可颠倒）：
-       ① syncHeadBody —— 用表头 th 的**实测宽度**写表体 colgroup（必须在 DOM 已插入后做，
-          提前做拿到的是 0）；② fixStickyHeadTop —— 吸附位置随操作栏/筛选条高度自适应；
-       ③ syncBottomScrollbar —— 表体横向溢出时启用页面底部固定滚动条。 */
+    /* 【build .167】双表结构就位后的四件同步（顺序不可颠倒，照抄生产 renderContent L2177-2180）：
+       ① applyTableLayout —— 先按已存布局重排/设宽（表头 th 的 width 是列宽的唯一来源）；
+       ② syncHeadBody —— 再把这些宽度写进表体 colgroup（必须在①之后，否则同步的是旧宽度）；
+       ③ fixStickyHeadTop —— 吸附位置随操作栏/筛选条高度自适应；
+       ④ syncBottomScrollbar —— 表体横向溢出时启用页面底部固定滚动条。 */
+    applyTableLayout();
     syncHeadBody();
     fixStickyHeadTop();
     syncBottomScrollbar();
@@ -705,6 +713,9 @@
       + (n > 0 ? '' : ' disabled') + ' title="' + (n > 0 ? '导出选中 ' + n + ' 条为 CSV' : '请先勾选要导出的记录') + '">'
       + ico('download') + '导出选中</button>';
     h += '<span class="sel-count" id="selCount">已选 ' + n + ' 项</span>';
+    /* 【build .167】重置列布局：只清本机的列序/列宽（写 localStorage），不影响任何业务数据。
+       与「导出选中」同级（纯视图操作），只读用户也可用 —— 他们同样可能把列拖乱了。 */
+    h += '<button class="btn btn-sm" onclick="QA_APP.resetLayout()" title="恢复默认列顺序与列宽">重置列布局</button>';
     h += pagerHtml();
     h += '</div>';
     return h;
@@ -758,7 +769,12 @@
       + '<span class="sort-ico' + (on ? ' on' : '') + '">' + arrow + '</span>'
       + '<span class="filt-ico' + (fact ? ' on' : '') + '" title="筛选"'
       + ' onclick="event.stopPropagation();QA_APP.openFilter(this,\'' + key + '\')">' + FILT_SVG + '</span>'
-      + '</span></th>';
+      + '</span>'
+      /* 【build .167】右缘调宽手柄（照抄生产 thCol 的 `<span class="th-rs">`）：
+         绝对定位在 th 右缘 7px 内，mousedown 时由统一委托识别并转入 startColResize。
+         `th.th-sort{position:relative}` 是它的定位基准，缺了会跑到页面右上角。 */
+      + '<span class="th-rs" title="拖动调整列宽"></span>'
+      + '</th>';
   }
 
   /** 表头类名：数量列与表体同样右对齐（否则"总数量"标题居左、数字居右，视觉上像错列） */
@@ -1038,6 +1054,344 @@
     });
   }
 
+  /* ============================================================
+     【build .167】列布局引擎：拖宽 + 拖序 + 本地持久化
+     ------------------------------------------------------------
+     语义全部照抄生产 index.html 的列布局引擎（各函数头标了来源行号），四处**必要**差异：
+       1. 模块名固定 `TBL_M = 'qaLog'`（生产按 `data-m` 区分多模块，质量只有一张表）；
+       2. 列身份用 **`data-col`**（生产用 `data-key`）—— 本系统列身份契约见 sortTh 注释；
+       3. **只落 localStorage**（`wb_cb_qa_tblLayout_v1`）：qa-server 没有 /api/layout 端点，
+          不做服务端分片（登记为 D13，将来升服务端时形状已预留 `def` 层，见 normalizeLayout）；
+       4. 单行模型 ⇒ 省掉生产"无 data-key 物理索引"兼容分支（质量每行每列都带 data-col）。
+     铁律：本区块**不读生产任何全局**（不碰 products/orders/tblLayout），也不碰服务端。
+     ============================================================ */
+  var tblLayout = {};   /* {qaLog:{order:[key…],widths:{key:px}}} —— 内存态，恒为本机这份 */
+
+  /** 合法「布局映射」判定（来源：生产 isLayoutMap L1713；与 server 端同口径）：
+      对象且**非数组**；空对象 `{}` 合法（＝尚无已存布局） */
+  function isLayoutMap(v) { return !!(v && typeof v === 'object' && !Array.isArray(v)); }
+
+  /**
+   * 布局归一（宽进严出，来源：生产 isLayoutMap L1713 + normLayoutServer L1719 的净化纪律）。
+   * 存储形状：`{v:1, def:{qaLog:{order:[…],widths:{…}}}}`（与生产 v2 的 `def` 层同构，只是没有 `u` 分片）。
+   * 归一规则（**任何畸形输入都不得抛错、不得白屏**）：
+   *   · 非对象 / 数组 / null ⇒ `{}`；
+   *   · 无 `def` 层（老形状/手工塞的）⇒ 把自身当 def 读，兼容历史；
+   *   · `order` 里非字符串 / 空串 / **未知列 key**（colOf 查不到）/ 重复项 ⇒ 逐项剔除；
+   *   · `widths[k]` 非有限正数（字符串 '120px'、NaN、负数、0）⇒ 剔除该键；
+   *   · 某模块剔除后既无 order 也无 widths ⇒ **整块丢弃**（等价"该系统尚无自定义布局"）；
+   *   · 全程**新建对象**返回（深拷贝语义）⇒ 调用方拿去改不会污染任何"基准"。
+   * @param {*} v 原始存储内容（localStorage 解析结果或任意畸形值）
+   * @returns {Object} 归一后的布局映射
+   */
+  function normalizeLayout(v) {
+    var out = {};
+    if (!isLayoutMap(v)) return out;
+    var src = isLayoutMap(v.def) ? v.def : v;      /* 兼容无 def 层的扁平形状 */
+    Object.keys(src).forEach(function (m) {
+      var per = src[m];
+      if (!isLayoutMap(per)) return;               /* 该模块非对象 ⇒ 丢弃该模块 */
+      var order = [];
+      if (Array.isArray(per.order)) {
+        var seen = {};
+        per.order.forEach(function (k) {
+          if (typeof k !== 'string' || !k) return;  /* 非字符串/空串剔除 */
+          if (!colOf(k)) return;                    /* 未知列 key 剔除（列已删或手改过存储） */
+          if (seen[k]) return;                      /* 重复项剔除：同一列只能有一个名次 */
+          seen[k] = 1; order.push(k);
+        });
+      }
+      var widths = {};
+      if (isLayoutMap(per.widths)) {
+        Object.keys(per.widths).forEach(function (k) {
+          if (!colOf(k)) return;                    /* 未知列宽度无意义 */
+          var w = per.widths[k];
+          if (typeof w !== 'number' || !isFinite(w) || w <= 0) return;   /* 非数字/NaN/0/负数剔除 */
+          widths[k] = Math.round(w);
+        });
+      }
+      if (!order.length && !Object.keys(widths).length) return;          /* 空壳模块丢弃 */
+      out[m] = { order: order, widths: widths };
+    });
+    return out;
+  }
+
+  /** 取（必要时创建）某模块的布局槽（来源：生产 layoutOf L1742，同构） */
+  function layoutOf(m) {
+    if (!tblLayout[m]) tblLayout[m] = { order: null, widths: {} };
+    return tblLayout[m];
+  }
+
+  /** 读本地布局（解析失败/隐私模式禁用 localStorage ⇒ 视同"无自定义布局"，绝不白屏） */
+  function loadLayout() {
+    try {
+      var raw = localStorage.getItem(LAYOUT_KEY);
+      tblLayout = raw ? normalizeLayout(JSON.parse(raw)) : {};
+    } catch (e) {
+      tblLayout = {};
+    }
+    return tblLayout;
+  }
+
+  /**
+   * 落盘（来源：生产 saveLayoutLocal L1772 的落盘纪律；差异＝键名与形状，见下）。
+   * 写出形状 `{v:1, def:{…}}` —— **刻意**与生产 v2 的 def 层同构：
+   * 将来 qa-server 有了 layout 端点，形状只需升级成 `{v:2,def,u:{username:…}}`，
+   * 读取侧加一句"u[当前用户] 优先"即可，**零迁移**（老数据落在 def 层，正好是"我的默认"）。
+   * 写失败（配额满/隐私模式）静默——布局是体验增强，不该弹错打断登记。
+   * @returns {undefined}
+   */
+  function saveLayoutLocal() {
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ v: 1, def: tblLayout }));
+    } catch (e) { /* 静默：见上 */ }
+  }
+
+  /** 重置列布局（来源：生产 resetTableLayout L1959 语义的本地版）：清空自定义 ⇒ 回 schema 顺序 */
+  function resetLayout() {
+    tblLayout = {};
+    saveLayoutLocal();
+    renderMain();
+  }
+
+  /**
+   * 按已存布局重排 + 设宽（来源：生产 applyTableLayout L1780-1858）。
+   * 与生产的差异（均为必要差异，逐条对应）：
+   *   · 列身份用 `data-col` 而非 `data-key`（本系统列身份契约）；因此**不存在**"无 key 物理索引兼容分支"；
+   *   · 只处理一张表（台账双表：表头表 + 表体表），不遍历 `#content table`；
+   *   · 保留「**跳过含 colspan 的行**」守卫 —— 台账现在是单行模型用不到，
+   *     但将来加小计行/展开行时，靠下标重排会把合并行拆坏，故守卫必须提前在。
+   * @returns {undefined}
+   */
+  function applyTableLayout() {
+    var hd = document.querySelector('#content .sticky-head');
+    if (!hd) return;
+    var ht = hd.querySelector('table.head-tbl');
+    if (!ht || !ht.tHead || !ht.tHead.rows.length) return;
+    var bw = hd.nextElementSibling;
+    var bt = (bw && bw.classList.contains('table-wrap')) ? bw.querySelector('table.body-tbl') : null;
+    var lo = layoutOf(TBL_M);
+    var headCells = Array.prototype.slice.call(ht.tHead.rows[0].cells);
+    /* 可重排的列槽位 = 带 data-col 的 th（勾选列没有 ⇒ 永远钉在首位） */
+    var slots = [];
+    headCells.forEach(function (th, i) { if (th.getAttribute('data-col')) slots.push(i); });
+    if (slots.length < 2) return;
+    var curKeys = slots.map(function (i) { return headCells[i].getAttribute('data-col'); });
+    /* 目标顺序 = 已存顺序（过滤掉已不存在的列）+ 新增列按当前顺序追加（来源：生产 L1805-1806） */
+    var order = (lo.order || []).filter(function (k) { return curKeys.indexOf(k) >= 0; });
+    curKeys.forEach(function (k) { if (order.indexOf(k) < 0) order.push(k); });
+
+    /* 重排：表头表 + 表体表**都**按 data-col 匹配整行重排（绝不按下标移动单元格） */
+    var tables = bt ? [ht, bt] : [ht];
+    tables.forEach(function (tbl) {
+      Array.prototype.slice.call(tbl.rows).forEach(function (row) {
+        if (row.cells.length < 2) return;
+        var cells = Array.prototype.slice.call(row.cells);
+        /* 守卫：含 colspan 的合并行整行跳过（按下标重排会把它拆坏） */
+        for (var ci = 0; ci < cells.length; ci++) {
+          if ((cells[ci].getAttribute('colspan') || '') !== '') return;
+        }
+        var keyed = cells.filter(function (c) { return c.getAttribute && c.getAttribute('data-col'); });
+        if (keyed.length < 2) return;
+        var rowKeys = keyed.map(function (c) { return c.getAttribute('data-col'); });
+        var target = order.filter(function (k) { return rowKeys.indexOf(k) >= 0; });
+        rowKeys.forEach(function (k) { if (target.indexOf(k) < 0) target.push(k); });
+        var same = target.length === rowKeys.length && target.every(function (k, i) { return k === rowKeys[i]; });
+        if (same) return;
+        /* 按目标顺序 appendChild：非 key 单元格（勾选列）不动，key 单元格整体重排（来源：生产 L1820-1823） */
+        target.forEach(function (k) { row.appendChild(keyed[rowKeys.indexOf(k)]); });
+      });
+    });
+
+    /* 列宽：先量 auto 布局下的内容宽度（作为"没拖过的列"的默认值，必须在切 fixed 之前读） */
+    var curW = headCells.map(function (th) { return th.offsetWidth || 0; });
+    ht.style.tableLayout = 'fixed';
+    if (bt) bt.style.tableLayout = 'fixed';
+    headCells.forEach(function (th, i) {
+      var k = th.getAttribute('data-col');
+      var cur = curW[i] || 0;
+      if (k) {
+        var saved = (lo.widths && lo.widths[k]) ? lo.widths[k] : null;
+        var w = saved != null ? Math.max(minThWidth(th), saved) : Math.max(minThWidth(th), cur || 120);
+        th.style.width = w + 'px';
+      } else {
+        th.style.width = Math.max(36, cur) + 'px';   /* 勾选列：按内容宽，保底 36px（来源：生产 L1853） */
+      }
+    });
+  }
+
+  /**
+   * 拖序结果计算（来源：生产 startColDrag 的 up 回调 L1904-1911）。
+   * 生产把这段计算写在事件回调里；此处**提成纯函数**，语义逐行相同（取出 → 找落点 → 插入），
+   * 好处是能在无 DOM 的回归测试里**真执行**这段顺序算法（否则只能靠正则"看代码"）。
+   * @param {Array<string>} curOrder 当前表头顺序（含被拖列）
+   * @param {string} dragKey 被拖列的 key
+   * @param {{key:string,before:boolean}} marker 落点列与左右
+   * @returns {Array<string>} 新顺序（长度与 curOrder 相同）
+   */
+  function reorderKeys(curOrder, dragKey, marker) {
+    var out = curOrder.slice();
+    var idx = out.indexOf(dragKey);
+    if (idx >= 0) out.splice(idx, 1);
+    var ti = out.indexOf(marker.key);
+    if (ti < 0) ti = out.length;
+    out.splice(marker.before ? ti : ti + 1, 0, dragKey);
+    return out;
+  }
+
+  /* ---- 拖拽调序（来源：生产 startColDrag L1872-1929） ---- */
+  var colDrag = null;
+  function startColDrag(e, th) {
+    /* 漏斗图标的点击**绝不**启动拖拽（生产把这条排除写在委托里 L1866；此处收进本函数，
+       让"任何调用路径都不会从漏斗开始拖列"成为单点保证，也便于静态守卫直接钉住本函数）。 */
+    if (e.target && e.target.closest && e.target.closest('.filt-ico')) return;
+    colDrag = { th: th, key: th.getAttribute('data-col'), x: e.clientX, moved: false, targets: [], marker: null };
+    var move = function (ev) {
+      if (!colDrag) return;
+      if (!colDrag.moved && Math.abs(ev.clientX - colDrag.x) < 6) return;   /* 6px 死区，防误触 */
+      if (!colDrag.moved) {
+        colDrag.moved = true;
+        document.body.classList.add('col-dragging');
+        th.classList.add('th-dragging');
+        colDrag.targets = Array.prototype.slice.call(document.querySelectorAll('#content th.th-sort[data-col]'));
+      }
+      /* 清除旧落点指示 */
+      colDrag.targets.forEach(function (t) { t.classList.remove('th-drop-before', 'th-drop-after'); });
+      var el = document.elementFromPoint(ev.clientX, ev.clientY);
+      var t = (el && el.closest) ? el.closest('#content th.th-sort[data-col]') : null;
+      if (t && t !== th) {
+        var r = t.getBoundingClientRect();
+        var before = (ev.clientX - r.left) < r.width / 2;
+        t.classList.add(before ? 'th-drop-before' : 'th-drop-after');
+        colDrag.marker = { key: t.getAttribute('data-col'), before: before };
+      } else colDrag.marker = null;
+    };
+    var up = function () {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      if (colDrag && colDrag.moved && colDrag.marker) {
+        /* 记录布局应用前的横向滚动位置（调序后列宽/总宽变化，需在布局稳定后设回） */
+        var scPos = [];
+        document.querySelectorAll('#content .table-wrap,#content .head-scroll').forEach(function (sc) {
+          if (sc.scrollLeft > 0) scPos.push({ el: sc, left: sc.scrollLeft });
+        });
+        var curOrder = Array.prototype.slice.call(document.querySelectorAll('#content thead th.th-sort[data-col]'))
+          .map(function (t) { return t.getAttribute('data-col'); });
+        layoutOf(TBL_M).order = reorderKeys(curOrder, colDrag.key, colDrag.marker);
+        saveLayoutLocal();
+        applyTableLayout();
+        syncHeadBody();          /* 调序后同步表体列宽 */
+        restoreTableScroll(scPos);
+      }
+      if (colDrag) {
+        colDrag.targets.forEach(function (t) { t.classList.remove('th-drop-before', 'th-drop-after'); });
+        th.classList.remove('th-dragging');
+      }
+      /* 拖过的标记：供 sortBy 的 350ms 抑制使用（否则拖完紧跟的 click 会顺手改排序） */
+      if (colDrag && colDrag.moved) window.__colDragTS = Date.now();
+      document.body.classList.remove('col-dragging');
+      colDrag = null;
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+
+  /**
+   * 表头可拖至的最小宽度（来源：生产 minThWidth L1933-1949）。
+   * = 字段名第一个字的宽度 + “..”(省略号) + 排序符号 + 筛选符号 + 左右 padding + 余量。
+   * 常量逐项来源：19 = 筛选图标 12 + 左距 5 + padding 2；20 = th 左右 padding；4 = 余量；
+   * sortW += 3 = .sort-ico 的左间距；`sortW<6 ⇒ 9` 是"字体量不出 ⇅ 时按 9px 兜底"。
+   * ⚠ 与生产的唯一差异：**删掉 locked 分支**（质量系统没有锁定字段，多留的 18px 只会让列更宽）。
+   * @param {object} th 表头单元格
+   * @returns {number} 最小宽度（px）
+   */
+  function minThWidth(th) {
+    try {
+      var lb = th.querySelector('.th-label');
+      var label = lb ? (lb.textContent || '').trim() : '';
+      var cs = getComputedStyle(th);
+      var ctx = document.createElement('canvas').getContext('2d');
+      ctx.font = cs.fontSize + ' ' + cs.fontFamily;
+      var firstW = label ? ctx.measureText(label.charAt(0)).width : 0;
+      var dotsW = ctx.measureText('..').width;
+      ctx.font = '9px ' + cs.fontFamily;                   /* 排序符号字号 9px（与 .sort-ico 一致） */
+      var sortW = ctx.measureText('⇅').width;              /* 最宽排序符号 */
+      if (sortW < 6) sortW = 9;
+      sortW += 3;                                          /* .sort-ico 左间距 */
+      return Math.ceil(firstW + dotsW + sortW + 19 + 20 + 4);
+    } catch (e) {
+      return 60;                                           /* 量不出就兜底 60px（生产同款） */
+    }
+  }
+
+  /* ---- 拖拽调宽（来源：生产 startColResize L1950-1996） ---- */
+  function startColResize(e, th) {
+    e.preventDefault();
+    e.stopPropagation();
+    var key = th.getAttribute('data-col');
+    var tbl = th.closest('table');
+    /* 预取表体表 col / 总宽：拖动中**实时**同步列宽，松开时不再跳变
+       （fixed 布局下表宽=列宽总和，须同步总宽，否则表体被压缩） */
+    var _btCols = null, _btTbl = null, _btTotal = 0, _idx = -1;
+    var hd2 = tbl.closest('.sticky-head');
+    if (hd2) {
+      var _bw = hd2.nextElementSibling;
+      if (_bw && _bw.classList.contains('table-wrap')) {
+        _btTbl = _bw.querySelector('table.body-tbl');
+        var _cg = _btTbl ? _btTbl.querySelector('colgroup') : null;
+        if (_cg) _btCols = _cg.querySelectorAll('col');
+        var _ths = Array.prototype.slice.call(tbl.tHead.rows[0].cells);
+        _idx = _ths.indexOf(th);
+        _btTotal = _btTbl ? (parseFloat(_btTbl.style.width) || 0) : 0;
+      }
+    }
+    var startX = e.clientX, startW = th.offsetWidth;
+    var minW = minThWidth(th);
+    document.body.classList.add('col-resizing');
+    var move = function (ev) {
+      var w = Math.max(minW, startW + ev.clientX - startX);
+      th.style.width = w + 'px';
+      /* fixed 布局下表宽=各列宽之和，自动随列宽变化 */
+      if (_btCols && _idx >= 0 && _btCols[_idx]) {
+        _btCols[_idx].style.width = w + 'px';
+        if (_btTbl && _btTotal > 0) _btTbl.style.width = (_btTotal + (w - startW)) + 'px';
+      }
+    };
+    var up = function () {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.classList.remove('col-resizing');
+      window.__colDragTS = Date.now();          /* 同拖序：抑制紧随的 click 触发排序 */
+      var scPos = [];
+      document.querySelectorAll('#content .table-wrap,#content .head-scroll').forEach(function (sc) {
+        if (sc.scrollLeft > 0) scPos.push({ el: sc, left: sc.scrollLeft });
+      });
+      layoutOf(TBL_M).widths[key] = Math.round(th.getBoundingClientRect().width);
+      saveLayoutLocal();
+      if (tbl && tbl.style.tableLayout === 'fixed') syncHeadBody();
+      restoreTableScroll(scPos);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+
+  /**
+   * 统一鼠标交互入口（来源：生产 L1861-1868）。
+   * 右缘 `.th-rs` 手柄 = 调宽；其余（含列名/排序图标） = 拖拽调序；
+   * 漏斗图标的排除收在 startColDrag 内（见那里的注释）。
+   * 只认 `#content th.th-sort[data-col]`：勾选列表头没有 data-col，天然不参与。
+   * @returns {undefined}
+   */
+  function bindColInteractions() {
+    document.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      var th = e.target.closest ? e.target.closest('#content th.th-sort[data-col]') : null;
+      if (!th || !th.getAttribute('data-col')) return;
+      if (e.target.classList && e.target.classList.contains('th-rs')) { startColResize(e, th); return; }
+      startColDrag(e, th);
+    });
+  }
+
   /* ---------- 排序 / 分页 ---------- */
   /**
    * 排序（【build .166 · Q1A】三态循环，与生产 toggleSort 同口径）：
@@ -1047,6 +1401,9 @@
    * @returns {undefined}
    */
   function sortBy(key) {
+    /* 【build .167】拖拽抑制（照抄生产 toggleSort L1383）：拖完列/调完宽会紧跟一次 click，
+       若不拦就会"拖一下顺手把排序也改了"。350ms 是生产的既有经验值。 */
+    if (Date.now() - (window.__colDragTS || 0) < 350) return;
     var col = colOf(key);
     if (!col || !col.sortable) return;
     if (state.sortKey !== key) { state.sortKey = key; state.sortDir = 'asc'; }
@@ -1638,8 +1995,13 @@
     }, true);
     renderSysMenu();
     renderNav();
-    /* 【build .167】表格滚动联动只注册一次（capture 委托 + resize），不随 renderMain 重复绑定 */
+    /* 【build .167】表格骨架与列布局的初始化（顺序：先读布局，再注册交互，最后渲染）
+       · loadLayout：把本地布局读进内存（畸形数据在 normalizeLayout 里已被净化，读失败视同无布局）；
+       · bindTableScrollFollow：scroll capture 委托 + resize，只注册一次（不随 renderMain 重复绑定）；
+       · bindColInteractions：表头 mousedown 统一委托（调宽/调序），同样只注册一次。 */
+    loadLayout();
     bindTableScrollFollow();
+    bindColInteractions();
     boot();
   }
 
@@ -1681,6 +2043,8 @@
     goPage: goPage,
     jumpPage: jumpPage,
     changePageSize: changePageSize,
+    /* 【build .167】列布局（拖宽/拖序的落盘与重置；拖拽本身由表头委托驱动，无需导出） */
+    resetLayout: resetLayout,
     /* 【build .166】列筛选 */
     openFilter: openFilter,
     closeFilt: closeFilt,

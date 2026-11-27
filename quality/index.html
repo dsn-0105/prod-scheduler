@@ -166,6 +166,18 @@ thead .sel-col{background:#eef2ff;z-index:6}
 .empty .btn{margin-top:10px}
 .th-sort{cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden}
 .th-sort:hover{filter:brightness(.96)}
+/* 【build .167】列头拖拽调序 + 拖拽调宽（照抄生产 index.html 同款规则）：
+   .th-rs 是 th 右缘 7px 的透明手柄，hover 时露出一条主色竖线，视觉与生产逐像素一致。
+   `th.th-sort{position:relative}` 是它的定位基准 —— 缺了手柄会跑到页面右上角。 */
+.th-rs{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:2}
+.th-rs::after{content:'';position:absolute;right:3px;top:25%;bottom:25%;width:2px;border-radius:1px;background:transparent}
+.th-sort:hover .th-rs::after,.th-rs:hover::after{background:var(--primary)}
+th.th-sort{position:relative}
+th.th-dragging{opacity:.45}
+th.th-drop-before{box-shadow:inset 3px 0 0 0 var(--primary)}
+th.th-drop-after{box-shadow:inset -3px 0 0 0 var(--primary)}
+body.col-resizing{cursor:col-resize;user-select:none}
+body.col-dragging{cursor:grabbing;user-select:none}
 .sort-ico{font-size:9px;margin-left:3px;color:#c7d2fe;display:inline-block}
 .sort-ico.on{color:var(--primary)}
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center;padding:16px}

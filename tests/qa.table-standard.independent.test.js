@@ -418,3 +418,235 @@ test('G2 判别力：renderMain 少调任一同步函数 ⇒ 调用链判据必�
     assert.ok(mutBody.indexOf(call) < 0, '删除 ' + call + ' 后，D1 的调用链判据必然变红');
   });
 });
+
+/* ================================================================
+   §B 【build .167 · T03】列布局引擎：拖宽 + 拖序 + 本地持久化
+   ----------------------------------------------------------------
+   本节尽量**真执行**被测函数，而不是只对源码做正则 —— 「只读代码的断言」极易变成
+   "看着像测了、其实什么都没验证"。做法：用 §A 的 fnBody 取出函数源码，
+   再把它的自由变量（colOf / localStorage / LAYOUT_KEY / tblLayout / normalizeLayout）
+   作为参数注入，用 `new Function` 造一个最小沙箱执行。只有依赖真实 DOM/Canvas 的
+   部分（拖拽、量宽）才退回静态断言，并在消息里写明为什么。
+   ================================================================ */
+
+/** 取出函数并包成可调用值（自由变量由调用方作为形参注入）
+    用法：fnValue(src, 'function x(')            → 返回「无自由变量的工厂」，调用即得 x
+          fnValue(src, 'function y(', ['a','b']) → 返回工厂，调用 f(a,b) 即得 y */
+function fnValue(src, decl, params) {
+  const body = 'return (' + fnBody(src, decl) + ');';
+  return new Function((params || []).join(','), body);
+}
+
+/** 本系统的列 key 清单（从 QA_COLUMNS 源码里取，避免测试里抄一份列名） */
+function columnKeys() {
+  const block = APP.slice(APP.indexOf('var QA_COLUMNS = ['), APP.indexOf('\n  ];', APP.indexOf('var QA_COLUMNS = [')));
+  const keys = [];
+  const re = /\{\s*key:\s*'([A-Za-z][A-Za-z0-9]*)'/g;
+  let m;
+  while ((m = re.exec(block)) !== null) keys.push(m[1]);
+  return keys;
+}
+
+/** 假的 colOf：只认 QA_COLUMNS 里的 key（与真实现同语义） */
+function makeColOf(keys) {
+  return function (k) { return keys.indexOf(k) >= 0 ? { key: k } : null; };
+}
+
+test('B1 契约（①拖序落库）：reorderKeys 真执行后长度恒等于列数；startColDrag 把结果写进 layoutOf(TBL_M).order', function () {
+  /* ---- 行为侧：提取 reorderKeys 并真跑（纯函数，无 DOM 依赖） ---- */
+  const reorderKeys = fnValue(APP, 'function reorderKeys(')();
+  const cur = columnKeys();
+  assert.ok(cur.length >= 9, '列清单异常（仅 ' + cur.length + ' 列）—— 扫描逻辑可能失效');
+
+  /* 拖第 1 列到末列之后 */
+  const toEnd = reorderKeys(cur, cur[0], { key: cur[cur.length - 1], before: false });
+  assert.strictEqual(toEnd.length, cur.length, '拖序后长度必须仍等于列数（不得丢列/重复）');
+  assert.deepStrictEqual(toEnd.slice().sort(), cur.slice().sort(), '拖序只能换位，不得增删列');
+  assert.strictEqual(toEnd[toEnd.length - 1], cur[0], '「拖到末列之后」⇒ 被拖列必须落位到末尾');
+
+  /* 拖末列到首列之前 */
+  const toHead = reorderKeys(cur, cur[cur.length - 1], { key: cur[0], before: true });
+  assert.strictEqual(toHead.length, cur.length, '拖到首位后长度不变');
+  assert.strictEqual(toHead[0], cur[cur.length - 1], '「拖到首列之前」⇒ 被拖列必须落位到首位');
+  assert.deepStrictEqual(toHead.slice(1), cur.slice(0, cur.length - 1), '其余列相对顺序必须保持不变');
+
+  /* 拖到自身位置（同一列 before/after 自己）不得丢列 */
+  const selfDrag = reorderKeys(cur, cur[2], { key: cur[2], before: true });
+  assert.strictEqual(selfDrag.length, cur.length, '拖到自己身上也不得丢列');
+
+  /* ---- 静态侧：拖拽收尾必须真把顺序写进 layout，并落盘 + 重排 + 同步列宽 ---- */
+  const drag = fnBody(APP, 'function startColDrag(');
+  assert.ok(drag.indexOf('layoutOf(TBL_M).order = reorderKeys(') >= 0,
+    'startColDrag 收尾必须 `layoutOf(TBL_M).order = reorderKeys(...)`（拖序的唯一落库点）');
+  ['saveLayoutLocal()', 'applyTableLayout()', 'syncHeadBody()', 'restoreTableScroll('].forEach(function (call) {
+    assert.ok(drag.indexOf(call) >= 0, '拖序收尾必须调用 ' + call + '（否则拖完不持久化/不重排/不对齐）');
+  });
+  assert.ok(drag.indexOf('th.th-sort[data-col]') >= 0,
+    '拖拽的候选列必须按 `th.th-sort[data-col]` 取（列身份契约）');
+});
+
+test('B2 契约（②归一化宽进严出）：字符串/数组/未知列 key/非数字 width 四类畸形各自回落 {} —— 真执行', function () {
+  const keys = columnKeys();
+  const isLayoutMap = fnValue(APP, 'function isLayoutMap(')();
+  const normalizeLayout = fnValue(APP, 'function normalizeLayout(', ['colOf', 'isLayoutMap']);
+  const norm = function (v) { return normalizeLayout(makeColOf(keys), isLayoutMap)(v); };
+  const [A, B] = [keys[0], keys[1]];
+
+  /* ① 字符串 */
+  assert.deepStrictEqual(norm('abc'), {}, '字符串输入必须回落 {}');
+  /* ② 数组（合法对象判定必须排除数组） */
+  assert.deepStrictEqual(norm([]), {}, '数组输入必须回落 {}');
+  assert.deepStrictEqual(norm([{ qaLog: {} }]), {}, '数组元素即使是对象也不得被当成布局');
+  /* ③ 未知列 key（列被删 / 存储被手改） */
+  assert.deepStrictEqual(norm({ qaLog: { order: ['__no_such_col__'], widths: {} } }), {},
+    '未知列 key ⇒ 剔除后为空壳模块 ⇒ 整体回落 {}');
+  /* ④ 非数字 width */
+  assert.deepStrictEqual(norm({ qaLog: { order: [], widths: { [A]: '120px' } } }), {},
+    '字符串宽度必须剔除；只剩空壳 ⇒ 回落 {}');
+  assert.deepStrictEqual(norm({ qaLog: { order: [], widths: { [A]: NaN } } }), {}, 'NaN 宽度必须剔除');
+  assert.deepStrictEqual(norm({ qaLog: { order: [], widths: { [A]: -5 } } }), {}, '负数宽度必须剔除');
+  assert.deepStrictEqual(norm({ qaLog: { order: [], widths: { [A]: 0 } } }), {}, '0 宽度必须剔除');
+  /* 其它标量/null 也不得抛错 */
+  [null, undefined, 42, true].forEach(function (v) {
+    assert.deepStrictEqual(norm(v), {}, JSON.stringify(v) + ' 必须回落 {}（不得抛错）');
+  });
+
+  /* 混合输入：坏项逐个剔除、好项保留（**不是**整份丢弃），并去重 */
+  const mixed = norm({ v: 1, def: { qaLog: { order: [A, '__no_such_col__', B, A], widths: { [A]: 120, [B]: '90px', __no_such_col__: 50 } } } });
+  assert.deepStrictEqual(mixed, { qaLog: { order: [A, B], widths: { [A]: 120 } } },
+    '混合输入必须"逐项剔除 + 去重 + 保留好项"（整份丢弃会让用户一次手抖就丢光布局）');
+  /* 兼容无 def 层的扁平形状（老数据/手工塞入） */
+  assert.deepStrictEqual(norm({ qaLog: { order: [B], widths: {} } }), { qaLog: { order: [B], widths: {} } },
+    '无 def 层的扁平形状也必须能读（宽进）');
+  /* 深拷贝语义：归一结果与入参不得共享引用 */
+  const input = { def: { qaLog: { order: [A], widths: { [A]: 100 } } } };
+  const out1 = norm(input);
+  out1.qaLog.order.push(B);
+  out1.qaLog.widths[A] = 999;
+  assert.deepStrictEqual(input.def.qaLog.order, [A], '归一结果必须与入参不共享引用（防污染基准）');
+  assert.strictEqual(input.def.qaLog.widths[A], 100, '归一结果改宽度不得回写原对象');
+});
+
+test('B3 契约（③存储键名与形状）：恰写 wb_cb_qa_tblLayout_v1，形状 {v:1,def:{…}}，且能被 loadLayout 原样读回 —— 真执行', function () {
+  /* 键名断言：源码常量必须是这个字面量（本地键统一 wb_cb_qa_ 前缀的硬约束） */
+  assert.ok(APP.indexOf("var LAYOUT_KEY = 'wb_cb_qa_tblLayout_v1';") >= 0,
+    '存储键必须恰为 wb_cb_qa_tblLayout_v1（常量 LAYOUT_KEY）');
+  const LAYOUT_KEY = 'wb_cb_qa_tblLayout_v1';
+
+  /* 造一个最小 localStorage */
+  const store = {};
+  const fakeLS = {
+    setItem: function (k, v) { store[k] = String(v); },
+    getItem: function (k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }
+  };
+  const isLayoutMap = fnValue(APP, 'function isLayoutMap(')();
+  const normalizeLayout = fnValue(APP, 'function normalizeLayout(', ['colOf', 'isLayoutMap']);
+  const colOf = makeColOf(columnKeys());
+  const saveLayoutLocal = fnValue(APP, 'function saveLayoutLocal(', ['localStorage', 'LAYOUT_KEY', 'tblLayout']);
+  const loadLayout = fnValue(APP, 'function loadLayout(', ['localStorage', 'LAYOUT_KEY', 'normalizeLayout', 'tblLayout']);
+
+  const mem = { qaLog: { order: [columnKeys()[0]], widths: { [columnKeys()[0]]: 120 } } };
+  saveLayoutLocal(fakeLS, LAYOUT_KEY, mem)();
+
+  assert.deepStrictEqual(Object.keys(store), [LAYOUT_KEY], '必须只写这一个键（不得顺手写别的键）');
+  const parsed = JSON.parse(store[LAYOUT_KEY]);
+  assert.deepStrictEqual(Object.keys(parsed).sort(), ['def', 'v'], '存储形状必须是 {v,def} 两键');
+  assert.strictEqual(parsed.v, 1, '形状版本必须是 v:1');
+  assert.deepStrictEqual(parsed.def, mem, '布局内容必须原样落在 def 层（与生产 v2 的 def 层同构）');
+
+  /* 读回：loadLayout 必须归一后返回同一份布局 */
+  const readBack = loadLayout(fakeLS, LAYOUT_KEY, normalizeLayout(colOf, isLayoutMap), {})();
+  assert.deepStrictEqual(readBack, mem, 'loadLayout 必须能把刚写的布局原样读回');
+
+  /* 读坏数据：解析失败 / 空 / 畸形都不得抛错，必须回落 {} */
+  const badLS = { getItem: function () { return '{不是 JSON'; }, setItem: function () {} };
+  assert.deepStrictEqual(loadLayout(badLS, LAYOUT_KEY, normalizeLayout(colOf, isLayoutMap), {})(), {},
+    '损坏的存储必须回落 {}（绝不白屏）');
+  const emptyLS = { getItem: function () { return null; }, setItem: function () {} };
+  assert.deepStrictEqual(loadLayout(emptyLS, LAYOUT_KEY, normalizeLayout(colOf, isLayoutMap), {})(), {},
+    '无存储时必须回落 {}');
+});
+
+test('B4 契约（④拖完不改排序）：sortBy 首句必须是 350ms 抑制，且早于任何排序逻辑', function () {
+  const body = fnBody(APP, 'function sortBy(');
+  const guard = 'if (Date.now() - (window.__colDragTS || 0) < 350) return;';
+  assert.ok(body.indexOf(guard) >= 0, 'sortBy 必须含 350ms 拖拽抑制子句（照抄生产 toggleSort）');
+  assert.ok(body.indexOf(guard) < body.indexOf('var col = colOf(key);'),
+    '抑制必须在**任何**排序逻辑之前（否则先改了 sortKey 再 return，等于没抑制）');
+  assert.ok(body.indexOf('__colDragTS') >= 0, '抑制必须读 window.__colDragTS（拖拽收尾写入的时间戳）');
+  /* 写侧自证：拖序与调宽的收尾都必须写这个时间戳 */
+  assert.ok(fnBody(APP, 'function startColDrag(').indexOf('window.__colDragTS = Date.now()') >= 0,
+    '拖序收尾必须写 __colDragTS');
+  assert.ok(fnBody(APP, 'function startColResize(').indexOf('window.__colDragTS = Date.now()') >= 0,
+    '调宽收尾必须写 __colDragTS（调宽后紧跟的 click 同样会误触发排序）');
+});
+
+test('B5 契约（⑤漏斗不启动拖拽）：startColDrag 体内排除 .filt-ico（且调宽分支不受影响）', function () {
+  const drag = fnBody(APP, 'function startColDrag(');
+  assert.ok(drag.indexOf("closest('.filt-ico')") >= 0,
+    'startColDrag 必须排除 .filt-ico（否则点漏斗图标会开始拖列，筛选面板根本打不开）');
+  assert.ok(drag.indexOf("closest('.filt-ico')") < drag.indexOf('colDrag = {'),
+    '排除必须在建立 colDrag 状态**之前**（否则已经污染了 colDrag）');
+  /* 调宽分支必须先于拖拽分支被识别（.th-rs 手柄 → resize） */
+  const bind = fnBody(APP, 'function bindColInteractions(');
+  assert.ok(bind.indexOf("classList.contains('th-rs')") >= 0, '委托必须先识别 .th-rs 手柄 → startColResize');
+  assert.ok(bind.indexOf("classList.contains('th-rs')") < bind.indexOf('startColDrag(e, th)'),
+    '.th-rs 分支必须早于 startColDrag 分支（顺序颠倒 ⇒ 调宽手柄变成拖序）');
+});
+
+test('B6 契约（⑥重排按 data-col）：applyTableLayout 按 data-col 匹配整行重排、跳过 colspan 行、写列宽', function () {
+  const body = fnBody(APP, 'function applyTableLayout(');
+  assert.ok(body.indexOf("getAttribute('data-col')") >= 0,
+    'applyTableLayout 必须按 data-col 匹配列（列身份契约）');
+  assert.strictEqual(body.indexOf('data-key'), -1, 'applyTableLayout 内不得出现 data-key');
+  assert.strictEqual(/row\.cells\[\s*\w+\s*\]/.test(body), false,
+    '不得按下标移动单元格（扩列/拖序后会串列）');
+  assert.ok(body.indexOf('row.appendChild(') >= 0, '必须按目标顺序 appendChild 重排（生产同款）');
+  /* colspan 守卫（为将来小计行留路） */
+  assert.ok(/getAttribute\('colspan'\)/.test(body), '必须保留「跳过含 colspan 的行」守卫');
+  /* 列宽：saved 优先、下限 minThWidth、无 data-col 的勾选列保底 36 */
+  assert.ok(body.indexOf('minThWidth(th)') >= 0, '列宽必须受 minThWidth 下限约束');
+  assert.ok(body.indexOf("th.style.width = Math.max(36, cur) + 'px'") >= 0,
+    '勾选列（无 data-col）必须按内容宽、保底 36px（生产同款）');
+  assert.ok(body.indexOf('tableLayout = \'fixed\'') >= 0, '必须切 fixed 布局（否则 colgroup 宽度不生效）');
+  /* 表体表也要重排：两张表都在 tables 里 */
+  assert.ok(body.indexOf('var tables = bt ? [ht, bt] : [ht];') >= 0,
+    '表头表与表体表都必须重排（只排表头 ⇒ 表体列序与表头错位）');
+});
+
+test('B7 契约（⑦最小宽度不含 locked）：minThWidth 无锁图标分支，常量来源可对账', function () {
+  const body = fnBody(APP, 'function minThWidth(');
+  assert.strictEqual(body.indexOf('locked'), -1, 'minThWidth 不得含 locked 分支（质量系统无锁定字段）');
+  assert.strictEqual(body.indexOf("'.lock'"), -1, "minThWidth 不得查 .lock 元素（同上）");
+  /* 常量逐项来源：19 = 筛选图标 12 + 左距 5 + padding 2；20 = th 左右 padding；4 = 余量 */
+  assert.ok(/firstW \+ dotsW \+ sortW \+ 19 \+ 20 \+ 4/.test(body),
+    '最小宽度公式必须是 firstW+dotsW+sortW+19+20+4（逐项来源见函数注释）');
+  assert.ok(/if \(sortW < 6\) sortW = 9;/.test(body), '量不出 ⇅ 时必须有 9px 兜底');
+  assert.ok(body.indexOf('return 60;') >= 0, '量宽异常必须兜底 60px（不得抛错中断渲染）');
+});
+
+test('B8 契约：重置列布局（按钮 + 导出 + 清空落盘重渲染）', function () {
+  const reset = fnBody(APP, 'function resetLayout(');
+  assert.ok(reset.indexOf('tblLayout = {};') >= 0, 'resetLayout 必须清空内存布局');
+  assert.ok(reset.indexOf('saveLayoutLocal()') >= 0, 'resetLayout 必须落盘（否则刷新又回来）');
+  assert.ok(reset.indexOf('renderMain()') >= 0, 'resetLayout 必须重渲染（否则界面不动）');
+  assert.ok(fnBody(APP, 'function toolbarHtml(').indexOf('QA_APP.resetLayout()') >= 0,
+    '工具栏必须有重置入口（否则用户找不到）');
+  assert.ok(/resetLayout: resetLayout,/.test(APP), 'resetLayout 必须从 QA_APP 导出（内联 onclick 依赖它）');
+});
+
+test('B9 契约：表头 mousedown 委托只注册一次，选择器收敛在 #content 且要求 data-col', function () {
+  const bind = fnBody(APP, 'function bindColInteractions(');
+  assert.ok(bind.indexOf("'#content th.th-sort[data-col]'") >= 0,
+    '委托选择器必须是 #content th.th-sort[data-col]（勾选列无 data-col ⇒ 天然不参与）');
+  assert.ok(bind.indexOf('e.button !== 0') >= 0, '必须只响应左键');
+  const initBody = fnBody(APP, 'function init(');
+  assert.ok(initBody.indexOf('bindColInteractions()') >= 0, 'bindColInteractions 必须在 init() 内注册一次');
+  assert.strictEqual(countOcc(APP, 'bindColInteractions()'), 2,
+    'bindColInteractions 只允许「定义 1 处 + init 调用 1 处」（实际 ' + countOcc(APP, 'bindColInteractions()') + ' 处）');
+  assert.strictEqual(fnBody(APP, 'function renderMain(').indexOf('bindColInteractions'), -1,
+    'renderMain 不得注册表头委托（每次重渲染绑一套 ⇒ 拖一次跑 N 次）');
+  /* 初始化顺序：先读布局再渲染（否则首屏按默认顺序画完才应用布局，会闪一下） */
+  assert.ok(initBody.indexOf('loadLayout()') >= 0, 'init 必须调用 loadLayout()');
+  assert.ok(initBody.indexOf('loadLayout()') < initBody.indexOf('boot()'), 'loadLayout 必须早于 boot()（首屏即应用布局）');
+});
