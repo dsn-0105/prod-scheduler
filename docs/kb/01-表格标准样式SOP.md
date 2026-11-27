@@ -31,21 +31,23 @@
 
 > 标记：✅ 已符合 / ➖ 该能力不适用 / 🔜 已登记待做（编号见 §18）
 
-| 能力 | 生产排单（`index.html`） | 质量系统（`quality/`） | 管理员后台（`admin/`） |
+| 能力 | 生产排单（`index.html`） | 质量系统（`quality/`） | 管理员后台（`admin/`，已侦察 → 见 §16 表16-2） |
 |---|---|---|---|
-| schema 单源（§4） | ✅ `TBL_SCHEMAS` | ✅ `QA_COLUMNS` | ➖ 基础档（本轮未改造，不对其作现状承诺） |
-| 三态排序（§6） | ✅ `sortRows` / `cmpByColDef` | ✅ `CORE.sortRecords` + `sortBy` | ➖ 基础档 |
-| 漏斗筛选（§6） | ✅ 文本 8 / 数字 4 / 日期 8 / 语义档 | ✅ 文本 8 / 数字 6 / 日期 8 | ➖ 基础档 |
-| 判据单源（§6.3） | ✅ `filtOn` / `isValFreeFiltMode`（🔜 D14 浮层两份副本待收敛） | ✅ `CORE.filtActive` | ➖ |
-| 分页 + 回第 1 页 + 勾选一致性（§7） | ✅ `slicePaged` / `pagerHtml` | ✅ `CORE.paginate` / `pagerHtml` | ➖ 基础档 |
-| 双空态（§8） | ➖ 目前合并为「无匹配数据」单态 | ✅ `emptyHtml` / `noMatchHtml` | ➖ |
-| 唯一标识契约（§9） | ✅ `order.id` / `d.planNo` / `p.planNo` | ✅ `no`（`YC-`） | ➖ |
-| 列宽拖拽（§10） | ✅ | ✅ | ➖ |
-| 列序拖拽 + 持久化（§10） | ✅ 服务端账号分片 | ✅ 本地存储（🔜 D13 服务端分片） | ➖ |
-| sticky 双表 + 底部横滚条（§11） | ✅ | ✅ | ➖ |
-| 合计行（§12） | ✅ | ✅ | ➖ |
-| cell-tip 悬浮（§13） | ✅ | ✅（原生 `title` 已退役） | ➖ |
-| rowspan 整单合并（§14） | ✅ 订单类 4 表 | ➖ 单行模型不适用 | ➖ |
+| schema 单源（§4） | ✅ `TBL_SCHEMAS` | ✅ `QA_COLUMNS` | ➖ 无（6 列表头/单元格硬编码在 `renderUsers()`） |
+| 三态排序（§6） | ✅ `sortRows` / `cmpByColDef` | ✅ `CORE.sortRecords` + `sortBy` | ➖ 无 |
+| 漏斗筛选（§6） | ✅ 文本 8 / 数字 4 / 日期 8 / 语义档 | ✅ 文本 8 / 数字 6 / 日期 8 | ➖ 无 |
+| 判据单源（§6.3） | ✅ `filtOn` / `isValFreeFiltMode`（🔜 D14 浮层两份副本待收敛） | ✅ `CORE.filtActive` | ➖ 不适用（无筛选） |
+| 分页 + 回第 1 页 + 勾选一致性（§7） | ✅ `slicePaged` / `pagerHtml` | ✅ `CORE.paginate` / `pagerHtml` | ➖ 无（一次性全量渲染） |
+| 双空态（§8） | ➖ 目前合并为「无匹配数据」单态 | ✅ `emptyHtml` / `noMatchHtml` | ✅ 加载中 / 暂无员工（➖ 无筛空态，因无筛选） |
+| 唯一标识契约（§9） | ✅ `order.id` / `d.planNo` / `p.id`（🔜 D15 PSCD 双实现） | ✅ `no`（`YC-`） | ➖ `username` 人工指定 |
+| 列宽拖拽（§10） | ✅ | ✅ | ➖ 无 |
+| 列序拖拽 + 持久化（§10） | ✅ 服务端账号分片 | ✅ 本地存储（🔜 D13 服务端分片） | ➖ 无 |
+| sticky 双表 + 底部横滚条（§11） | ✅ | ✅ | ➖ 无 |
+| 合计行（§12） | ✅ | ✅ | ➖ 不适用 |
+| cell-tip 悬浮（§13） | ✅ | ✅（原生 `title` 已退役） | ➖ 无 |
+| rowspan 整单合并（§14） | ✅ 订单类 4 表 | ➖ 单行模型不适用 | ➖ 单行模型 |
+
+> 后台的 ➖ **不是债务而是豁免**（量级/用途/成本收益三条理由见 §16 表16-2 的架构判定）。
 
 ---
 
@@ -152,10 +154,11 @@
 | `formRow` | number | 否 | — | 表单分行（同号并排） | 独占一行 |
 | `required` | boolean | 否 | falsy | 后端必填校验 + 表单 `*` | 可空 |
 | `hint` | string | 否 | — | 字段下方灰字（编号列提示"保存后自动生成"） | 无提示 |
-| `filterType` | `'text'\|'num'\|'date'` | 否 | 由 `type` 推导 | **目前无消费方**（模式档实际读 `type`） | 无影响 |
+| `filterType` | `'text'\|'num'\|'date'` | 否 | 由 `type` 推导 | **目前无消费方**（模式档实际读 `type`）⇒ 🔜 **D16** | 无影响 |
 
-> ⚠ `filterType` 是**已文档化但未消费**的字段。要启用它，须把 `CORE.filtModesOf(col.type)` 改成读 `col.filterType||col.type`，
-> 并同步 `CORE.matchFilter` 的分支口径——**两处一起改**，否则面板给的模式与判定分支不一致。
+> ⚠ `filterType` 是**已文档化但未消费**的字段（🔜 D16）。要启用它，须把 `CORE.filtModesOf(col.type)` 改成读 `col.filterType||col.type`，
+> 并同步 `CORE.matchFilter` 的分支口径——**两处一起改**，否则面板给的模式与判定分支不一致
+> （症状：选了某模式但表格纹丝不动，与 `.161` 判据分叉同族）。**只改一处**是明令禁止的做法。
 
 ### 表4-2 消费方清单（每行都必须由 schema 派生）
 
@@ -357,10 +360,10 @@
 
 | # | 项 | 强制规则 | 生产实例 | 质量实例 |
 |---|---|---|---|---|
-| R1 | **主键字段名** | 必须显式写出"哪个字段是唯一标识"，并注明它是**业务唯一标识**（可被下游引用）还是**内部主键**（仅本地索引）。两者并存时写清各自角色 | 订单 `order.id`（业务+内部同一）；交付计划 `planNo`（业务唯一）+ 内部 `id`；排产单 `planNo`（`PSCD-`） | 记录 `id`（内部）+ `no`（业务唯一） |
-| R2 | **编号格式与正则** | `PREFIX-YYYYMMDD-NNNNN`：4 位大写前缀 + **本地区**日期（去横线）+ **5 位当日流水左补零**。正则必须登记为常量并被校验函数引用，不得散落 | `^JFJH-\d{8}-\d{5}$`（`nextDeliveryPlanNo`） | `NO_PATTERN = /^YC-\d{8}-\d{5}$/`（`qa-core.js`） |
+| R1 | **主键字段名** | 必须显式写出"哪个字段是唯一标识"，并注明它是**业务唯一标识**（可被下游引用）还是**内部主键**（仅本地索引）。两者并存时写清各自角色 | 订单 `order.id`（业务+内部同一）；交付计划 `planNo`（业务唯一）+ 内部 `id`；排产单 `id`（`PSCD-`，业务与内部同一） | 记录 `id`（内部）+ `no`（业务唯一） |
+| R2 | **编号格式与正则** | `PREFIX-YYYYMMDD-NNN`：4 位大写前缀 + **本地区**日期（去横线）+ **当日流水左补零**（位数见下）。正则必须登记为常量并被校验函数引用，不得散落 | `^JFJH-\d{8}-\d{5}$`（`nextDeliveryPlanNo`）；`^PSCD-\d{8}-\d{3}$`（`ppNextId`） | `NO_PATTERN = /^YC-\d{8}-\d{5}$/`（`qa-core.js`） |
 | R3 | **前缀登记表** | 前缀**全局唯一、一次性分配、永不复用**；新前缀先登记再发号（见表9-2） | 见下表 | `YC-` |
-| R4 | **发号函数单源** | 每个编号**恰一个**生成函数。**新增保存 / 存量回填 / 导入补号一律复用**，工程内不得出现第二份编号公式 | `nextOrderNo` / `nextDeliveryPlanNo`（注释明写"口径单源：新增/迁移/导入一律复用"） | `CORE.nextQaNo`（"编号只允许一份实现"） |
+| R4 | **发号函数单源** | 每个编号**恰一个**生成函数。**新增保存 / 存量回填 / 导入补号 / 批量连号一律复用**，工程内不得出现第二份编号公式（批量连号见 §9 表9-2 的"基准号 + 偏移"范式） | `nextOrderNo` / `nextDeliveryPlanNo` / `nextPartLogNo`（注释明写"口径单源：新增/迁移/导入一律复用"）。⚠ **已知 1 处违反**：`PSCD-` 的拆单分支内联重写了算号 ⇒ 🔜 **D15** | `CORE.nextQaNo`（"编号只允许一份实现"） |
 | R5 | **日期段来源** | 取**发号当日**（本地时区），**不取**用户填的业务日期。跨零点差异由服务端 409 + `suggest` 兜住 | 交付计划编号 | `nextQaNo` 的 `now` 参数 |
 | R6 | **入参格式守卫** | 日期入参不匹配 `YYYY-MM-DD` 时**必须回落哨兵值 `'2026-08-23'`**（本项目约定的"未知单据时间"），**禁止直拼** | `nextDeliveryPlanNo`（`.134` 返工） | 另有 `isValidDate` 往返校验拦 `2026-02-31` |
 | R7 | **唯一性范围** | 默认**全局唯一**（同一实体集合内全部行）。**禁止**"按日重置后允许重号"；当日流水跨日重置时，前缀必须含日期以保全局唯一 | 交付计划 `planNo` 全局唯一、不可手改 | 台账 `no` 全局唯一 |
@@ -370,19 +373,29 @@
 | R11 | **作为外键被引用** | 见 §9.2 三条硬约束 | `ppDlIdxOf` / `ppDlRowOf` | — |
 | R12 | **并发 / 同毫秒撞号** | 发号必须「扫同前缀 max+1 → 用"已用集合" `while` 去重兜底」；服务端写区串行 + 唯一性终检。**禁止**用自增计数器或 `Date.now()` 发号（第二真值源） | `nextDeliveryPlanNo` 的 `used{}` while 兜底 | `nextQaNo` 的 `used` 集合 + 写队列 |
 
-### 表9-2 前缀登记表（新增前缀必须在此登记）
+### 表9-2 前缀登记表（新增前缀必须在此登记；流水位数逐行标明）
 
-| 前缀 | 业务对象 | 发号函数 | 状态 |
-|---|---|---|---|
-| `XSDD-` | 销售订单 | `nextOrderNo(date,type)` | 在用 |
-| `KCDD-` | 库存订单 | `nextOrderNo(date,'库存订单')` | 在用 |
-| `JFJH-` | 交付计划 | `nextDeliveryPlanNo(date)` | 在用 |
-| `PSCD-` | 排产单 | 排产单发号函数 | 在用 |
-| `REP-` | 报工流水 | 报工发号函数 | 在用 |
-| `YC-` | 质量异常记录 | `CORE.nextQaNo(list,now)` | 在用 |
+| 前缀 | 业务对象 | 发号函数（所在文件） | 流水位数 | 状态 |
+|---|---|---|---|---|
+| `XSDD-` / `KCDD-` | 销售订单 / 库存订单 | `nextOrderNo(dateStr,type)`（`index.html`） | 5 位（`padStart(5)`） | 在用，**无副本**（批量库存订单走"基准号+偏移"，见下） |
+| `JFJH-` | 交付计划 | `nextDeliveryPlanNo(dateStr)`（`index.html`） | 5 位（`padStart(5)`） | 在用，**无副本**（新增/回填/导入三处共用） |
+| `PTH-` | 零部件入库流水 | `nextPartLogNo(dateStr)`（`index.html`） | 5 位（`padStart(5)`） | 在用，**无副本**（含 `used{}` while 去重兜底、读侧 trim 容错） |
+| `PSCD-` | 排产单 | `ppNextId()`（`index.html`） | **3 位**（`padStart(3)`） | 在用，**但有 1 处内联副本** ⇒ 🔜 **D15** |
+| `REP-` | 报工流水 | `prNextId()`（`js/prodplan-core.js`） | **3 位**（`padStart(3)`） | 在用；另有一处**一次性历史订正**内的拼接（`REP-20261006-` 硬编码，非活跃路径） |
+| `YC-` | 质量异常记录 | `CORE.nextQaNo(list,now)`（`quality/qa-core.js`） | 5 位（`padStart(5)`） | 在用，**无副本**（新增 save / 服务端 409 suggest 共用） |
 
+> **流水位数纪律**（新增，由 D15 复盘得出）：位数**允许 3 位或 5 位**，但必须在本表**逐行标明**，且同一编号的
+> 「新增 / 回填 / 导入 / 拆单连号」**全部路径必须位数一致**。`padStart(3)` 与 `padStart(5)` 混用会产出
+> "同前缀不同长度"的编号 ⇒ 正则 `\d{5}` 与 `slice(prefix.length)` 解析都可能错位（长度不同时 `slice` 取到的数字仍可解析，
+> 但任何按固定长度切片的消费方会静默取错）。**位数一旦上线即不可改**（存量数据无法批量重号）。
+>
 > **登记纪律**：新编号前缀**必须先在此表加一行**再写代码。前缀是全局命名空间，撞前缀＝两类单据编号互相污染，
 > 且**历史数据无法事后修复**（改了正则就认不出存量）。
+>
+> **"批量连号"的正确写法（已在本仓库存在，照抄即可）**：`saveBulkInvOrders`（`index.html`）的做法是
+> —— 先调一次唯一发号函数拿**基准号**，再 `slice` 出前缀与起始序号，循环里 `seq++` 并用**已用集合（既有 + 本批新增）**
+> 做 `while` 去重。这样既保证"一笔事务内连续不撞号"，又**没有第二份发号公式**。
+> 这就是 D15 修复应当采用的范式（**不要**在事务里循环调用发号函数——第一次 push 前扫不到新单，会产出同号）。
 
 ### 表9-3 外键引用的三条硬约束（下游存储纪律）
 
@@ -642,24 +655,49 @@ top = 基准(桌面 58 / 移动端 48)
 
 ### 表16-1 逐能力 × 系统矩阵
 
-| 能力 | 生产排单 | 质量系统 | 管理员后台 | 差异说明 / 待办 |
+| 能力 | 生产排单 | 质量系统 | 管理员后台（已只读侦察，见 16.3） | 差异说明 / 待办 |
 |---|---|---|---|---|
-| schema 单源（C1） | ✅ `TBL_SCHEMAS` | ✅ `QA_COLUMNS` | ➖ 未改造 | 后台本轮不在范围（3.B 用户拍板） |
-| 判据单源（C2） | ✅ `filtOn`/`isValFreeFiltMode` | ✅ `CORE.filtActive` | ➖ | 🔜 **D14**：产品选择浮层 `ppTh`/`ppUpdateHeader` 两份副本待收敛 |
-| 三态排序 | ✅ | ✅ | ➖ | — |
-| 筛选模式 | 文本 8 / 数字 4 / 日期 8 / 语义档 | 文本 8 / **数字 6** / 日期 8 | ➖ | 质量数字列多「为空/不为空」（用户 Q2A 拍板） |
-| 空值排序 | `Number('')=0`（空值最小） | **空值恒沉底** | ➖ | **唯一刻意的口径差异**，见 §6.1 |
-| 分页 + 回第 1 页 + 勾选一致 | ✅ | ✅ | ➖ | — |
-| 双空态 | ➖ 合并单态 | ✅ 区分 | ➖ | 生产后续可选改造 |
-| 唯一标识契约（§9） | ✅ 四类编号 | ✅ `YC-` | ➖ | — |
-| 列宽拖拽 | ✅ | ✅ | ➖ | — |
-| 列序 + 持久化 | ✅ 服务端账号分片（L-b） | ✅ 本地（L-a） | ➖ | 🔜 **D13**：质量升服务端分片（形状已同构，零迁移） |
-| sticky 双表 + 底部横滚条 | ✅ | ✅ | ➖ | 质量照抄时**补了两条缺失 CSS**（原生横条隐藏、`.card .bulk-bar` 去缝） |
-| 合计行 | ✅ | ✅ | ➖ | 生产有 `SUM_SKIP_KEYS={_pct,_balPct}`；质量暂空但保留机制 |
-| cell-tip | ✅ | ✅（原生 `title` 已退役） | ➖ | — |
-| rowspan 整单合并 | ✅ 订单类 4 表 | ➖ 单行模型 | ➖ | 质量明确不做 |
+| schema 单源（C1） | ✅ `TBL_SCHEMAS` | ✅ `QA_COLUMNS` | ➖ **无**：表头与 `td` 顺序全部硬编码在 `renderUsers()` 的字符串里 | 后台本轮不在范围（3.B 用户拍板）；见 16.3 的豁免判定 |
+| 判据单源（C2） | ✅ `filtOn`/`isValFreeFiltMode` | ✅ `CORE.filtActive` | ➖ 不适用（后台无筛选功能） | 🔜 **D14**：产品选择浮层 `ppTh`/`ppUpdateHeader` 两份副本待收敛 |
+| 三态排序 | ✅ | ✅ | ➖ **无**（表头不可点） | — |
+| 筛选模式 | 文本 8 / 数字 4 / 日期 8 / 语义档 | 文本 8 / **数字 6** / 日期 8 | ➖ **无**（无漏斗、无筛选条） | 质量数字列多「为空/不为空」（用户 Q2A 拍板） |
+| 空值排序 | `Number('')=0`（空值最小） | **空值恒沉底** | ➖ 不适用 | **唯一刻意的口径差异**，见 §6.1 |
+| 分页 + 回第 1 页 + 勾选一致 | ✅ | ✅ | ➖ **无分页、无勾选**（一次性全量渲染全部员工） | — |
+| 双空态 | ➖ 合并单态 | ✅ 区分 | ✅ 有「加载中…」与「暂无员工账号」两态；➖ 无筛空态（因无筛选） | 生产后续可选改造 |
+| 唯一标识契约（§9） | ✅ 六前缀在用（`XSDD-`/`KCDD-`/`JFJH-`/`PTH-`/`PSCD-`/`REP-`） | ✅ `YC-` | ➖ 员工以 `username` 作主键（人工指定、天然唯一、不可改） | 🔜 **D15**：`PSCD-` 两份实现 |
+| 列宽拖拽 | ✅ | ✅ | ➖ **无** | — |
+| 列序 + 持久化 | ✅ 服务端账号分片（L-b） | ✅ 本地（L-a） | ➖ **无** | 🔜 **D13**：质量升服务端分片（形状已同构，零迁移） |
+| sticky 双表 + 底部横滚条 | ✅ | ✅ | ➖ **无**（`admin/index.html` 只有 `.table-wrap{overflow-x:auto}` 一条表格样式） | 质量照抄时**补了两条缺失 CSS**（原生横条隐藏、`.card .bulk-bar` 去缝） |
+| 合计行 | ✅ | ✅ | ➖ 不适用（员工表无数量列） | 生产有 `SUM_SKIP_KEYS={_pct,_balPct}`；质量暂空但保留机制 |
+| cell-tip | ✅ | ✅（原生 `title` 已退役） | ➖ **无**（`title` 只用于禁用按钮的提示文案） | — |
+| rowspan 整单合并 | ✅ 订单类 4 表 | ➖ 单行模型 | ➖ 单行模型 | 质量明确不做 |
 
-### 表16-2 质量系统刻意偏离生产 2 处（行为等价，属改进，**不要改回**）
+### 表16-2 管理员后台侦察结论（只读，未改任何代码）
+
+**侦察范围**：`admin/admin-app.js`（971 行）+ `admin/index.html`（216 行）全部表格相关代码。
+
+| 项 | 结论 | 依据 |
+|---|---|---|
+| 表格数量 | **仅 1 张**：员工管理。其余页面是权限三态面板（勾选式，不是表格） | `renderUsers()` 是唯一的 `<table>` 生成点；`switchTab` 的分支里其余为表单/面板 |
+| 结构 | 单表 `<div class="table-wrap"><table><thead><tr>` + `tbody`；**无 `colgroup`、无 `.sticky-head`、无 `head-tbl/body-tbl`** | `renderUsers()` |
+| 列数 | 固定 **6 列**：用户名 / 姓名 / 角色 / 状态 / 表单写权限 / 操作 | `renderUsers()` 的 `<th>` 串 |
+| 列身份属性 | **完全没有**（既无 `data-key` 也无 `data-col`） | 全库 grep `data-key`/`data-col` 在 `admin/` 下 **0 命中** |
+| 排序 / 筛选 / 分页 | **全部没有**（一次性渲染全部员工） | 无 `sortBy`/`filter`/`pager` 相关函数 |
+| 列宽 / 列序 / 合计 / 悬浮 / 横滚条 | **全部没有** | `admin/` 下 `sticky-head`/`th-rs`/`cell-tip`/`bottom-scrollbar`/`sum-row` 均 0 命中 |
+| 样式基础 | 只有 `.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}` 一条 | `admin/index.html` |
+| 安全 | 所有取值过 `esc()` 转义 ✅ | `renderUsers()` 的每个 `td` |
+
+**架构判定：管理员后台的表格**明确豁免**（不列入待办债务）**，理由三条：
+1. **量级**：行数 = 员工账号数（通常 < 50），无分页必要，一次性渲染是最简正确解；
+2. **用途**：它是"配置界面"而非"业务台账"——用户在这里**改一条走一条**，不需要排序/合计/列布局；
+3. **成本收益**：补齐 §10-§14 的全部增强（sticky 双表 + colgroup + 4 个同步函数 + 布局持久化 + 合计）约 400 行，
+   换来的是"50 行配置表的列宽可拖"，**收益为负**（同时增加维护面与回归面）。
+
+**但保留 1 条硬约束（现在就成立，将来不得违反）**：该表若将来加"按行局部更新"（`applyRowUpdate` 那种），
+**必须同时补列身份属性**（后台建议用 `data-col`，与质量系统同一套语义），否则会立刻复现 §15 C1/C6 的"加一列即静默错位"。
+若将来行数增长到需要分页/筛选，则按 §17 表17-2 的 12 步重新评估，而不是在这个 6 列硬编码表上打补丁。
+
+### 表16-3 质量系统刻意偏离生产 2 处（行为等价，属改进，**不要改回**）
 
 | 偏离 | 生产做法 | 质量做法 | 为什么更好 |
 |---|---|---|---|
@@ -689,7 +727,7 @@ top = 基准(桌面 58 / 移动端 48)
 ### 表17-2 新增一张表（12 步，逐项打勾）
 
 ```
-- [ ]  1  【§9】填完「唯一标识声明表」12 项 + 「新增表单自查清单」14 项（这是前置，不是结尾）
+- [ ]  1  【§9】填完「唯一标识声明表」12 项 + 「新增表单自查清单」14 项 + **在表9-2 登记前缀与流水位数**（这是前置，不是结尾）
 - [ ]  2  确定行模型：组模型（单据多行）还是单行模型 → 决定 rowspan 与 groupKey（§14.1）
 - [ ]  3  【§4】写 schema 单源：key/label/type/get（+ select/options/sort/locked/semFilters 按需）
 - [ ]  4  【§3】DOM 骨架：bulkBar → filterBar → .sticky-head(head-scroll>head-tbl>colgroup+thead) → .table-wrap(body-tbl>colgroup+tbody)
@@ -725,6 +763,8 @@ top = 基准(桌面 58 / 移动端 48)
 | **D12 `fields:null` 白屏** | 全新部署后"登录成功但导航全空、控制台无报错" | `migrateOrderTypeField` 只判 `Array.isArray(fields.order)`，未判 `fields` 为 null；异常被 `doLogin` 的 `catch{}` 静默吞掉 | 暂无（**无任何用例覆盖 `fields:null` 启动路径**） | **未修**（仅新部署受影响） |
 | **D13 质量列布局仅本地** | 换电脑/换浏览器后列序列宽丢失 | `qa-server` 没有 `/api/qa/layout` 端点 | `qa.table-standard §B3`（键名/形状/读回归一，扩展点已守卫） | **未做**（形状已预留，升级零迁移） |
 | **D14 判据副本残存** | 产品选择浮层里"筛了但图标不亮"同族问题（当前不可达） | `ppTh` / `ppUpdateHeader` 是第 6/7 份判据副本（只认 `vals`/`val`） | 暂无 | **未修**（浮层不提供 `is_empty`/日期模式，D11 不可达，本轮有意不动） |
+| **D15 `PSCD-` 发号两份实现** | 改一处漏一处 ⇒ 同前缀并存两种算号逻辑；将来若改流水位数 / 去重策略 / 并发处理，**拆单路径不受控**（它不会跟着改） | `ppNextId()`（`index.html`，正常下推与复制走它）之外，`prodPlanModal` 的**下推拆单分支**内联重写了同一套 `max+1` 扫描 + `'PSCD-'+today+'-'+padStart(3)`，并用逐张 `maxSeq++` 连号，**未调用 `ppNextId()`**（`js/prodplan-core.js` 的同类 `REP-` 拼接仅存在于一次性历史订正 `fixMisboundProdPlans20261012` 中，日期硬编码、非活跃路径） | 暂无 | **未修**（违反 §9 R4；修复范式已存在：照 `saveBulkInvOrders` 的"基准号 + 偏移 + 已用集合去重"，不要循环调发号函数） |
+| **D16 `filterType` 声明未消费** | 未来若有人只改筛选面板、不改判定 ⇒ **面板给出的模式与判定分支不一致**（症状＝选了某模式但表格纹丝不动，与 `.161` 判据分叉同族） | 质量系统 `QA_COLUMNS` 注释里声明了 `filterType`，但模式档实际仍读 `col.type`（`CORE.filtModesOf(col.type)`） | 暂无 | **未修**（保留字段不删：可能是预留扩展；**启用必须先同时改 `CORE.filtModesOf` 与 `CORE.matchFilter` 两处**） |
 
 **改代码前的三条自检**：
 1. **改判据相关代码** → 先确认消费方清单（§6.3），一处不改全就会复现 `.161`/`.162`/D11 的同类缺陷。
@@ -743,4 +783,5 @@ top = 基准(桌面 58 / 移动端 48)
 | 历史版本流水 | `docs/kb/版本时间线.md`（**只 grep 不整读**） |
 | 生产表格引擎 | `index.html`：`filtOn` / `isValFreeFiltMode` / `isSemFiltMode` / `filterRows` / `thCol` / `filterBar` / `applyFilt` / `sortRows` / `cmpByColDef` / `slicePaged` / `sumRowHtml` / `sumLabelKey` / `applyTableLayout` / `syncHeadBody` / `fixStickyHeadTop` / `restoreTableScroll` / `startColDrag` / `startColResize` / `minThWidth` |
 | 质量表格引擎 | `quality/qa-core.js`（纯函数内核：`filtActive` / `matchFilter` / `applyFilters` / `sortRecords` / `paginate` / `buildCsv` / `nextQaNo`）；`quality/qa-app.js`（`sortTh` / `tableHtml` / `cellHtml` / `sumRowHtml` / `applyTableLayout` / `reorderKeys` / `startColDrag` / `startColResize` / `minThWidth` / `normalizeLayout` / `loadLayout` / `saveLayoutLocal` / `bindCellTip`） |
-| 主键与外键单源 | `nextOrderNo` / `nextDeliveryPlanNo` / `migrateDeliveryPlanNo`（`index.html`）、`ppDlIdxOf` / `ppDlRowOf`（`js/prodplan-core.js`）、`CORE.nextQaNo`（`quality/qa-core.js`）、`qa-store` 的 409+suggest |
+| 主键与外键单源 | 发号：`nextOrderNo` / `nextDeliveryPlanNo` / `nextPartLogNo` / `ppNextId`（`index.html`）、`prNextId`（`js/prodplan-core.js`）、`migrateDeliveryPlanNo`（`index.html`）、`CORE.nextQaNo`（`quality/qa-core.js`）；外键：`ppDlIdxOf` / `ppDlRowOf`（`js/prodplan-core.js`）；批量连号范式：`saveBulkInvOrders`（`index.html`）；冲突终检：`qa-store` 的 409 + `suggest` |
+| 管理员后台表格 | `admin/admin-app.js` 的 `renderUsers()`（唯一 `<table>`）+ `admin/index.html` 的 `.table-wrap` 单条样式；现状见 §16 表16-2 |
