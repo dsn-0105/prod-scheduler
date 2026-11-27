@@ -117,6 +117,19 @@ function badThIdentity(src) {
   return !/data-col="' \+ esc\(key\) \+ '"/.test(body);
 }
 
+/** 合计行口径是否回潮成"当前页"（而非筛选+排序后的全量） */
+function badSumInput(src) {
+  const body = fnBody(src, 'function tableHtml(');
+  if (body.indexOf('sumRowHtml(orderedRecords())') < 0) return true;
+  return body.indexOf('sumRowHtml(pg.rows)') >= 0;
+}
+
+/** 单元格是否又用回了原生 title（会与 .cell-tip 双弹） */
+function badCellTitle(src) {
+  const body = fnBody(src, 'function cellHtml(');
+  return body.indexOf('title="') >= 0;
+}
+
 /* ================================================================
    §A 双表结构
 ================================================================ */
@@ -649,4 +662,228 @@ test('B9 契约：表头 mousedown 委托只注册一次，选择器收敛在 #c
   /* 初始化顺序：先读布局再渲染（否则首屏按默认顺序画完才应用布局，会闪一下） */
   assert.ok(initBody.indexOf('loadLayout()') >= 0, 'init 必须调用 loadLayout()');
   assert.ok(initBody.indexOf('loadLayout()') < initBody.indexOf('boot()'), 'loadLayout 必须早于 boot()（首屏即应用布局）');
+});
+
+/* ================================================================
+   §H 【build .167 · T04】合计行
+   ----------------------------------------------------------------
+   口径（红线）：筛选+排序后的**全量、分页前**；只合计 num 列；文本/日期列留空但必须输出 td；
+   每个 td 带 data-col（`.112` 事故 = 合计行 td 无列身份 → 拖列后数字错位）；
+   空表不渲染；不参与勾选。
+   本节尽量**真执行** sumColKeys / sumRowHtml（注入 colOf / tableCols / sumLabelKey / esc）。
+   ================================================================ */
+
+/** 读某列的 type（直接扫 QA_COLUMNS 源码，避免测试里再抄一份类型表；
+    刻意不用正则 —— 本文件的 heredoc/转义历史上被吞过反斜杠，纯字符串查找最稳） */
+function columnTypeOf(k) {
+  const at = APP.indexOf("key: '" + k + "'");
+  assert.ok(at >= 0, 'QA_COLUMNS 里必须存在列 ' + k);
+  const t = APP.indexOf("type: '", at);
+  assert.ok(t > at, '列 ' + k + ' 必须声明 type');
+  const start = t + "type: '".length;
+  return APP.slice(start, APP.indexOf("'", start));
+}
+
+/** 造一个可控的 sumRowHtml 调用器（自由变量逐个注入，便于构造 order/列集） */
+function makeSumRow(overrides) {
+  const o = overrides || {};
+  const keys = o.keys || columnKeys();
+  const cols = keys.map(function (k, i) {
+    /* 从源码里读每列的 type，别在测试里抄一份类型表 */
+    const type = columnTypeOf(k);
+    return { key: k, label: k, type: type, inTable: true };
+  });
+  const tableCols = function () { return cols; };
+  const colOf = function (k) {
+    for (let i = 0; i < cols.length; i++) if (cols[i].key === k) return cols[i];
+    return null;
+  };
+  const esc = fnValue(APP, 'function esc(')();
+  const SUM_SKIP_KEYS = {};
+  const tableCols2 = tableCols;
+  const sumColKeys = fnValue(APP, 'function sumColKeys(', ['tableCols', 'SUM_SKIP_KEYS'])(
+    tableCols2, SUM_SKIP_KEYS);
+  const order = o.order || [];
+  const layoutOf = function () { return { order: order, widths: {} }; };
+  const sumLabelKey = fnValue(APP, 'function sumLabelKey(', ['tableCols', 'colOf', 'layoutOf', 'TBL_M'])(
+    tableCols2, colOf, layoutOf, 'qaLog');
+  const sumNumOf = fnValue(APP, 'function sumNumOf(')();
+  const sumFmt = fnValue(APP, 'function sumFmt(')();
+  const sumRowHtml = fnValue(APP, 'function sumRowHtml(',
+    ['tableCols', 'sumColKeys', 'sumLabelKey', 'esc', 'sumNumOf', 'sumFmt'])(
+    tableCols2, sumColKeys, sumLabelKey, esc, sumNumOf, sumFmt);
+  return { cols: cols, keys: keys, sumColKeys: sumColKeys, sumLabelKey: sumLabelKey, sumRowHtml: sumRowHtml, colOf: colOf };
+}
+
+test('H1 契约：sumColKeys() 由 QA_COLUMNS 派生，只含 num 列，且源码里没有写死列名', function () {
+  const keys = columnKeys();
+  const ctx = makeSumRow({ keys: keys });
+  const numKeys = keys.filter(function (k) {
+    return columnTypeOf(k) === 'num';
+  });
+  assert.ok(numKeys.length >= 3, '质量系统至少应有 3 个 num 列（实际 ' + numKeys.length + '）');
+  assert.deepStrictEqual(ctx.sumColKeys(), numKeys,
+    'sumColKeys() 必须恰为「type===num 且不在 SUM_SKIP_KEYS」的列（派生，非手写）');
+  /* 静态：函数体必须走 tableCols() 派生，不得出现列名字面量 */
+  const body = fnBody(APP, 'function sumColKeys(');
+  assert.ok(body.indexOf('tableCols()') >= 0, 'sumColKeys 必须从 tableCols() 派生');
+  assert.strictEqual(/'(totalQty|inspectedQty|defectQty)'/.test(body), false,
+    'sumColKeys 内不得出现列名字面量（加字段即自动纳入）');
+  /* 比率列登记机制保留（当前为空对象） */
+  assert.ok(/var SUM_SKIP_KEYS = \{\};/.test(APP),
+    'SUM_SKIP_KEYS 必须是空对象但保留机制（加比率列时在此登记）');
+});
+
+test('H2 契约：sumRowHtml 与数据行逐列同构 —— td 数 = 列数 + 勾选列，且每个 td 都带 data-col', function () {
+  const ctx = makeSumRow();
+  const rows = [{ totalQty: 10, inspectedQty: 8, defectQty: 2 }, { totalQty: 5, inspectedQty: 5, defectQty: 0 }];
+  const html = ctx.sumRowHtml(rows);
+  assert.ok(html.indexOf('<tr class="sum-row"') >= 0, '合计行必须带 .sum-row 类（样式与选择器都依赖它）');
+  assert.strictEqual(countOcc(html, '<td'), ctx.cols.length + 1,
+    'td 数必须 = 数据列数 + 1（首列勾选列）—— 少一个就整行错列');
+  assert.strictEqual(countOcc(html, 'data-col="'), ctx.cols.length,
+    '每个业务列 td 都必须带 data-col（`.112` 事故：合计行 td 无列身份 ⇒ 拖列后数字错位）');
+  /* 数值：三列各自求和 */
+  assert.ok(html.indexOf('>15<') >= 0, 'totalQty 合计应为 15（10+5）');
+  assert.ok(html.indexOf('>13<') >= 0, 'inspectedQty 合计应为 13（8+5）');
+  assert.ok(html.indexOf('>2<') >= 0, 'defectQty 合计应为 2（2+0）');
+  /* 文本列留空但必须有 td */
+  assert.ok(html.indexOf('data-col="date"></td>') >= 0 || html.indexOf('data-col="date"') >= 0,
+    '文本/日期列必须输出（空）td');
+  /* 数字 td 的排版：右对齐 + 等宽数字 */
+  assert.ok(/data-col="totalQty" style="[^"]*text-align:right/.test(html),
+    '数字列必须 text-align:right');
+  assert.ok(/font-variant-numeric:tabular-nums/.test(html),
+    '数字列必须 tabular-nums（等宽数字，否则合计与列内数字右对齐视觉不齐）');
+  assert.ok(/font-weight:600/.test(html), '合计行必须加粗');
+  assert.ok(/background:var\(--primary-light\)/.test(html), '合计行背景必须是 var(--primary-light)');
+});
+
+test('H3 契约：标签列 = 当前布局 order 里第一个非 num 列，且随 order 变化（拖列后标签跟着走）', function () {
+  const keys = columnKeys();
+  const textKeys = keys.filter(function (k) {
+    return columnTypeOf(k) !== 'num';
+  });
+  assert.ok(textKeys.length >= 2, '至少要有 2 个非 num 列才能验证"跟着走"');
+
+  /* 布局 A：默认（order 与 schema 一致） */
+  const ctxA = makeSumRow({ keys: keys, order: keys.slice() });
+  assert.strictEqual(ctxA.sumLabelKey(), textKeys[0],
+    'order 与 schema 一致时，标签列 = 首个非 num 列');
+
+  /* 布局 B：把第 2 个文本列拖到首位 ⇒ 标签必须跟着换 */
+  const reordered = [textKeys[1]].concat(keys.filter(function (k) { return k !== textKeys[1]; }));
+  const ctxB = makeSumRow({ keys: keys, order: reordered });
+  assert.strictEqual(ctxB.sumLabelKey(), textKeys[1],
+    '拖列后标签列必须跟着布局走（回落到 schema 首列就是 bug）');
+  assert.notStrictEqual(ctxA.sumLabelKey(), ctxB.sumLabelKey(), '两种布局下的标签列必须不同（判别力自证）');
+
+  /* 标签绝不能落在 num 列上 */
+  assert.strictEqual(textKeys.indexOf(ctxB.sumLabelKey()) >= 0, true,
+    '标签列必须是非 num 列（否则数字列被写死「合计」、该列合计值消失）');
+  /* 行为侧：标签文字确实出现在该列的 td 上 */
+  const html = ctxB.sumRowHtml([{ totalQty: 1 }]);
+  assert.ok(new RegExp('data-col="' + ctxB.sumLabelKey() + '"[^>]*>合计<').test(html),
+    '「合计」二字必须落在 sumLabelKey() 指定的那一列');
+});
+
+test('H4 契约：空数据不渲染合计行（返回空串）', function () {
+  const ctx = makeSumRow();
+  assert.strictEqual(ctx.sumRowHtml([]), '', '空数组必须返回空串（不得输出只有勾选列的空行）');
+  assert.strictEqual(ctx.sumRowHtml(null), '', 'null 必须返回空串');
+  assert.strictEqual(ctx.sumRowHtml(undefined), '', 'undefined 必须返回空串');
+});
+
+test('H5 契约：合计行入参是 orderedRecords()（筛选+排序后全量、分页前），绝不是当前页 pg.rows', function () {
+  assert.strictEqual(badSumInput(APP), false,
+    'tableHtml 必须用 sumRowHtml(orderedRecords()) —— 传 pg.rows 会让合计值随翻页跳变');
+  const body = fnBody(APP, 'function tableHtml(');
+  assert.ok(body.indexOf('sumRowHtml(orderedRecords())') >= 0, '入参必须是 orderedRecords()');
+  assert.strictEqual(body.indexOf('sumRowHtml(pg.rows)'), -1, '严禁传当前页 pg.rows');
+  /* 插入位置：紧贴表体表 </tbody> 之前（不用 tfoot） */
+  const sumIdx = body.indexOf('sumRowHtml(orderedRecords())');
+  const tbodyEnd = body.indexOf("'</tbody></table></div>'");
+  assert.ok(sumIdx > 0 && tbodyEnd > sumIdx, '合计行必须拼在 </tbody> 之前');
+  /* 判据看的是**拼接用的字面量**，不是注释里提没提到 tfoot 这个词 */
+  assert.strictEqual(body.indexOf("'<tfoot>'"), -1, '不得用 tfoot 段落（fixed + 双表结构下会被排除在重排之外）');
+});
+
+test('H6 契约：合计行不参与勾选（首列是空 td，不含 checkbox）', function () {
+  const ctx = makeSumRow();
+  const html = ctx.sumRowHtml([{ totalQty: 3 }]);
+  assert.strictEqual(/<input/.test(html), false, '合计行不得含任何 input（含 checkbox）');
+  assert.ok(html.indexOf('<td class="sel-col"></td>') >= 0, '首列必须是空的 sel-col td');
+});
+
+/* ================================================================
+   §I 【build .167 · T04】cell-tip 悬浮（退役原生 title）
+   ================================================================ */
+
+test('I1 契约：统一悬浮框已就位（创建 .cell-tip 节点，且只在 init 注册一次）', function () {
+  const body = fnBody(APP, 'function bindCellTip(');
+  assert.ok(body.indexOf("tip.className = 'cell-tip'") >= 0, '必须创建 .cell-tip 节点');
+  assert.ok(body.indexOf('document.body.appendChild(tip)') >= 0, '必须挂到 body');
+  const initBody = fnBody(APP, 'function init(');
+  assert.ok(initBody.indexOf('bindCellTip()') >= 0, 'bindCellTip 必须在 init() 内注册');
+  assert.strictEqual(countOcc(APP, 'bindCellTip()'), 2,
+    'bindCellTip 只允许「定义 1 处 + init 调用 1 处」（实际 ' + countOcc(APP, 'bindCellTip()') + ' 处）');
+});
+
+test('I2 契约：cellHtml 不再输出原生 title（否则原生 + 自定义双 tooltip）', function () {
+  assert.strictEqual(badCellTitle(APP), false, 'cellHtml 体内不得出现 title="');
+  const body = fnBody(APP, 'function cellHtml(');
+  assert.ok(body.indexOf('data-col="') >= 0, 'cellHtml 必须仍带 data-col（列身份不能因去 title 被删掉）');
+  assert.ok(body.indexOf('col-clip') >= 0, 'long 列必须仍带 .col-clip（截断是 tip 的前提）');
+});
+
+test('I3 契约：tip 逻辑覆盖 data-tip 优先 / select 特判 / 控件排除 / 视口翻转 / mouseout 隐藏 / 临时 span 测宽', function () {
+  const body = fnBody(APP, 'function bindCellTip(');
+  assert.ok(body.indexOf("closest('[data-tip]')") >= 0, '必须优先处理 [data-tip] 元素');
+  assert.ok(body.indexOf("closest('select')") >= 0, '必须有 select 特判');
+  assert.ok(body.indexOf('document.activeElement') >= 0, 'select 聚焦时必须隐藏（正在选择时不该弹）');
+  assert.ok(body.indexOf("querySelector('select,input,textarea,button')") >= 0,
+    '控件单元格必须排除（否则下拉框被 tip 遮挡）');
+  assert.ok(body.indexOf('window.innerWidth - 8') >= 0 && body.indexOf('window.innerHeight - 8') >= 0,
+    '必须有视口翻转（右/下放不下就翻到左/上）');
+  assert.ok(body.indexOf("addEventListener('mouseout'") >= 0, '必须有 mouseout 隐藏');
+  assert.ok(body.indexOf('createElement(\'span\')') >= 0 || body.indexOf('createElement("span")') >= 0,
+    '必须用临时 span 测宽（ellipsis 下 scrollWidth/Range 不可靠）');
+  assert.ok(body.indexOf("closest('.table-wrap table td, .table-wrap table .th-label')") >= 0,
+    '覆盖范围必须含 td 与表头 .th-label');
+  assert.ok(body.indexOf('removeChild(probe)') >= 0, '临时 span 必须移除（否则每次悬停泄漏一个节点）');
+});
+
+test('I4 契约：quality/index.html 有 .cell-tip 样式，且 .col-clip 的 ellipsis 规则在（tip 的前提）', function () {
+  const css = cssBlock();
+  assert.ok(/\.cell-tip\{position:fixed;z-index:9999/.test(css), '.cell-tip 必须是 fixed 定位 + 高层级');
+  assert.ok(/pointer-events:none/.test(css), '.cell-tip 必须 pointer-events:none（否则挡住鼠标、鼠标一移就闪）');
+  assert.ok(/white-space:pre-wrap/.test(css), '.cell-tip 必须 pre-wrap（多行异常描述要换行显示）');
+  assert.ok(/max-width:440px/.test(css), '.cell-tip 最大宽度必须 440px（与生产一致）');
+  /* col-clip 的 ellipsis 是 truncated() 能测出"被省略"的前提 */
+  assert.ok(/\.col-clip\{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/.test(css),
+    '.col-clip 必须 overflow:hidden + text-overflow:ellipsis + white-space:nowrap');
+});
+
+/* ---- 判别力：回潮变异必须变红 ---- */
+
+test('J1 判别力：把合计入参改成 pg.rows ⇒ 判据必须变红；把 title 加回 cellHtml ⇒ 判据必须变红', function () {
+  /* (a) 合计口径回潮：全量 → 当前页 */
+  const sumNeedle = 'sumRowHtml(orderedRecords())';
+  assert.strictEqual(countOcc(APP, sumNeedle), 1, '合计入参锚点必须命中恰 1 处');
+  const sumMut = APP.replace(sumNeedle, 'sumRowHtml(pg.rows)');
+  assert.notStrictEqual(sumMut, APP, '合计口径变异必须注入生效');
+  assert.strictEqual(badSumInput(sumMut), true,
+    '改成 pg.rows 后判据必须变红（否则"合计口径=全量"这条是摆设）');
+
+  /* (b) 双 tooltip 回潮：把原生 title 加回 long 列 */
+  const cellNeedle = "'<td class=\"col-clip\"' + attr + '>'";
+  assert.strictEqual(countOcc(APP, cellNeedle), 1, 'cellHtml long 分支锚点必须命中恰 1 处');
+  const cellMut = APP.replace(cellNeedle, "'<td class=\"col-clip\"' + attr + ' title=\"' + esc(text) + '\">'");
+  assert.notStrictEqual(cellMut, APP, 'title 回潮变异必须注入生效');
+  assert.strictEqual(badCellTitle(cellMut), true,
+    '把 title 加回 cellHtml 后判据必须变红（否则"退役原生 title"这条是摆设）');
+
+  /* 反假绿：未变异源码必须全绿 */
+  assert.strictEqual(badSumInput(APP), false, '未变异源码不得被判为"当前页合计"');
+  assert.strictEqual(badCellTitle(APP), false, '未变异源码不得被判为"仍在用原生 title"');
 });

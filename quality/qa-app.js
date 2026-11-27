@@ -782,6 +782,99 @@
     return col.type === 'num' ? ' class="col-num"' : '';
   }
 
+  /* ============================================================
+     【build .167】合计行（照抄生产 index.html 语义，不共享代码）
+     ------------------------------------------------------------
+     口径（红线，与生产 .112 事故复盘一致）：
+       1. 合计范围 = **筛选 + 排序后的全量**（分页前）⇒ 翻页时合计行不变；
+       2. 只合计 `type==='num'` 列；文本/日期列留空但**必须输出 td**；
+       3. 每个 td 都带 `data-col` —— `.112` 的原始事故就是"合计行 td 无列身份"，
+          拖拽列布局后数字列被挪到行尾、整行错位。逐列同构是硬要求；
+       4. 空数据/筛空 ⇒ 返回 ''（不渲染空合计行）；
+       5. 合计行**不参与勾选**（首列是空 td，不含 checkbox）。
+     ============================================================ */
+
+  /** 不参与合计的列登记（来源：生产 SUM_SKIP_KEYS L2364，生产值 `{_pct:1,_balPct:1}`）。
+      质量系统 9 列里 num 三列都是"件数"，理应合计，故此处**暂空**；
+      **机制保留**：日后加「合格率/异常率」这类比率/进度列时，把 key 登记到这里即可自动排除，
+      不要在 sumColKeys() 里另写排除条件（那会变成第二份口径）。 */
+  var SUM_SKIP_KEYS = {};
+
+  /** 参与合计的列 key —— 由 QA_COLUMNS 派生（**禁止手写列名**：加字段即自动纳入） */
+  function sumColKeys() {
+    return tableCols()
+      .filter(function (c) { return c.type === 'num' && !SUM_SKIP_KEYS[c.key]; })
+      .map(function (c) { return c.key; });
+  }
+
+  /**
+   * 「合计」标签落在哪一列（来源：生产 sumLabelKey L2368）。
+   * = **当前列布局 order 里第一个非 num 列** —— 用户把「异常描述」拖到首位时标签跟着过去，
+   *   避免标签挂在被拖到表格角落的 schema 首列上（生产 .113 就是为修这个）。
+   * order 为空（从未拖过）⇒ 回落到 schema 首个非 num 列。
+   * @returns {?string} 列 key
+   */
+  function sumLabelKey() {
+    var cols = tableCols();
+    var ord = layoutOf(TBL_M).order || [];
+    for (var i = 0; i < ord.length; i++) {
+      var c = colOf(ord[i]);
+      if (c && c.inTable && c.type !== 'num') return c.key;
+    }
+    for (var j = 0; j < cols.length; j++) {
+      if (cols[j].type !== 'num') return cols[j].key;
+    }
+    return cols.length ? cols[0].key : null;
+  }
+
+  /** 求和用的数值解析：容错千分位/空白/非数字（解析不出按 0，不让一个脏值把整行合计变 NaN） */
+  function sumNumOf(v) {
+    if (v === undefined || v === null || v === '') return 0;
+    var n = Number(String(v).replace(/[,\s]/g, ''));
+    return isFinite(n) ? n : 0;
+  }
+
+  /** 合计值格式化：整数原样、非整数保留两位（与单元格文本同风格，不加千分位以免与列内数值不一致） */
+  function sumFmt(n) {
+    if (!isFinite(n)) return '0';
+    return String(Math.round(n * 100) / 100);
+  }
+
+  /**
+   * 合计行 HTML（来源：生产 sumRowHtml L2374-2392，**逐列同构**）。
+   * @param {Array<object>} rows 必须是**筛选+排序后的全量**（分页前）——传当前页会让合计随翻页跳变
+   * @returns {string} `<tr>…</tr>`；rows 为空返回 ''
+   */
+  function sumRowHtml(rows) {
+    if (!rows || !rows.length) return '';
+    var cols = tableCols();
+    var nums = sumColKeys();
+    var labelKey = sumLabelKey();
+    var sums = {};
+    nums.forEach(function (k) { sums[k] = 0; });
+    rows.forEach(function (r) {
+      nums.forEach(function (k) { sums[k] += sumNumOf(r[k]); });
+    });
+    var h = '<tr class="sum-row" style="font-weight:600;background:var(--primary-light)">';
+    /* 首列 = 勾选列的空 td（**不含 checkbox**：合计行不参与勾选） */
+    h += '<td class="sel-col"></td>';
+    cols.forEach(function (c) {
+      var attr = ' data-col="' + esc(c.key) + '"';
+      var has = sums[c.key] != null;
+      var isLabel = c.key === labelKey;
+      if (has || isLabel) {
+        h += '<td' + (c.type === 'num' ? ' class="col-num"' : '') + attr
+          + ' style="font-variant-numeric:tabular-nums;' + (has ? 'text-align:right;' : '') + 'font-weight:600">'
+          + (isLabel ? '合计' : sumFmt(sums[c.key])) + '</td>';
+        return;
+      }
+      /* 文本/日期列：留空但**必须**输出 td（否则整行与表头错列） */
+      h += '<td' + attr + '></td>';
+    });
+    h += '</tr>';
+    return h;
+  }
+
   /**
    * 表格 HTML（【build .167】升级为生产同构的**双表结构**）。
    * ------------------------------------------------------------
@@ -838,13 +931,19 @@
       }
       h += '</tr>';
     }
+    /* 【build .167】合计行：插在表体表 `</tbody>` **之前**（与生产一致，不用 <tfoot>——
+       tfoot 在 fixed 布局 + 双表结构下会被排除在重排之外，合计数字会与表头错列）。
+       ⚠ 入参必须是 `orderedRecords()`（筛选+排序后**全量、分页前**）；
+         传 `pg.rows`（当前页）会让合计随翻页跳变 —— 这是本行最容易写错的地方。 */
+    h += sumRowHtml(orderedRecords());
     h += '</tbody></table></div>';
     return h;
   }
 
   /**
    * 单个单元格 HTML。所有值必须过 esc()（外部录入的文本一律不可信）。
-   * long 列额外带 title=全文（3A：表格截断、悬浮看全文，避免多行文本把行高撑得参差不齐）。
+   * long 列带 `.col-clip` 截断（ellipsis），**不再带原生 `title`** ——
+   * 全文由统一悬浮框 `.cell-tip`（bindCellTip）在"确实被省略"时显示（【build .167】）。
    * @param {object} col 列定义
    * @param {object} rec 记录
    * @returns {string}
@@ -853,7 +952,9 @@
     var text = cellText(col, rec);
     var attr = ' data-col="' + esc(col.key) + '"';
     if (col.type === 'long') {
-      return '<td class="col-clip"' + attr + ' title="' + esc(text) + '">' + esc(text) + '</td>';
+      /* 【build .167】**去掉原生 `title`**：全站统一改用 `.cell-tip` 悬浮框（见 bindCellTip）。
+         留着 title 会出现"原生 tooltip + 自定义悬浮框"双弹（生产 .89 踩过同样的问题）。 */
+      return '<td class="col-clip"' + attr + '>' + esc(text) + '</td>';
     }
     if (col.type === 'num') {
       return '<td class="col-num"' + attr + '>' + esc(text) + '</td>';
@@ -1389,6 +1490,96 @@
       if (!th || !th.getAttribute('data-col')) return;
       if (e.target.classList && e.target.classList.contains('th-rs')) { startColResize(e, th); return; }
       startColDrag(e, th);
+    });
+  }
+
+  /**
+   * 单元格 / 表头字段（被 ellipsis 省略时）悬停显示完整内容。
+   * 来源：生产 index.html 顶层的 cell-tip IIFE（`(function(){ var tip=document.createElement('div')… })()`），
+   * 此处改为 `bindCellTip` 函数，由 init() 调用一次（生产是顶层脚本自执行；质量系统只有一个 IIFE，
+   * 在顶层自执行会让"单元测试里 require 一次就多挂一个 DOM 节点"，故收成显式注册）。
+   * 关键点逐条照抄（每条都对应生产踩过的坑）：
+   *   · 判"是否被省略"用**临时 span 测量完整文本宽**，不用 scrollWidth/Range —— ellipsis 下两者不可靠；
+   *   · `[data-tip]` 元素优先（三角警示这类语义提示）；
+   *   · `select` 特判：取**当前选中项**文本（innerText 会把全部 option 拼起来误判）；聚焦时隐藏；
+   *   · 控件单元格（含 select/input/textarea/button）不弹（否则下拉框自带 tip 遮挡）；
+   *   · `mousemove` 跟手 + **视口翻转**（右侧/底部放不下就翻到左/上）；
+   *   · `mouseout` 在"离开该单元格"时隐藏；
+   *   · 覆盖范围只到 `#content .table-wrap table td, .table-wrap table .th-label`。
+   * @returns {undefined}
+   */
+  function bindCellTip() {
+    var tip = document.createElement('div');
+    tip.className = 'cell-tip';
+    document.body.appendChild(tip);
+
+    /** 该元素内容是否已被 ellipsis 省略 */
+    function truncated(el) {
+      var txt = '';
+      if (el.tagName === 'SELECT') {
+        var _o = el.options[el.selectedIndex];
+        txt = (_o ? (_o.textContent || '') : '').trim();
+      } else {
+        txt = (el.innerText || el.textContent || '').trim();
+      }
+      if (!txt) return false;
+      var cs = getComputedStyle(el);
+      var probe = document.createElement('span');
+      /* 临时节点：脱离文档流 + nowrap ⇒ 量到的必是完整文本宽度，不受 ellipsis / scrollWidth 怪异行为影响 */
+      probe.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;white-space:nowrap;display:inline-block;';
+      probe.style.font = cs.font;
+      probe.style.fontFamily = cs.fontFamily;
+      probe.style.fontSize = cs.fontSize;
+      probe.style.fontWeight = cs.fontWeight;
+      probe.style.fontStyle = cs.fontStyle;
+      probe.style.letterSpacing = cs.letterSpacing;
+      probe.style.textTransform = cs.textTransform;
+      probe.textContent = txt;
+      document.body.appendChild(probe);
+      var full = probe.offsetWidth;
+      document.body.removeChild(probe);
+      var padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
+      var avail = el.clientWidth - padL - padR;
+      return avail > 0 && full > avail + 0.5;
+    }
+
+    document.addEventListener('mouseover', function (e) {
+      /* `[data-tip]` 元素优先（语义提示类，如三角警示） */
+      var tipEl = e.target.closest('[data-tip]');
+      if (tipEl) { tip.textContent = tipEl.getAttribute('data-tip'); tip.style.display = 'block'; return; }
+      /* select 特判：只显示当前选中项；聚焦（正在选择）时不显示 */
+      var sel = e.target.closest('select');
+      if (sel) {
+        if (sel === document.activeElement) { tip.style.display = 'none'; return; }
+        var stxt = '';
+        var _so = sel.options[sel.selectedIndex];
+        if (_so) stxt = (_so.textContent || '').trim();
+        if (!stxt || !truncated(sel)) { tip.style.display = 'none'; return; }
+        tip.textContent = stxt; tip.style.display = 'block';
+        return;
+      }
+      var td = e.target.closest('.table-wrap table td, .table-wrap table .th-label');
+      if (!td) { tip.style.display = 'none'; return; }
+      /* 控件单元格不显示 tip */
+      if (td.querySelector && td.querySelector('select,input,textarea,button')) { tip.style.display = 'none'; return; }
+      var txt = (td.innerText || td.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!txt || !truncated(td)) { tip.style.display = 'none'; return; }
+      tip.textContent = txt; tip.style.display = 'block';
+    });
+
+    document.addEventListener('mousemove', function (e) {
+      if (tip.style.display !== 'block') return;
+      var x = e.clientX + 12, y = e.clientY + 12, w = tip.offsetWidth, h = tip.offsetHeight;
+      /* 视口翻转：右/下放不下就翻到左/上，留 8px 边距 */
+      if (x + w > window.innerWidth - 8) x = e.clientX - w - 12;
+      if (y + h > window.innerHeight - 8) y = e.clientY - h - 12;
+      tip.style.left = x + 'px';
+      tip.style.top = y + 'px';
+    });
+
+    document.addEventListener('mouseout', function (e) {
+      var from = e.target.closest('.table-wrap table td, .table-wrap table .th-label');
+      if (from && (!e.relatedTarget || !from.contains(e.relatedTarget))) tip.style.display = 'none';
     });
   }
 
@@ -1998,10 +2189,12 @@
     /* 【build .167】表格骨架与列布局的初始化（顺序：先读布局，再注册交互，最后渲染）
        · loadLayout：把本地布局读进内存（畸形数据在 normalizeLayout 里已被净化，读失败视同无布局）；
        · bindTableScrollFollow：scroll capture 委托 + resize，只注册一次（不随 renderMain 重复绑定）；
-       · bindColInteractions：表头 mousedown 统一委托（调宽/调序），同样只注册一次。 */
+       · bindColInteractions：表头 mousedown 统一委托（调宽/调序），同样只注册一次；
+       · bindCellTip：单元格悬浮提示（全站唯一 tooltip，退役原生 title），同样只注册一次。 */
     loadLayout();
     bindTableScrollFollow();
     bindColInteractions();
+    bindCellTip();
     boot();
   }
 

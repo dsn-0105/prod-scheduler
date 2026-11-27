@@ -201,6 +201,10 @@ body.col-dragging{cursor:grabbing;user-select:none}
    .col-num   数量列右对齐 + 等宽数字，便于按位数竖排比对（1 与 1000 混排时肉眼可读）
    .hint-warn 数量关系提示（5A：只提示不拦截） */
 .col-clip{width:200px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 【build .167】单元格悬浮提示（照抄生产 index.html L302 全套）：
+   全站唯一 tooltip，退役原生 title；position:fixed 跟手定位，pointer-events:none 不挡鼠标。
+   ⚠ 与 .col-clip 的 ellipsis 配套：不截断就测不出省略，tip 永远不会出现。 */
+.cell-tip{position:fixed;z-index:9999;max-width:440px;background:#1f2937;color:#fff;font-size:12px;line-height:1.55;padding:6px 10px;border-radius:7px;box-shadow:0 6px 20px rgba(0,0,0,.28);pointer-events:none;white-space:pre-wrap;word-break:break-word;display:none}
 .col-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .hint-warn{color:#b45309;font-weight:600;min-height:16px}
 .modal-wide{width:560px}
