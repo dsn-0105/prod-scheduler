@@ -177,14 +177,16 @@ test('A2【契约】固定历史基线 .161 用水印自证（取错修订则全
   assert.notEqual(md5(B161_SRC), md5(INDEX_SRC), '.161 与当前 index.html 必须是不同文件');
 });
 
-test('A3【契约·关键】.165 与 .161 的 thCol **都**与当前不同 ⇒ 本版 PREV 参考系重新具备判别力', function () {
+test(`A3【契约·关键】${build.PREV} 与 .161 的 thCol **都**与当前不同 ⇒ 本版 PREV 参考系重新具备判别力`, function () {
   /* 【.167 同步·必要同步（非放宽）】本条原为「.162 的 thCol 与当前**逐字相同**」，用来论证
      "拿 PREV 当参考系会恒红"。`.167` 修 D11 改了 thCol（判据并入单源 `filtOn`）⇒ 该前提被推翻。
      事实先于辩解：改成本版的真实形态 —— PREV 与 .161 **都**与当前不同。
      为防止改成自证式空断言（"两个都不是 HEAD 就绿"），本节保留三重判别力自证：
        ① 三侧都必须提取成功且足够长（否则"不同"可能只是提取失败）；
        ② 当前 thCol 必须含本版新增的 `filtOn(` 子句（证明差异确实来自 .167 的改动）；
-       ③ 末尾显式**反向执行**同一逻辑：把"当前"当基线喂进去必须报错 ⇒ notEqual 不是恒真。 */
+       ③ 末尾显式**反向执行**同一逻辑：把"当前"当基线喂进去必须报错 ⇒ notEqual 不是恒真。
+     【.167 补】文案改为 `${build.PREV}` 动态生成：本条断言本身参数化于 `build.PREV`，但此前 message
+     写死「.165」⇒ 每次推进后标题与文案都会陈旧误导（断言仍绿）。**只动文案与标题，断言逻辑一字未改**。 */
   const now = extractFn(normEol(INDEX_SRC), 'thCol');
   const b162 = extractFn(normEol(B162_SRC), 'thCol');
   const b161 = extractFn(normEol(B161_SRC), 'thCol');
@@ -196,12 +198,12 @@ test('A3【契约·关键】.165 与 .161 的 thCol **都**与当前不同 ⇒ �
     '三侧 thCol 提取结果都必须足够长（防提取失败伪装成"不同"）');
 
   assert.notEqual(b162, now,
-    '.165 的 thCol 与当前必须不同 —— .167 修 D11 改了判据，故 PREV 参考系在本版**重新具备**判别力；'
+    `${build.PREV} 的 thCol 与当前必须不同 —— .167 修 D11 改了判据，故 PREV 参考系在本版**重新具备**判别力；`
     + '（原断言为 equal：当时 .163~.166 未动 thCol，两侧确实逐字相同）');
   assert.notEqual(b161, now,
     '.161 的 thCol 必须与当前不同（它是「漏斗不亮」的那一版），否则新参考系没有判别力');
   assert.notEqual(b162, b161,
-    '.165 与 .161 的 thCol 也必须不同（.162 的修复曾改动 thCol）—— 三者互不相同');
+    `${build.PREV} 与 .161 的 thCol 也必须不同（.162 的修复曾改动 thCol）—— 三者互不相同`);
 
   /* ③ 改后仍会红（防恒真自证）：把"当前"当基线喂进同一套断言逻辑，必须抛错 */
   const assertDiffersFrom = function (base, label) {
@@ -236,24 +238,24 @@ test('B1【契约·关键】变异「回退到 .161 的 thCol」必须真的改�
     '回退后 isSemFiltMode 判据子句必须消失（这才是"增量被整段删掉"）');
 });
 
-test('B2【契约·关键】变异「回退到 .165 的 thCol」是**真变异**（本版 PREV 参考系重新有判别力）', function () {
+test(`B2【契约·关键】变异「回退到 ${build.PREV} 的 thCol」是**真变异**（本版 PREV 参考系重新有判别力）`, function () {
   /* 【.167 同步·必要同步（方向反转，强度不减）】本条原断言「回退到 PREV 的 thCol 与当前完全相同 ⇒ no-op」，
-     用于论证"PREV 参考系没有判别力"。`.167` 改了 thCol ⇒ 回退到 .165 **不再是 no-op**。
+     用于论证"PREV 参考系没有判别力"。`.167` 改了 thCol ⇒ 回退到 ${build.PREV} **不再是 no-op**。
      方向反转但仍是可观测硬断言：必须真的改文本、且 .167 的 act 判据行必须消失。
-     （若哪天有人把 thCol 改回与 .165 逐字相同，本条会立刻变红并提示重新评估参考系。） */
+     （若哪天有人把 thCol 改回与 ${build.PREV} 逐字相同，本条会立刻变红并提示重新评估参考系。） */
   const src = normEol(INDEX_SRC);
   const now = extractFn(src, 'thCol');
   const b162 = extractFn(normEol(B162_SRC), 'thCol');
   assert.equal(countOcc(src, now), 1, 'thCol 原文必须恰命中 1 处（否则变异会撒到别处）');
   assert.notEqual(now, b162,
-    '回退到 .165 **必须**改变文本（.167 改了 thCol ⇒ 该变异不再是 no-op）');
+    `回退到 ${build.PREV} **必须**改变文本（.167 改了 thCol ⇒ 该变异不再是 no-op）`);
   const mutated = src.replace(now, b162);
   assert.notEqual(mutated, src,
     '替换前后必须不同 —— 本版 PREV 参考系有判别力（原 no-op 结论已随 .167 失效）');
   assert.equal(countOcc(mutated, 'const act=f&&(filtOn(f)||isSemFiltMode(m,col.key,f.mode));'), 0,
     '回退后 .167 的 act 判据行必须消失（这才是"整段回退"，不是局部改写）');
   assert.equal(countOcc(mutated, '||isSemFiltMode(m,col.key,f.mode)'), 1,
-    '回退到 .165 后 .162 的语义档子句必须**仍在**（这正是 .165 与 .161 的区别，证明回退的是 .167 那一层）');
+    `回退到 ${build.PREV} 后 .162 的语义档子句必须**仍在**（这正是 ${build.PREV} 与 .161 的区别，证明回退的是 .167 那一层）`);
 });
 
 /* ================================================================
