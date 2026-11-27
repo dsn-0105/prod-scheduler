@@ -199,6 +199,21 @@ const TARGETS = [
     where: '第 5 行 · > 更新：<日期>（build .<NNN>）。系统功能升级后…',
     pattern: /[0-9]{4}-[0-9]{2}-[0-9]{2}（build \.[0-9]+）/g,
     expect: function (v) { return [shortForm(v.build)]; }
+  },
+  /* ⑲ quality/index.html 右下角水印（【build .167】新增落点）
+        ⚠ 为什么它是**落点**而不是"独立编号"：质量系统与生产系统**同一批代码同批发版**
+          （同一轮改、同一轮部署、同一份 VERSION），水印本应一致；`.167` 之前它一直漏在
+          TARGETS 之外 ⇒ sync/check 都管不到，水印长期停留在**上一版**（`.166`），
+          运维靠右下角水印判断线上版本会被直接误导。
+          形态与 ① 生产水印相同（`>build <完整版本><`），故要求**完整形态**而非短形态。
+        ⚠ 与 admin/index.html 的区别（重要，别照抄）：admin 是**独立编号**（自带 `.001` 序号、
+          `qa.admin-console §A6` 明文「后台与生产各自独立编号」、`deploy-admin.sh` 明确「注意别把
+          生产版本号抄进来」），**不得**纳入本脚本代笔 —— 详见 docs/系统知识.md §8 D18 的说明。 */
+  {
+    file: 'quality/index.html',
+    where: '第 296 行 · 右下角水印 >build <完整版本><（.build-mark）',
+    pattern: /(?<=>build )[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+(?=<)/g,
+    expect: function (v) { return [v.build]; }
   }
 ];
 
