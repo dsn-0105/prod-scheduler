@@ -512,8 +512,8 @@ test('F2 引擎顺序：filterRows 必须先取列、再判「是否有效筛选
     assert.ok(iSem > iCol, '语义档解析必须在取列之后（semFilters 挂在列上）');
     assert.ok(iGate > iSem, '「是否有效筛选」的闸门必须在语义档解析之后 —— 否则 val 恒空的语义模式会被静默跳过');
     assert.ok(iTest > iGate, '语义档的行级判定必须在闸门之后');
-    assert.ok(fr.indexOf("valFreeMode=f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)||!!sem") >= 0,
-      'valFreeMode 必须把语义档纳入（!!sem），且保留既有三档');
+    assert.ok(fr.indexOf('const valFreeMode=isValFreeFiltMode(f)||!!sem') >= 0,
+      'valFreeMode 必须把语义档纳入（!!sem），且 val 恒空的既有三档改由单源 isValFreeFiltMode(f) 提供（【build .167】）');
   } finally { app.dispose(); }
 });
 
@@ -599,17 +599,37 @@ test('G1 thCol：语义档（val 空）必须点亮漏斗图标（.161 曾为缺
     assert.equal(icoOn(app, 'order_inv', '_balPct'), false,
       '有筛选条目但模式无效（gte + val 空）→ 不得点亮（有效反假守卫，绕过 f && 短路）');
 
-    /* 【现状·既有缺陷 D11】文本列「为空/不为空」筛选生效但漏斗图标不亮。
-       · 事实：`act` 的历史判据只认「vals 非空 / val 非空」，`is_empty` 的 val 恒空 ⇒ 从不点亮；
-         该行为自 .152 起就存在，**跨全部模块**的文本列，症状与 .162 所修缺陷同类。
-       · 为何本轮不修：给 is_empty 补点亮会改动全部模块表头，违反「非语义档 filt-ico 行为逐字节不变」红线；
-         修复需再做一次 `layout.scoped §C1` 受控放行。已登记为 **D11（P2·可见性提示缺失）**，
-         见 docs/系统知识.md §7。
-       · 本断言**不是认可该行为**，只是把现状钉住，避免被"顺手改掉"时无人意识到影响面；
-         **修复 D11 时请把下一条断言翻转为 `true`**，并同步本条注释与 D11 登记。 */
+    /* 【build .167】D11 已修复 ⇒ 原「现状钉」翻转为**契约**：
+       · 历史事实（.152 ~ .166）：`act` 判据只认「vals 非空 / val 非空」，而 `is_empty` 的 val 恒空
+         ⇒ 从不点亮；症状与 .162 所修缺陷同类，且跨**全部模块**的文本列与日期列。
+       · 修复：thCol 的 act 判据改走单源 `filtOn(f)`（= vals 非空 ∨ val 非空 ∨ val 恒空模式），
+         于是「为空 / 不为空 / 日期 7 个快捷模式（含 range）」一并纳入点亮。
+       · 本条**不是**放宽：原断言是"缺陷现状"（false），现断言是"用户可见契约"（true）；
+         若有人回退判据，本条立刻变红。 */
     app.run("tState('order_inv').filters={productName:{mode:'is_empty',val:''}};");
+    assert.equal(icoOn(app, 'order_inv', 'productName'), true,
+      'D11 已修：文本列 is_empty 筛选生效时漏斗图标必须点亮（.152~.166 曾不亮）');
+    /* 前提自证：该状态下筛选确实生效（不是"点亮了但没筛"）。
+       夹具 9 行的 productName 均为非空（= productId），故 is_empty 的结果应为 0 行。 */
+    assert.equal(filterIds(app).length, 0,
+      '前提：is_empty 确实在过滤（9 行 productName 全非空 ⇒ 0 行）；点亮必须与「已生效」同源');
+
+    /* 「不为空」同样必须点亮（同一判据分支）；日期快捷模式亦然 */
+    app.run("tState('order_inv').filters={productName:{mode:'not_empty',val:''}};");
+    assert.equal(icoOn(app, 'order_inv', 'productName'), true, 'D11：not_empty 也必须点亮');
+    app.run("tState('order_inv').filters={startDate:{mode:'today',val:''}};");
+    assert.equal(icoOn(app, 'order_inv', 'startDate'), true, 'D11：日期快捷模式（today）也必须点亮');
+    app.run("tState('order_inv').filters={startDate:{mode:'range',from:'2026-01-01',to:'2026-12-31'}};");
+    assert.equal(icoOn(app, 'order_inv', 'startDate'), true, 'D11：日期「从…到…」（range）也必须点亮');
+    /* 另一个模块的日期列同样点亮 —— 证明修复是**引擎级**，不是对某一列的特判 */
+    app.run("renderOrderTable('order_frame',[],{});tState('order_frame').filters={deadline:{mode:'today',val:''}};");
+    assert.equal(icoOn(app, 'order_frame', 'deadline'), true,
+      'D11：order_frame.deadline + today 也必须点亮（跨模块，引擎级修复）');
+
+    /* 反假守卫：判据不得退化成"恒亮" —— 未生效的筛选（val 空且非 val 恒空模式）仍不亮 */
+    app.run("tState('order_inv').filters={productName:{mode:'contains',val:''}};");
     assert.equal(icoOn(app, 'order_inv', 'productName'), false,
-      '【现状·既有缺陷 D11】文本列 is_empty 筛选生效但漏斗图标不亮 —— 修复后请把本断言翻转为 true，并同步 D11 登记');
+      '为空/不为空/快捷模式之外的模式，val 空 ⇒ 未生效 ⇒ 不得点亮（D11 修复不得把 act 变成恒真）');
   } finally { app.dispose(); }
 });
 
@@ -744,6 +764,10 @@ test('G4 thCol 跨修订零回归：非 order_inv 模块逐字节不变；order_
     const prevSrc = require('node:child_process').execFileSync('git', ['show', prevRev + ':index.html'],
       { cwd: ROOT, encoding: 'utf8' });
     assert.ok(prevSrc.length > 100000, '上一版 index.html 提取异常短（' + prevSrc.length + '）');
+    /* 自证基线形态：上一版的 thCol 是否已含 D11 修复（`filtOn(`）。
+       版本推进后（PREV 变成含修复的那一版）本用例的 D11 分支自动降级为「两版逐字节相同」，
+       否则下一版推进会无端变红 —— `.163` 已踩过同类坑（拿 PREV 当参考系而 PREV 已含改动）。 */
+    const prevD11Fixed = fnSrc(prevSrc, 'thCol').indexOf('filtOn(') >= 0;
 
     /* 两版用**同一份**夹具装载 */
     const fixtures = {
@@ -768,25 +792,36 @@ test('G4 thCol 跨修订零回归：非 order_inv 模块逐字节不变；order_
     const now = mk(INDEX_SRC);
     const prev = mk(prevSrc);
     try {
-      /* 非语义筛选态电池：两版 thCol 输出必须**逐字节相同** */
-      const STATES = [
+      /* 【build .167 拆分说明】原电池是「一份 9 态、两版逐字节相同」。D11 修复后
+         「val 恒空模式」的分支**故意**变了（本版点亮、上一版不亮），若仍用同一份电池，
+         本用例会从「零回归守卫」退化成「D11 修复的反对者」。故按**预期是否相同**拆两组：
+           · STATES_SAME —— 不涉及 val 恒空模式 ⇒ 两版必须**逐字节相同**（真正的零回归面）；
+           · STATES_D11  —— val 恒空模式 ⇒ 差异必须**恰为一个 ` on` 令牌**（受控增量面）。
+         两组一起才能同时证明「该变的变了、不该变的没变」。 */
+      const STATES_SAME = [
         '{}',
         "{id:{mode:'contains',val:'KC'}}",
-        "{id:{mode:'is_empty',val:''}}",
-        "{id:{mode:'not_empty',val:''}}",
         "{id:{vals:['KC1'],mode:'in'}}",
         "{stockMin:{mode:'gte',val:'5'}}",
         "{stockMin:{mode:'neq',val:'5'}}",
+        "{startDate:{mode:'gte',val:'2026-01-01'}}"
+      ];
+      /* D11 修复面：为空 / 不为空 / 日期 7 个快捷模式（这里覆盖 today 与 range 两个代表） */
+      const STATES_D11 = [
+        "{id:{mode:'is_empty',val:''}}",
+        "{id:{mode:'not_empty',val:''}}",
         "{startDate:{mode:'range',from:'2026-01-01',to:'2026-12-31'}}",
         "{startDate:{mode:'today',val:''}}"
       ];
+      const MODULES = ['product', 'order_frame', 'order_inv', 'delivery', 'parts'];
       const diffs = [];
       let compared = 0;
-      ['product', 'order_frame', 'order_inv', 'delivery', 'parts'].forEach(function (m) {
+      MODULES.forEach(function (m) {
         const keys = JSON.parse(now.run('JSON.stringify((TBL_SCHEMAS[' + JSON.stringify(m) + ']||[]).map(function(c){return c.key;}))'));
         assert.ok(keys.length >= 5, m + ' 列数异常（' + keys.length + '）');
         keys.forEach(function (k) {
-          STATES.forEach(function (st) {
+          /* ---- ① 零回归面：逐字节相同 ---- */
+          STATES_SAME.forEach(function (st) {
             now.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
             prev.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
             const a = thOf(now, m, k);
@@ -794,10 +829,40 @@ test('G4 thCol 跨修订零回归：非 order_inv 模块逐字节不变；order_
             compared++;
             if (a !== b) diffs.push(m + '.' + k + ' / ' + st + '\n  本版：' + a + '\n  上版：' + b);
           });
+          /* ---- ② 受控增量面：差异恰为一个 ` on` 令牌（且必须真的点亮） ---- */
+          STATES_D11.forEach(function (st) {
+            now.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
+            prev.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
+            const a = thOf(now, m, k);
+            const b = thOf(prev, m, k);
+            compared++;
+            if (prevD11Fixed) {
+              /* 上一版已含修复 ⇒ 本组也退化为「逐字节相同」（版本推进后的零回归面） */
+              if (a !== b) diffs.push(m + '.' + k + ' / ' + st + '\n  本版：' + a + '\n  上版：' + b);
+              return;
+            }
+            if (a === b) {
+              /* 该列不是被筛选的列 ⇒ 两版都不亮（自证：D11 修复没有波及其它列） */
+              assert.equal(/filt-ico on/.test(a), false,
+                '未被筛选的列不得点亮：' + m + '.' + k + ' / ' + st);
+              return;
+            }
+            if (/filt-ico on/.test(b)) {
+              diffs.push(m + '.' + k + ' / ' + st + '：上一版不该亮却亮了，无法归因为 D11\n  上版：' + b);
+              return;
+            }
+            if (!/filt-ico on/.test(a)) {
+              diffs.push(m + '.' + k + ' / ' + st + '：D11 未修（本版该亮却没亮）\n  本版：' + a);
+              return;
+            }
+            if (a.replace('filt-ico on', 'filt-ico') !== b) {
+              diffs.push(m + '.' + k + ' / ' + st + '：差异超出「一个 on 令牌」\n  本版：' + a + '\n  上版：' + b);
+            }
+          });
         });
       });
       assert.ok(compared >= 100, 'thCol 差分覆盖面异常（仅 ' + compared + ' 组）');
-      assert.deepEqual(diffs, [], '非语义筛选态下 thCol 输出出现回归：\n' + diffs.join('\n'));
+      assert.deepEqual(diffs, [], 'thCol 跨修订差分不符预期（零回归面必须逐字节相同 / D11 面必须恰一个 on）：\n' + diffs.join('\n'));
 
       /* 语义档是本版**唯一**预期差异：差异必须恰为多出一个 ` on` 令牌 */
       now.run("tState('order_inv').filters={_balPct:{mode:'inv_short',val:''}};");
@@ -818,5 +883,96 @@ test('G4 thCol 跨修订零回归：非 order_inv 模块逐字节不变；order_
       now.dispose();
       prev.dispose();
     }
+  } finally { app.dispose(); }
+});
+
+/* ================================================================
+   §G5 【build .167】判据单源化（D11 修复）的静态守卫
+   ----------------------------------------------------------------
+   为什么必须有本节：`.161`（chip 不出现）与 `.162`（漏斗不亮）两次缺陷的**同一根因**是
+   「一条判据被抄成多份、只改了其中一份」。修 D11 时若又各写一份，等于把坑挖第三遍。
+   故本节把「单源」这件事本身钉住：
+     · 两个单源函数各恰 1 份实现；
+     · 5 个消费方一律**委托**，自身不得再出现任何「val 恒空模式」的自判片段；
+     · 单源函数本体的边界（不看值 / 不判语义档）不得被越界改写。
+   ================================================================ */
+
+/** 消费方清单（改判据时必须同步的 5 处；新增第 6 处前请先想清楚为什么不能复用 filtOn） */
+const FILT_ON_CONSUMERS = ['filterRows', 'thCol', 'filterBar', 'prodFilterActive', 'maybeWarnHiddenOrder'];
+
+test('G5 判据单源：isValFreeFiltMode / filtOn 各 1 份实现，5 个消费方一律委托且不再自判', function () {
+  const app = boot({ orders: [] });
+  try {
+    const plain = INDEX_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+    /* ---- ① 两个单源各恰 1 份实现 ---- */
+    assert.equal(countOcc(plain, 'function isValFreeFiltMode('), 1,
+      'val 恒空模式判据只许 1 份实现（isValFreeFiltMode）');
+    assert.equal(countOcc(plain, 'function filtOn('), 1,
+      '「筛选是否生效」判据只许 1 份实现（filtOn）');
+    assert.equal(countOcc(plain, 'function dateQuickMode('), 1,
+      '日期 7 个快捷模式的单一来源必须仍是 dateQuickMode（且仍恰 1 份）');
+
+    /* ---- ② 5 个消费方必须委托，且自身不得出现「val 恒空模式」的自判片段 ---- */
+    FILT_ON_CONSUMERS.forEach(function (n) {
+      const body = fnSrc(plain, n);
+      assert.ok(body && body.length > 20, n + ' 未抽出（守卫会退化为恒真）');
+    });
+    /* filterRows 用 isValFreeFiltMode（它只需要「是否 val 恒空」，语义档自己补 !!sem）；
+       其余 4 处用 filtOn（「是否生效」的完整口径） */
+    assert.ok(fnSrc(plain, 'filterRows').indexOf('isValFreeFiltMode(') >= 0,
+      'filterRows 必须调用 isValFreeFiltMode（判据单源）');
+    ['thCol', 'filterBar', 'prodFilterActive', 'maybeWarnHiddenOrder'].forEach(function (n) {
+      const body = fnSrc(plain, n);
+      assert.ok(body.indexOf('filtOn(') >= 0, n + ' 必须调用单源 filtOn（不得自带一份判据）');
+      assert.equal(body.indexOf("f.mode==='is_empty'"), -1,
+        n + ' 不得自判 is_empty（这正是 D11 的多份副本之一）');
+      assert.equal(body.indexOf('dateQuickMode('), -1,
+        n + ' 不得自判日期快捷模式（必须走单源）');
+      assert.equal(body.indexOf('f.vals&&f.vals.length>0'), -1,
+        n + ' 不得自带「vals 非空」判据');
+      assert.equal(body.indexOf("f.val!==''&&f.val!=null"), -1,
+        n + ' 不得自带「val 非空」判据');
+    });
+
+    /* ---- ②b 位置归属法（不依赖函数体提取成功）：is_empty / not_empty 字面量的
+       归属函数集合必须恰为 {isValFreeFiltMode, filterRows} ——
+       isValFreeFiltMode 是**判据本体**；filterRows 的两处是**行级取值判定**
+       （`if(f.mode==='is_empty'&&!(v==null||v===''))return false;`），不是"是否生效"判据。 */
+    const declPos = [];
+    const declPosRe = /function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+    let pm;
+    while ((pm = declPosRe.exec(plain)) !== null) declPos.push({ name: pm[1], at: pm.index });
+    ['is_empty', 'not_empty'].forEach(function (mode) {
+      const owners = [];
+      let i = plain.indexOf("f.mode==='" + mode + "'");
+      while (i >= 0) {
+        const owner = declPos.filter(function (d) { return d.at < i; }).pop();
+        owners.push(owner ? owner.name : '<模块级/函数外>');
+        i = plain.indexOf("f.mode==='" + mode + "'", i + 1);
+      }
+      assert.deepEqual(Array.from(new Set(owners)).sort(), ['filterRows', 'isValFreeFiltMode'],
+        mode + ' 字面量的归属函数必须恰为「判据本体 + filterRows 行级取值判定」两处，实际：' +
+        Array.from(new Set(owners)).join(', ') + ' —— 多出第三处即又长了一份判据');
+      assert.equal(owners.length, 2, mode + ' 去注释后应恰出现 2 次，实际 ' + owners.length + '：' + owners.join(', '));
+      assert.equal(owners.indexOf('<模块级/函数外>'), -1, mode + ' 不得出现在任何函数之外（模块级）');
+    });
+
+    /* ---- ③ 单源函数的边界：不看值、不判语义档 ---- */
+    const vf = fnSrc(plain, 'isValFreeFiltMode');
+    assert.equal(vf.indexOf('vals'), -1, 'isValFreeFiltMode 只判「模式是否 val 恒空」，不得看 vals');
+    assert.equal(vf.indexOf('f.val'), -1, 'isValFreeFiltMode 不得看 f.val（它判的就是「不需要值」）');
+    const fo = fnSrc(plain, 'filtOn');
+    assert.equal(fo.indexOf('isSemFiltMode'), -1,
+      'filtOn 不得判语义档 —— f 上没有列信息，硬判必然要新增入参并由此长出第二套判据');
+    assert.ok(fo.indexOf('isValFreeFiltMode(f)') >= 0, 'filtOn 必须复用 isValFreeFiltMode（不得自己再列一遍模式名）');
+
+    /* ---- ④ 语义档在**调用处**补足的那两段必须还在（否则语义档会静默失效） ---- */
+    assert.ok(fnSrc(plain, 'filterRows').indexOf('||!!sem') >= 0,
+      'filterRows 必须保留 ||!!sem（语义档的 popcount 在调用处补足）');
+    assert.ok(fnSrc(plain, 'thCol').indexOf('||isSemFiltMode(m,col.key,f.mode)') >= 0,
+      'thCol 必须保留 ||isSemFiltMode(...)（漏斗点亮对语义档的那一段）');
+    assert.ok(fnSrc(plain, 'filterBar').indexOf('isSemFiltMode(m,k,mode)') >= 0,
+      'filterBar 的 semModeOf 薄别名必须仍委托 isSemFiltMode');
   } finally { app.dispose(); }
 });

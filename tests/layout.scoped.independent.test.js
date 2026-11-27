@@ -679,7 +679,12 @@ test('C1 反潮汐：5 个既有函数体与 .152 改前基线逐字相同 + thC
      （语义筛选生效但图标不亮，由 QA 独立回归 I3 捉出）。为**不削弱**反潮汐强度，
      thCol 不改为「跳过」，而是「剥掉这一处受控增量后必须与基线逐字一致」——
      除该增量外的任何改动仍会立刻变红。thCol 的正向行为另由
-     `tests/invfilt.161.test.js §G1/G2/G4`（点亮/单源/跨修订差分）守卫。 */
+     `tests/invfilt.161.test.js §G1/G2/G4/G5`（点亮/单源/跨修订差分）守卫。
+     【build .167 第二处受控放行】D11 修复（`为空/不为空/日期快捷模式` 筛选生效但漏斗不亮）
+     把同一行判据换成单源 `filtOn(f)`，受控增量的**形态**从「末尾多一个 `||isSemFiltMode(...)`」
+     变成「整条 act 表达式被改写」。剥离仍是**两处字节级删除**（注释块 + act 表达式），
+     但 act 那处改为「逆向还原回基线形态」而非「删尾巴」—— 因为增量已不在行尾。
+     强度不变：act 表达式必须**逐字**等于约定形态，且还原后其余各行仍与基线逐字一致。 */
   const STRICT = ['layoutOf', 'applyTableLayout', 'startColDrag', 'startColResize', 'syncHeadBody'];
   STRICT.forEach(n => {
     const a = extractFn(INDEX_SRC, n);
@@ -689,17 +694,23 @@ test('C1 反潮汐：5 个既有函数体与 .152 改前基线逐字相同 + thC
     assert.strictEqual(a, b, n + ' 函数体必须与 .152 改前基线（' + base.rev.slice(0, 7) + '）逐字一致（反潮汐硬约束）');
   });
 
-  /* thCol：剥掉 .162 的两处受控增量（新增注释块 + act 判据里的 ||isSemFiltMode(...)）后必须逐字等于基线 */
+  /* thCol：剥掉 .162/.167 的两处受控增量（新增注释块 + act 判据表达式）后必须逐字等于基线 */
+  /* 【build .167 受控放行·第二处】thCol 的 act 判据并入「零值自由模式」（D11 修复）：
+     与 .162 同款处理——不"跳过"，而是把 act 那一行精确替换回 .152 基线形态后要求逐字相等，
+     除这两处受控增量外的任何改动仍立刻变红。 */
   const stripThColDelta = function (fn) {
     return String(fn)
-      .replace(/\n  \/\* 【build \.162】[\s\S]*?\*\/\n/, '\n')
-      .replace('||isSemFiltMode(m,col.key,f.mode)', '');
+      .replace(/\n  \/\* 【build \.16[27]】[\s\S]*?\*\/\n/g, '\n')
+      .replace('const act=f&&(filtOn(f)||isSemFiltMode(m,col.key,f.mode));',
+               "const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null));");
   };
   const thNow = extractFn(INDEX_SRC, 'thCol');
   const thBase = extractFn(headHtml, 'thCol');
   assert.ok(thNow && thNow.length > 60, 'thCol 在当前 index.html 中未抽出（守卫会退化为恒真）');
   assert.ok(thBase && thBase.length > 60, 'thCol 在基线中未抽出（守卫会退化为恒真）');
   assert.notStrictEqual(thNow, thBase, '受控增量必须真的存在（若两版相同则本分支退化为恒真）');
+  assert.ok(thNow.indexOf('const act=f&&(filtOn(f)||isSemFiltMode(m,col.key,f.mode));') >= 0,
+    '.167 受控增量必须就是「判据并入 filtOn」');
   assert.ok(thNow.indexOf('||isSemFiltMode(m,col.key,f.mode)') >= 0, '受控增量必须就是「判据并入语义档」');
   assert.strictEqual(stripThColDelta(thNow), thBase,
     'thCol 除 .162 那一处受控增量外，必须与 .152 改前基线逐字一致（反潮汐硬约束）');

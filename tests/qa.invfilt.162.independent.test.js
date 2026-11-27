@@ -499,8 +499,13 @@ test('L1 裁决（A4④ 提取器敏感探针换锚点）：必要同步，强�
      原探针会变成 notEqual(相同,相同) → 恒红；若有人图省事删掉它，守卫就消失。
      故换锚点**必要**。但必须证明新锚点仍在证明同一件事（提取器对修订敏感、不是抓到恒定片段）。 */
   /* 【.163 同步】比较对象是「相对 .161 的受控增量」（.163 本身没动这三个函数，
-     用 PREV(= .162) 会变成 notEqual(相同,相同) 恒红）。 */
-  const changed = ['thCol', 'applyFilt', 'filterBar'];   /* 本轮（.162）确实改过的三个函数 */
+     用 PREV(= .162) 会变成 notEqual(相同,相同) 恒红）。
+     【.167 同步·必要同步（非放宽）】`filterRows` 从 untouched 移入 changed：
+     `.167` 把闸门判据改为单源 `isValFreeFiltMode(f)`（D11 修复的同一批改动）⇒ 它必然与 .161 不同。
+     继续把它列在"两版必须逐字相同"才是**指鹿为马**（会强制生产代码不可改）。
+     强度不减：changed 4 个（都断言不同）、untouched 6 个（都断言相同），
+     两方向都仍有断言 —— 这正是本用例"反假绿"的设计（若提取器恒不相等，untouched 立刻红）。 */
+  const changed = ['thCol', 'applyFilt', 'filterBar', 'filterRows'];   /* 相对 .161 确实改过的函数 */
   changed.forEach(function (n) {
     assert.notEqual(extractFn(INDEX_SRC, n), extractFn(B161_INDEX_SRC, n),
       n + ' 相对 .161 确有改动 ⇒ 可作为"提取器敏感"的锚点（两版必须不同）');
@@ -508,13 +513,18 @@ test('L1 裁决（A4④ 提取器敏感探针换锚点）：必要同步，强�
   /* filterBar 为何也算"改过"：其 semModeOf 由自带实现降为委托 isSemFiltMode 的薄别名（判据单源化）。 */
   assert.ok(extractFn(INDEX_SRC, 'filterBar').indexOf('isSemFiltMode(m,k,mode)') >= 0,
     'filterBar 的薄别名必须委托 isSemFiltMode（这解释了它为何与上一版不同）');
+  /* filterRows 为何也算"改过"：闸门判据由 5 条并列判断降为单源 isValFreeFiltMode(f)（＋留 !!sem）。 */
+  assert.ok(extractFn(INDEX_SRC, 'filterRows').indexOf('isValFreeFiltMode(f)||!!sem') >= 0,
+    'filterRows 必须已改为单源 isValFreeFiltMode(f)（这解释了它为何与 .161 不同）');
   /* 反假绿：若提取器不管什么函数都返回"两版不同"（例如带进位置信息），notEqual 就恒真、探针失效。
-     故必须同时证明「未被改动的函数两版**相同**」——证明 equal/notEqual 都有判别力。 */
-  const untouched = ['tState', 'colVal', 'filterRows', 'invStockLevel', 'openFilter', 'fpModeChange', 'fpModeOptsHtml'];
+     故必须同时证明「未被改动的函数两版**相同**」——证明 equal/notEqual 都有判别力。
+     ⚠ 这里剩下的 6 个函数均已**逐条实测**：与 .161 逐字相同（下方 assert.equal 即自证）。 */
+  const untouched = ['tState', 'colVal', 'invStockLevel', 'openFilter', 'fpModeChange', 'fpModeOptsHtml'];
   untouched.forEach(function (n) {
     assert.equal(extractFn(INDEX_SRC, n), extractFn(B161_INDEX_SRC, n),
       n + ' 在两版之间未改动 ⇒ 必须逐字相同（这条同时证明提取器不是"恒不相等"的假探针）');
   });
+  assert.ok(untouched.length >= 6, 'untouched 名单不得被缩到 6 个以下（观测面不许缩水）');
   /* 防对消：基线不得等于 HEAD */
   assert.notEqual(PREV_REV, HEAD, '基线修订不得是 HEAD（否则比对自我对消）');
   assert.notEqual(md5(PREV_INDEX_SRC), md5(INDEX_SRC), '两版 index.html 必须是不同文件');
@@ -782,19 +792,29 @@ test('P3 契约：清脏值**只**作用于语义档；为空/不为空/日期�
    §Q thCol 跨修订零回归（**独立重算**，不用他的数字）
 ================================================================ */
 
-const TH_STATES = [
+/* 【.167 同步·必要同步（非放宽）】原电池是一份 9 态、断言「两版 thCol 逐字节相同」。
+   D11 修复（`thCol` 判据并入单源 `filtOn`）的定义就是：**val 恒空的模式**（为空/不为空/
+   日期 7 个快捷模式，含 range）从"不亮"变"点亮"。若仍要求 9 态全相同，等于要求"修了 bug 但输出不变"，
+   两者互斥 —— 那是**测试侧**把缺陷钉成正确行为，正是项目铁律禁止的形态。
+   故按「预期是否相同」拆两组：SAME 组仍是逐字节相同（真正的零回归面），
+   D11 组要求差异**恰为一个 ` on` 令牌**（受控增量面，比"不同"更严）。两组都保留，判别力不减反增。 */
+const TH_STATES_SAME = [
   '{}',
   "{id:{mode:'contains',val:'KC'}}",
-  "{id:{mode:'is_empty',val:''}}",
-  "{id:{mode:'not_empty',val:''}}",
   "{id:{vals:['KC1','KC2'],mode:'in'}}",
   "{stockMin:{mode:'gte',val:'5'}}",
   "{stockMin:{mode:'gte',val:''}}",
+  "{startDate:{mode:'lte',val:'2027-01-01'}}"
+];
+/* val 恒空模式：为空 / 不为空 / 日期快捷（range、today 作代表） */
+const TH_STATES_D11 = [
+  "{id:{mode:'is_empty',val:''}}",
+  "{id:{mode:'not_empty',val:''}}",
   "{startDate:{mode:'range',from:'2026-01-01',to:'2026-12-31'}}",
   "{startDate:{mode:'today',val:''}}"
 ];
 
-test('Q1 契约：5 模块 × 全列 × 9 种非语义筛选态，两版 thCol 输出逐字节相同（我自算）', function () {
+test('Q1 契约：5 模块 × 全列 × 6 种非 D11 态两版 thCol 逐字节相同；4 种 D11 态差异恰一个 ` on`（我自算）', function () {
   const now = bootAll();
   const prev = boot({ indexHtml: PREV_INDEX_SRC });
   prev.setGlobal('products', clone(SEED.products));
@@ -803,25 +823,66 @@ test('Q1 契约：5 模块 × 全列 × 9 种非语义筛选态，两版 thCol �
   prev.run("renderProducts();renderParts();renderDelivery();" +
     "renderOrderTable('order_frame',[],{});renderOrderTable('order_inv',[],{});");
 
+  /* 【.167 同步】上一版是否已含 D11 修复（`filtOn`）——版本推进后本用例的 D11 分支自动降级为
+     「逐字节相同」，否则下一版推进会无端变红（`.163` 踩过 PREV 参考系漂移的坑）。 */
+  const prevD11Fixed = extractFn(PREV_INDEX_SRC, 'thCol').indexOf('filtOn(') >= 0;
+
   const mods = ['product', 'order_frame', 'order_inv', 'delivery', 'parts'];
-  const diffs = [];
-  let compared = 0;
+  const diffsSame = [];
+  const diffsD11 = [];
+  let comparedSame = 0;
+  let comparedD11 = 0;
   mods.forEach(function (m) {
     const keys = Array.from(now.run('(TBL_SCHEMAS[' + JSON.stringify(m) + ']||[]).map(function(c){return c.key;})'));
     assert.ok(keys.length >= 5, m + ' 列数异常（' + keys.length + '）');
     keys.forEach(function (k) {
-      TH_STATES.forEach(function (st) {
+      /* ---- ① 零回归面：逐字节相同 ---- */
+      TH_STATES_SAME.forEach(function (st) {
         now.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
         prev.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
         const a = thOf(now, m, k);
         const b = thOf(prev, m, k);
-        compared++;
-        if (a !== b) diffs.push(m + '.' + k + ' ' + st + '\n  本版：' + a + '\n  上版：' + b);
+        comparedSame++;
+        if (a !== b) diffsSame.push(m + '.' + k + ' ' + st + '\n  本版：' + a + '\n  上版：' + b);
+      });
+      /* ---- ② 受控增量面：非 D11 态之外，差异必须恰为一个 ` on` ---- */
+      TH_STATES_D11.forEach(function (st) {
+        now.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
+        prev.run('tState(' + JSON.stringify(m) + ').filters=' + st + ';');
+        const a = thOf(now, m, k);
+        const b = thOf(prev, m, k);
+        comparedD11++;
+        if (prevD11Fixed) {
+          if (a !== b) diffsD11.push(m + '.' + k + ' ' + st + '\n  本版：' + a + '\n  上版：' + b);
+          return;
+        }
+        if (a === b) {
+          /* 该列不是被筛选的列 ⇒ 两版都不亮（修复不得波及其它列） */
+          if (/filt-ico on/.test(a)) {
+            diffsD11.push(m + '.' + k + ' ' + st + '：未被筛选的列却点亮了\n  本版：' + a);
+          }
+          return;
+        }
+        if (/filt-ico on/.test(b)) {
+          diffsD11.push(m + '.' + k + ' ' + st + '：上一版不该亮却亮了（差异无法归因为 D11）\n  上版：' + b);
+          return;
+        }
+        if (!/filt-ico on/.test(a)) {
+          diffsD11.push(m + '.' + k + ' ' + st + '：D11 未修（本版该亮却没亮）\n  本版：' + a);
+          return;
+        }
+        if (a.replace('filt-ico on', 'filt-ico') !== b) {
+          diffsD11.push(m + '.' + k + ' ' + st + '：差异超出「一个 on 令牌」\n  本版：' + a + '\n  上版：' + b);
+        }
       });
     });
   });
-  assert.ok(compared >= 600, '覆盖面异常（仅 ' + compared + ' 组）');
-  assert.deepEqual(diffs, [], '非语义筛选态下 thCol 出现回归：\n' + diffs.join('\n'));
+  assert.ok(comparedSame >= 350, '覆盖面异常（非 D11 面仅 ' + comparedSame + ' 组）');
+  assert.ok(comparedD11 >= 200, '覆盖面异常（D11 面仅 ' + comparedD11 + ' 组）');
+  assert.ok(comparedSame + comparedD11 >= 600,
+    '总覆盖面不得低于原 9 态电池（实际 ' + (comparedSame + comparedD11) + ' 组 vs 原 ≥600）');
+  assert.deepEqual(diffsSame, [], '非 D11 筛选态下 thCol 出现回归：\n' + diffsSame.join('\n'));
+  assert.deepEqual(diffsD11, [], 'D11 面的差异不符合「恰一个 on 令牌」：\n' + diffsD11.join('\n'));
   now.dispose();
   prev.dispose();
 });
@@ -989,29 +1050,36 @@ test('S2 契约：docs/系统知识.md §2 的 semFilters 坑已扩为三条，�
   assert.ok(/applyFilt/.test(seg), '必须写明 applyFilt 是清脏值的落点');
 });
 
-test('S3 【现状·既有缺陷】is_empty 图标不亮确实存在（且被工程师 §G1 无条件钉住）——供主理人裁决', function () {
-  /* 审查对象：tests/invfilt.161.test.js §G1 末段
-       assert.equal(icoOn(app,'order_inv','productName'), false, '文本列 is_empty 的漏斗点亮行为必须保持 .161 形态…')
-     事实核查（本条只陈述**事实**，裁决见报告；我不改产品代码，也不改他的用例）：
-       · 该行为确实是**既有缺陷**：文本列用「为空/不为空」筛选时 chip 出现、漏斗图标却不亮，
-         与 .162 刚修的语义档缺陷属**同一用户可见症状**，且影响全部模块的文本列；
-       · 他的断言是**无条件**的（assert.equal(..., false)）⇒ 将来有人修此缺陷它会直接变红，
-         且红点文案是「必须保持 .161 形态」，读起来像"引入了回归"—— 正是 .152 立的红线
-         「把缺陷断言成正确行为」的形态（缺 【现状】/【缺陷】 标注与"修复后请翻转"指令）。
-     本条断言的是"该缺陷当前确实存在"，用于把风险量级钉住（**不是认可它**）。 */
+test('S3 契约（.167 翻转）：D11 已修 —— is_empty/not_empty 生效时漏斗必须点亮；原【现状·既有缺陷】钉已变为契约钉', function () {
+  /* 【.167 同步·契约翻转（非放宽）】本条原为【现状·既有缺陷】：钉住「文本列 is_empty 生效但漏斗不亮」
+     确实存在，并把工程师 §G1 里那条**无条件 false** 的断言当证据引用，等主理人裁决。
+     主理人裁决为**修复**，故本条的职责从"钉缺陷"翻转为"钉契约"：
+       · 行为断言 false → true（与原 §G1 同向翻转）；
+       · 静态定位锚从「engineer 写了 [...], false」改为「engineer 已翻转为 [...], true」，
+         并额外断言"【现状·既有缺陷 D11】"标注与「必须保持 .161 形态」措辞**不得残留** ——
+         这比原来只查一处更严（防有人把两套断言都留着、靠执行顺序蒙过去）。
+     判据方向变了，强度没变：任何回退都会立刻变红。 */
   const app = bootAll();
   app.run("tState('order_inv').filters={productName:{mode:'is_empty',val:''}};");
-  assert.equal(icoOn(app, 'order_inv', 'productName'), false,
-    '【现状·既有缺陷】文本列 is_empty 筛选生效但漏斗图标不亮（.162 未修，属本轮范围外）');
-  /* 同一症状在其它模块同样存在（影响面不止库存页） */
+  assert.equal(icoOn(app, 'order_inv', 'productName'), true,
+    'D11 已修：文本列 is_empty 筛选生效时漏斗图标必须点亮（.152~.166 曾不亮）');
+  /* 同一判据分支在其它模块同样生效（影响面跨模块，修复是引擎级） */
   app.run("tState('product').filters={name:{mode:'is_empty',val:''}};");
-  assert.equal(icoOn(app, 'product', 'name'), false, '【现状·既有缺陷】产品主数据页同款症状');
-  /* 对照：同一列用"包含"时是亮的 ⇒ 证明不是该列 schema 缺失，而是判据不含 val 恒空的模式 */
+  assert.equal(icoOn(app, 'product', 'name'), true, 'D11 已修：产品主数据页 is_empty 同样点亮');
+  app.run("tState('order_inv').filters={productName:{mode:'not_empty',val:''}};");
+  assert.equal(icoOn(app, 'order_inv', 'productName'), true, 'D11 已修：not_empty 同样点亮');
+  /* 对照：同一列用"包含"时本来就亮 ⇒ 证明该列 schema 正常，差异确实来自判据 */
   app.run("tState('order_inv').filters={productName:{mode:'contains',val:'甲'}};");
   assert.equal(icoOn(app, 'order_inv', 'productName'), true, '对照：有 val 的模式确实点亮');
-  /* 静态定位：确认他的钉住断言确实是无条件 false（供报告引用；若他改成带标注的可翻转形态，本条会红） */
+  /* 反假守卫（修复不得把 act 变成恒真）：有筛选条目但模式未生效 ⇒ 仍不得点亮 */
+  app.run("tState('order_inv').filters={productName:{mode:'gte',val:''}};");
+  assert.equal(icoOn(app, 'order_inv', 'productName'), false,
+    '反假守卫：gte + val 空 = 未生效 ⇒ 不得点亮（否则 D11 修复把判据改成了恒真）');
+  /* 静态定位：工程师 §G1 已完成翻转，且旧标注不得残留 */
   const engSrc = readRel('tests/invfilt.161.test.js');
-  const at = engSrc.indexOf("icoOn(app, 'order_inv', 'productName'), false");
-  assert.ok(at >= 0, '必须能在 engineer 的 §G1 中定位到该"反回归钉"断言（结构已变请同步本文件）');
+  assert.ok(engSrc.indexOf("icoOn(app, 'order_inv', 'productName'), true") >= 0,
+    '必须能在 engineer 的 §G1 中定位到**已翻转**的契约断言（结构已变请同步本文件）');
+  assert.equal(engSrc.indexOf('【现状·既有缺陷 D11】'), -1,
+    'engineer §G1 不得残留「缺陷现状」标注（否则等于把缺陷继续钉成正确行为）');
   app.dispose();
 });

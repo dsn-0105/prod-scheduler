@@ -1070,6 +1070,42 @@ function isSemFiltMode(m,key,mode){
   return col.semFilters.some(function(x){return x.mode===mode;});
 }
 
+/* 【build .167】「筛选是否生效」的判据**单源化**（修复 D11 —— 该缺陷自 .152 起跨全部模块存在）。
+   ----------------------------------------------------------------
+   背景：`某条筛选到底算不算生效` 原先在 5 处**各写一份**（filterRows / thCol / filterBar /
+   prodFilterActive / maybeWarnHiddenOrder），5 份副本各自演化 —— `.161`（chip 不出现）与
+   `.162`（漏斗不亮）两次缺陷的根因都是「同一条判据的多份副本只改了一处」。
+   故收敛为下面两个函数，**所有消费方必须共用，禁止再各写一份**：
+
+     `isValFreeFiltMode(f)` —— 该模式是否「**val 恒空**」（不需要用户填值就有判定力）：
+        · 文本/数值列的「为空 / 不为空」；
+        · 日期列的 7 个快捷模式：today / this_week / this_month / last_month /
+          last_1m / last_3m / range（`dateQuickMode` 是它们的既有单一来源）。
+       ⚠ 列级语义档（`col.semFilters`，如 inv_short/inv_over）**也是** val 恒空的模式，
+         但它要「列」才能判定，而本函数只拿到 f 本身 ⇒ 不在这里判。
+         调用处用 `||!!sem`（filterRows）与 `||isSemFiltMode(m,key,f.mode)`（thCol/filterBar）补足，
+         **不要**为此把 key/schema 塞进来（f 对象上没有列信息，硬加会造出第二套判据）。
+
+     `filtOn(f)` —— 「该筛选条目是否已生效」，= vals 非空 ∨ val 非空 ∨ val 恒空模式。
+       **不含**语义档（同上，需列信息），故它只承担「除语义档以外」的统一口径。
+
+   D11（P2·可见性提示缺失）：`thCol` 的漏斗图标原先只认「vals 非空 / val 非空」，
+   于是「为空 / 不为空 / 日期快捷模式」筛选生效时图标**不亮**，用户看不出该列已有筛选。
+   修复即让 thCol 走 `filtOn(f)`。
+   ---------------------------------------------------------------- */
+/* 【build .167】「零值自由模式」判据 —— 全工程唯一来源。
+   为空/不为空 + 日期快捷(含 range) 共 9 个模式的 val 恒空，判「是否生效」时不能看 val。 */
+function isValFreeFiltMode(f){
+  return !!(f&&f.mode&&(f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)));
+}
+/* 【build .167】「该条筛选是否生效」—— 全工程唯一来源（与质量系统 CORE.filtActive 逐条同构）。
+   range 取的是 from/to 而非 val，必须首判，否则空区间会被误判为"生效"（qa-core 曾栽过此坑）。 */
+function filtOn(f){
+  if(!f||!f.mode)return false;
+  if(f.mode==='range')return !!(f.from&&f.to);
+  return !!((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||isValFreeFiltMode(f));
+}
+
 function filterRows(m,rows){
   const s=tState(m),schema=TBL_SCHEMAS[m]||[];
   return rows.filter(r=>{
@@ -1083,8 +1119,11 @@ function filterRows(m,rows){
       const sem=(col.semFilters||[]).find(function(x){return x.mode===f.mode;})||null;
       const hasVals=f.vals&&f.vals.length>0;
       const hasVal=f.val!==''&&f.val!=null;
-      /* 2026-08-25.42/.43：为空/不为空/日期快捷模式 val 恒空，须绕过 hasVal 判定；.161 追加语义模式（同为零值自由模式） */
-      const valFreeMode=f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)||!!sem;
+      /* 2026-08-25.42/.43：为空/不为空/日期快捷模式 val 恒空，须绕过 hasVal 判定；.161 追加语义模式（同为零值自由模式）
+         【build .167】判据收敛为单源 `isValFreeFiltMode(f)`（= 为空/不为空/日期 7 个快捷模式），
+         语义档仍由本处 `||!!sem` 补足 —— 二者合起来才是「val 恒空且有效」的完整口径。
+         ⚠ 语句顺序与行级取值判定（`sem.test(r)` / 各 type 分支）**一律不动**，只换判据来源。 */
+      const valFreeMode=isValFreeFiltMode(f)||!!sem;
       if(!hasVals&&!hasVal&&!valFreeMode)continue;
       if(sem){if(!sem.test(r))return false;continue;}
       const v=colVal(col,r);
@@ -1368,10 +1407,15 @@ function thCol(m,col,style){
   const sorted=s.sort&&s.sort.key===col.key;
   const dir=sorted?(s.sort.dir===1?'▲':'▼'):'⇅';
   const f=s.filters[col.key];
-  /* 【build .162】「漏斗点亮」判据与 filterBar 的 chip 放行**同源**（都走 isSemFiltMode）：
+  /* 【build .162】「漏斗点亮」判据与 filterBar 的 chip 放行**同源**（都走单一来源判据）：
      语义档 val 恒空，若仍只看 `vals/val` 非空，就会出现「筛选生效了、图标却不亮」——
-     用户看不出该列已加筛选。`.161` 即此缺陷（只修了 chip 侧，漏了本处）。 */
-  const act=f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||isSemFiltMode(m,col.key,f.mode));
+     用户看不出该列已加筛选。`.161` 即此缺陷（只修了 chip 侧，漏了本处）。
+     【build .167】D11 修复：判据换成单源 `filtOn(f)`（vals/val 非空 ∨ val 恒空模式），
+     于是「为空 / 不为空 / 日期 7 个快捷模式（含 range）」也纳入点亮 —— `.162` 只补了列级语义档，
+     其余 val 恒空模式一直是「筛选生效但图标不亮」，跨全部模块的文本列/日期列（= D11）。
+     语义档仍由本行末尾的 `isSemFiltMode(...)` 子句承担：f 上没有列信息，
+     纯函数 `filtOn` 无法判语义档，**不要**为此改 filtOn 签名（那会再造一份判据）。 */
+  const act=f&&(filtOn(f)||isSemFiltMode(m,col.key,f.mode));
   return '<th class="th-sort" data-m="'+m+'" data-key="'+col.key+'"'+(style?' style="'+style+'"':'')+' onclick="toggleSort(\''+m+'\',\''+col.key+'\')"><span class="th-flex"><span class="th-label">'+esc(col.label)+
     (col.locked?' '+LOCK:'')+'</span>'+
     '<span class="sort-ico'+(sorted?' on':'')+'">'+dir+'</span>'+
@@ -1560,14 +1604,14 @@ function filterBar(m){
   /* 【build .161】语义模式 val 恒空 ⇒ 必须按「列是否声明了该语义档」放行，
      否则 chip 与「清除全部」入口都不出现（表现为「筛选生效了但看不到标签、也清不掉」）。
      【build .162】判定本体已提升为模块级 `isSemFiltMode`（thCol 漏斗点亮共用同一份）；
-     此处保留 `semModeOf` 仅作**薄别名**（逻辑零复制），让本函数两个消费点保持单行可读。 */
+     此处保留 `semModeOf` 仅作**薄别名**（逻辑零复制），让本函数两个消费点保持单行可读。
+     【build .167】「是否生效」的判据同样收敛为单源 `filtOn(f)`（与 thCol 漏斗点亮共用），
+     语义档再叠加 `semModeOf` —— 两段拼起来与 .166 的 4 条并列判断**逐项等价**（零回归）。 */
   const semModeOf=function(k,mode){return isSemFiltMode(m,k,mode);};
   const keys=Object.keys(s.filters).filter(k=>{
     const f=s.filters[k];
     if(!f)return false;
-    if(f.vals&&f.vals.length>0)return true;
-    if(f.val!==''&&f.val!=null)return true;
-    if(f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f))return true;
+    if(filtOn(f))return true;
     return !!semModeOf(k,f.mode);
   });
   if(!keys.length)return '';
@@ -2464,10 +2508,9 @@ function prodAllShown(form){
 function prodFilterActive(form){
   form=form||_pdFormOf();
   const s=tState(form);
-  return Object.keys(s.filters||{}).some(function(k){
-    const f=s.filters[k];
-    return !!(f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f)));
-  });
+  /* 【build .167】判据单源化：原 5 条并列判断与 `filtOn(f)` 逐项等价（语义档本就不在此口径内），
+     改为共用后「同一件事只有一份实现」，不再随其它消费方各自演化。 */
+  return Object.keys(s.filters||{}).some(function(k){return filtOn(s.filters[k]);});
 }
 /* 恢复每页条数（拖拽自动切 1000 后回滚）—— 与 pagerSize 同口径写 tblPage + localStorage
    【build .158】参数化：缺省取「最近一次拖拽的表单」_pdLastForm（收尾时 _pdDrag 已被清空）。 */
@@ -5742,7 +5785,8 @@ function prodPlanRowVisibleInDom(id){
 function maybeWarnHiddenOrder(formKey,id){
   if(orderRowVisibleInDom(id))return;   // 仍在列表（含跨区块移动）→ 无需提示
   const s=tState(formKey);
-  const hasFilt=Object.keys(s.filters).some(k=>{const f=s.filters[k];return f&&((f.vals&&f.vals.length>0)||(f.val!==''&&f.val!=null)||f.mode==='is_empty'||f.mode==='not_empty'||dateQuickMode(f));});
+  /* 【build .167】判据单源化：改用 `filtOn(f)`（与 filterBar / prodFilterActive / thCol 同源） */
+  const hasFilt=Object.keys(s.filters).some(k=>filtOn(s.filters[k]));
   const hasSort=!!s.sort;
   if(!hasFilt&&!hasSort)return;
   showSaveNotice('订单「'+esc(id)+'」已保存，但因当前'+(hasFilt&&hasSort?'筛选/排序':hasFilt?'筛选':'排序')+'条件未显示在列表中（数据未丢失，刷新后会重置视图）。',

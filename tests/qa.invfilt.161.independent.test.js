@@ -1379,8 +1379,11 @@ const MUTATIONS = [
   {
     id: 'M_A',
     desc: '删掉 valFreeMode 的 ||!!sem（闸门恢复旧序）⇒ 语义模式被静默跳过',
-    anchor: '||dateQuickMode(f)||!!sem;',
-    repl: '||dateQuickMode(f);',
+    /* 【.167 同步】判据已收敛为单源 `isValFreeFiltMode(f)`（D11 修复），原锚点
+       `||dateQuickMode(f)||!!sem;` 不再存在。新锚点仍在证明同一件事：
+       去掉 `||!!sem` ⇒ 语义档在闸门处被静默跳过。 */
+    anchor: 'isValFreeFiltMode(f)||!!sem;',
+    repl: 'isValFreeFiltMode(f);',
     probe: 'notSkipped'
   },
   {
